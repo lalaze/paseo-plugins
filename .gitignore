@@ -1,0 +1,7 @@
+node_modules/
+.state/
+dist/
+*.log
+.env*
+*-private.json
+.DS_Store

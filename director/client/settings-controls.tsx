@@ -1,0 +1,59 @@
+import { useState, type ReactNode } from "react";
+import { Pressable, Text, View } from "react-native";
+import type { usePaseo } from "@getpaseo/plugin/client";
+import type { Profile } from "../shared/schema";
+import { profileParts } from "./settings-model";
+import { Choice, Field, Label, outline, type Theme } from "./ui";
+import { InstructionsEditor } from "./instructions-editor";
+
+export type Catalog = Awaited<ReturnType<ReturnType<typeof usePaseo>["providers"]["waitForReady"]>>;
+
+export function Disclosure({ title, summary, children, theme, defaultOpen = false }: { title: string; summary: string; children: ReactNode; theme: Theme; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return <View style={{ borderTopWidth: 1, borderColor: outline(theme, "panel"), paddingTop: 12, gap: 12 }}>
+    <Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityState={{ expanded: open }} onPress={() => setOpen(!open)} style={{ flexDirection: "row", gap: 12, alignItems: "center", minHeight: 44 }}>
+      <View style={{ flex: 1, gap: 3 }}><Text style={{ color: theme.colors.foreground, fontWeight: "600", fontSize: 14 }}>{title}</Text><Label theme={theme} muted>{summary}</Label></View>
+      <Label theme={theme} muted>{open ? "收起 ▴" : "展开 ▾"}</Label>
+    </Pressable>
+    {open && children}
+  </View>;
+}
+
+export function SelectionCard({ title, description, detail, selected, onPress, theme, disabled = false, role = "checkbox" }: { title: string; description: string; detail?: string; selected: boolean; onPress: () => void; theme: Theme; disabled?: boolean; role?: "checkbox" | "radio" }) {
+  return <Pressable accessibilityRole={role} accessibilityLabel={detail ? `${title} · ${detail}` : title} accessibilityState={{ checked: selected, disabled }} aria-checked={selected} aria-disabled={disabled} disabled={disabled} onPress={onPress} style={{ borderWidth: 2, borderColor: selected ? theme.colors.accent : outline(theme), backgroundColor: selected ? theme.colors.surface2 : theme.colors.surface0, borderRadius: 10, padding: 13, gap: 5, minHeight: 72, opacity: disabled ? 0.5 : 1 }}>
+    <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
+      <Text style={{ color: selected ? theme.colors.accent : theme.colors.foregroundMuted, fontSize: 17 }}>{selected ? "✓" : "○"}</Text>
+      <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: "600", flex: 1 }}>{title}</Text>
+    </View>
+    <Label theme={theme} muted>{description}</Label>
+    {detail && <Label theme={theme}>{detail}</Label>}
+  </Pressable>;
+}
+
+export function ProfileEditor({ profile, catalog, onChange, theme }: { profile?: Profile; catalog?: Catalog; onChange: (patch: Partial<Profile>) => void; theme: Theme }) {
+  const parts = profileParts(profile);
+  const entry = catalog?.entries.find(e => e.provider === parts.provider);
+  const model = entry?.models?.find(m => m.id === parts.model);
+  const providerOptions = (catalog?.entries ?? []).filter(e => e.status === "ready").map(e => ({ id: e.provider, label: e.provider }));
+  const modelOptions = (entry?.models ?? []).map(m => ({ id: m.id, label: m.label ?? m.id }));
+  // Preserve a saved selection even while provider discovery is loading or unavailable.
+  if (parts.provider && !providerOptions.some(p => p.id === parts.provider)) providerOptions.unshift({ id: parts.provider, label: `${parts.provider}（已保存，当前未就绪）` });
+  if (parts.model && !modelOptions.some(m => m.id === parts.model)) modelOptions.unshift({ id: parts.model, label: `${parts.model}（已保存）` });
+  const modes = [{ id: "", label: "跟随 Paseo 默认设置" }, ...(entry?.modes ?? []).map(m => ({ id: m.id, label: m.label }))];
+  const thinking = [{ id: "", label: "使用模型默认强度" }, ...(model?.thinkingOptions ?? []).map(o => ({ id: o.id, label: o.label }))];
+  if (profile?.modeId && !modes.some(m => m.id === profile.modeId)) modes.push({ id: profile.modeId, label: `${profile.modeId}（已保存）` });
+  if (profile?.thinkingOptionId && !thinking.some(m => m.id === profile.thinkingOptionId)) thinking.push({ id: profile.thinkingOptionId, label: `${profile.thinkingOptionId}（已保存）` });
+  return <View style={{ gap: 14 }}>
+    <Choice theme={theme} label="AI 供应商 / 工具" value={parts.provider} options={providerOptions} onChange={id => onChange({ provider: `${id}/`, modeId: undefined, thinkingOptionId: undefined })} />
+    <Choice theme={theme} label="使用模型" value={parts.model} options={modelOptions} onChange={id => onChange({ provider: `${parts.provider}/${id}`, thinkingOptionId: undefined })} />
+    {!parts.provider && <Label theme={theme} muted>先选供应商，下面会显示它可用的模型。</Label>}
+    <Disclosure theme={theme} title="模型高级设置" summary={`${profile?.transport === "mcp" ? "MCP 工具交接" : "默认兼容交接"} · 权限和推理强度可单独调整`}>
+      <Field theme={theme} label="AI 昵称" value={profile?.label ?? ""} onChange={label => onChange({ label })} placeholder="例如：前端执行者" />
+      <InstructionsEditor theme={theme} label="这个 AI 的补充提示词" description="与当前角色的前置提示词一起使用，适用于所有分配给这个 AI 的任务。" value={profile?.instructions ?? ""} onChange={instructions => onChange({ instructions: instructions || undefined })} />
+      <Choice theme={theme} label="执行权限" value={profile?.modeId ?? ""} options={modes} onChange={id => onChange({ modeId: id || undefined })} />
+      <Choice theme={theme} label="推理强度" value={profile?.thinkingOptionId ?? ""} options={thinking} onChange={id => onChange({ thinkingOptionId: id || undefined })} />
+      <Choice theme={theme} label="AI 如何交接任务" value={profile?.transport ?? "structured"} options={[{ id: "structured", label: "兼容模式（默认）" }, { id: "mcp", label: "MCP 工具模式" }]} onChange={id => onChange({ transport: id as Profile["transport"] })} />
+      <Label theme={theme} muted>MCP 模式需要所选 AI 支持 HTTP MCP；不确定时保留兼容模式即可。</Label>
+    </Disclosure>
+  </View>;
+}

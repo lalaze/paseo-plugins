@@ -1,0 +1,18 @@
+{
+  "name": "paseo-agy-quota",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reversible, compatibility-checked Antigravity quota patch for Paseo on Linux and macOS",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "guard:test": "node --test test/guard.test.mjs",
+    "check": "node patch.mjs check",
+    "apply": "node patch.mjs apply",
+    "rollback": "node patch.mjs rollback",
+    "live": "node patch.mjs live"
+  }
+}

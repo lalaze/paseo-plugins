@@ -1,0 +1,17 @@
+{
+  "name": "paseo-antigravity-hub",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Local Antigravity Hub ACP bridge for Paseo",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "run": "node hub.mjs run",
+    "check": "node hub.mjs check",
+    "install-provider": "node hub.mjs install",
+    "rollback": "node hub.mjs rollback"
+  }
+}

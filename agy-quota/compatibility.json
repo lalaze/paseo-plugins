@@ -1,0 +1,13 @@
+{
+  "testedVersion": "0.7.2",
+  "serverFiles": {
+    "dist/server/services/quota-fetcher/manifest.js": "91be7461fc529013deeb1b129bb88d5669248e15be6438bdf9cc56a948b826d1",
+    "dist/server/services/quota-fetcher/provider.d.ts": "2caef6ad40d6ec4107859ef27f2c36077e0d14e16194a36da1f42aa8aeb57c9d",
+    "dist/server/services/quota-fetcher/service.js": "367946d1f44ab720b52af3d7769233c36800ecf22db1450090dc725dc886afcd",
+    "dist/server/services/quota-fetcher/usage.js": "5babe54420c46f01dc75d451486d9a717203f0ed4c346b4faee846f32b65de84"
+  },
+  "nodePtyVersion": "1.2.0-beta.15",
+  "protocolUsageSha256": "6d89d94f1aec5ac364f1ceaa814267587ade3a4809c5b2bd1f0b01b8bc372dc0",
+  "kimiFileSha256": "3f21213132983b4fcfe7b314a85de256388ceba601fda209f060940d7158cef7",
+  "testedKimiVersion": "0.42.0"
+}

@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Stable front door for Paseo. npm/nvm may replace the real Paseo executable,
+# so discover it from PATH on every invocation instead of pinning an install.
+# Node realpath works on Linux and macOS; BSD readlink has no -f.
+resolve() {
+  node -e 'process.stdout.write(require("fs").realpathSync(process.argv[1]))' "$1"
+}
+self="$(resolve "${BASH_SOURCE[0]}")"
+real_paseo=""
+old_ifs="$IFS"
+IFS=:
+for dir in ${PATH:-}; do
+  [ -n "$dir" ] || dir=.
+  candidate="$dir/paseo"
+  [ -x "$candidate" ] || continue
+  resolved="$(resolve "$candidate")"
+  [ "$resolved" = "$self" ] && continue
+  real_paseo="$resolved"
+  break
+done
+IFS="$old_ifs"
+
+if [ -z "$real_paseo" ]; then
+  echo "paseo-usage-guard: real Paseo executable not found on PATH" >&2
+  exit 127
+fi
+
+ensure_usage=false
+case "${1:-}" in
+  start|restart|onboard)
+    ensure_usage=true
+    ;;
+  daemon)
+    case "${2:-}" in
+      start|restart) ensure_usage=true ;;
+    esac
+    ;;
+esac
+
+export NODE_USE_ENV_PROXY=1
+
+if [ "$ensure_usage" = true ]; then
+  root="$(cd "$(dirname "$self")/.." && pwd -P)"
+  cli_dir="$(dirname "$(dirname "$real_paseo")")"
+  google_patch="${PASEO_USAGE_GUARD_GOOGLE_PATCH_SCRIPT:-$root/patch.mjs}"
+  kimi_patch="${PASEO_USAGE_GUARD_KIMI_PATCH_SCRIPT:-$root/kimi-patch.mjs}"
+  node "$google_patch" apply --cli "$cli_dir"
+  node "$kimi_patch" apply --cli "$cli_dir"
+fi
+
+exec "$real_paseo" "$@"
