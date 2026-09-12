@@ -56,10 +56,12 @@ paseo plugin add lalaze/paseo-plugins --path file-upload
 
 ```bash
 git clone git@github.com:lalaze/paseo-plugins.git
-cd paseo-plugins/agy-quota
-node patch.mjs check && npm test && node patch.mjs apply
+cd paseo-plugins
+node patch.mjs check && node patch.mjs apply
 paseo daemon restart
 ```
+
+脚本在 [`agy-quota/`](agy-quota)。仓库根目录的 `patch.mjs` / `kimi-patch.mjs` 会转到该目录，旧的 `node patch.mjs rollback` 仍然可用。
 
 详细说明：[agy-quota/README.md](agy-quota/README.md)
 
@@ -69,10 +71,12 @@ paseo daemon restart
 
 ```bash
 git clone git@github.com:lalaze/paseo-plugins.git
-cd paseo-plugins/antigravity-hub
-node hub.mjs check && npm test && node hub.mjs install
+cd paseo-plugins
+node hub.mjs check && node hub.mjs install
 paseo reload
 ```
+
+脚本在 [`antigravity-hub/`](antigravity-hub)。仓库根目录的 `hub.mjs` 会转到该目录。
 
 详细说明：[antigravity-hub/README.md](antigravity-hub/README.md)
 

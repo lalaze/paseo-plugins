@@ -193,11 +193,15 @@ install_patch() {
   local name="$1" script="$2" label="$3"
   local check_out apply_out installed
   say "→ $label check"
-  if ! check_out="$(node "$ROOT/agy-quota/$script" check 2>&1)"; then
-    note "FAIL $name（check: ${check_out%%$'\n'*})"
+  local check_err
+  check_err="$(mktemp)"
+  if ! check_out="$(node "$ROOT/agy-quota/$script" check 2>"$check_err")"; then
+    note "FAIL $name（check: $(tr '\n' ' ' <"$check_err" | head -c 200))"
+    rm -f "$check_err"
     fail=$((fail + 1))
     return
   fi
+  rm -f "$check_err"
   installed="$(info_field "$check_out" installed)"
   if [ "$installed" = "true" ]; then
     note "SKIP $name（已安装）"
@@ -210,7 +214,7 @@ install_patch() {
     return
   fi
   say "→ $label apply"
-  if apply_out="$(node "$ROOT/agy-quota/$script" apply 2>&1)"; then
+  if apply_out="$(node "$ROOT/agy-quota/$script" apply)"; then
     say "$apply_out"
     note "OK   $name"
     ok=$((ok + 1))
@@ -224,11 +228,15 @@ install_patch() {
 install_hub() {
   local check_out installed command apply_out
   say "→ antigravity-hub check"
-  if ! check_out="$(node "$ROOT/antigravity-hub/hub.mjs" check 2>&1)"; then
-    note "FAIL antigravity-hub（check: ${check_out%%$'\n'*})"
+  local hub_err
+  hub_err="$(mktemp)"
+  if ! check_out="$(node "$ROOT/antigravity-hub/hub.mjs" check 2>"$hub_err")"; then
+    note "FAIL antigravity-hub（check: $(tr '\n' ' ' <"$hub_err" | head -c 200))"
+    rm -f "$hub_err"
     fail=$((fail + 1))
     return
   fi
+  rm -f "$hub_err"
   installed="$(info_field "$check_out" installed)"
   if [ "$installed" = "true" ]; then
     note "SKIP antigravity-hub（已从本仓库安装）"
@@ -252,7 +260,7 @@ install_hub() {
   fi
   if [ "$REPLACE" = 1 ] && [ -n "$command" ]; then
     say "→ antigravity-hub install --replace-existing"
-    if apply_out="$(node "$ROOT/antigravity-hub/hub.mjs" install --replace-existing 2>&1)"; then
+    if apply_out="$(node "$ROOT/antigravity-hub/hub.mjs" install --replace-existing)"; then
       say "$apply_out"
       note "OK   antigravity-hub（已替换）"
       ok=$((ok + 1))
@@ -264,7 +272,7 @@ install_hub() {
     return
   fi
   say "→ antigravity-hub install"
-  if apply_out="$(node "$ROOT/antigravity-hub/hub.mjs" install 2>&1)"; then
+  if apply_out="$(node "$ROOT/antigravity-hub/hub.mjs" install)"; then
     say "$apply_out"
     note "OK   antigravity-hub"
     ok=$((ok + 1))
