@@ -41,6 +41,8 @@ RESULTS=()
 
 note() { RESULTS+=("$1"); }
 say() { printf '%s\n' "$*"; }
+snippet() { tr '\n' ' ' <"$1" | cut -c1-200; }
+tmpfile() { mktemp "${TMPDIR:-/tmp}/paseo.XXXXXX"; }
 run() {
   if [ "$DRY_RUN" = 1 ]; then
     say "DRY  $*"
@@ -188,13 +190,17 @@ json_field() {
 }
 
 update_patch() {
-  local name="$1" script="$2" label="$3"
-  local check_out apply_out installed
-  say "→ $label check"
-  local check_err
-  check_err="$(mktemp)"
+  local pkg="$1"
+  local script="$2"
+  local label="$3"
+  local check_out=""
+  local apply_out=""
+  local installed=""
+  local check_err=""
+  say "-> ${label} check"
+  check_err="$(tmpfile)"
   if ! check_out="$(node "$ROOT/agy-quota/$script" check 2>"$check_err")"; then
-    note "FAIL $name（check: $(tr '\n' ' ' <"$check_err" | head -c 200))"
+    note "FAIL ${pkg} (check: $(snippet "$check_err"))"
     rm -f "$check_err"
     fail=$((fail + 1))
     return
@@ -202,38 +208,41 @@ update_patch() {
   rm -f "$check_err"
   installed="$(json_field "$check_out" installed)"
   if [ "$installed" != "true" ]; then
-    note "SKIP $name（未安装）"
+    note "SKIP ${pkg} (not installed)"
     skip=$((skip + 1))
     return
   fi
   if [ "$DRY_RUN" = 1 ]; then
-    note "DRY $name apply"
+    note "DRY ${pkg} apply"
     ok=$((ok + 1))
     return
   fi
-  say "→ $label apply"
+  say "-> ${label} apply"
   if apply_out="$(node "$ROOT/agy-quota/$script" apply)"; then
     say "$apply_out"
     if [[ "$apply_out" == *"Already applied"* || "$apply_out" == *"already applied"* ]]; then
-      note "OK   $name（已是最新）"
+      note "OK   ${pkg} (up to date)"
     else
-      note "OK   $name（已应用）"
+      note "OK   ${pkg} (applied)"
       need_restart=1
     fi
     ok=$((ok + 1))
   else
-    note "FAIL $name（apply: ${apply_out%%$'\n'*})"
+    note "FAIL ${pkg} (apply: ${apply_out%%$'\n'*})"
     fail=$((fail + 1))
   fi
 }
 
 update_hub() {
-  local check_out installed command apply_out
-  say "→ antigravity-hub check"
-  local hub_err
-  hub_err="$(mktemp)"
+  local check_out=""
+  local installed=""
+  local command=""
+  local apply_out=""
+  local hub_err=""
+  say "-> antigravity-hub check"
+  hub_err="$(tmpfile)"
   if ! check_out="$(node "$ROOT/antigravity-hub/hub.mjs" check 2>"$hub_err")"; then
-    note "FAIL antigravity-hub（check: $(tr '\n' ' ' <"$hub_err" | head -c 200))"
+    note "FAIL antigravity-hub (check: $(snippet "$hub_err"))"
     rm -f "$hub_err"
     fail=$((fail + 1))
     return

@@ -18,6 +18,22 @@ Paseo 插件与配套扩展的多包仓库。先在目标主机 **Settings → P
 
 会 `git pull`，再更新已从本仓库安装的项。未安装的跳过。`--skip-pull` 只更新不拉代码。
 
+macOS 上 `~/.local/bin` 默认不在 PATH，而且 nvm 会抢在前面。守卫这样设：
+
+```bash
+mkdir -p ~/.local/bin
+ln -sfn "$PWD/agy-quota/bin/paseo" ~/.local/bin/paseo
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+把 `export PATH="$HOME/.local/bin:$PATH"` 写进 `~/.zshrc`，放在 nvm 初始化**之后**。不要用 `readlink -f`（BSD 没有 `-f`），改用：
+
+```bash
+node -e 'console.log(require("fs").realpathSync(process.argv[1]))' "$(which paseo)"
+```
+
+应打印 `.../paseo-plugins/agy-quota/bin/paseo`。
+
 插件与补丁均在 daemon 用户权限下运行，安装前请阅读对应目录源码。
 
 ## [Director](director)
