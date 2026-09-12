@@ -87,6 +87,17 @@ node kimi-patch.mjs rollback
 paseo daemon restart
 ```
 
+没有旧仓库、因而没有 `.state` 备份时，不要 `rollback`。用 `recover` 按已知补丁格式还原官方文件（会对照兼容性哈希，对不上就拒绝）：
+
+```bash
+cd /path/to/paseo-plugins
+node patch.mjs recover
+node kimi-patch.mjs recover
+node patch.mjs apply
+node kimi-patch.mjs apply
+paseo daemon restart
+```
+
 ## 数据来源与边界
 
 - 从 Paseo 当前 `antigravity-acp.env.AGY_BIN` 读取 CLI 路径，其次 `PATH` 中的 `agy`，再是 `~/.local/bin/agy`、Homebrew、`/usr/local/bin/agy`。可用 `PASEO_ANTIGRAVITY_BIN` 指定绝对路径。配置目录沿用 `PASEO_HOME` 或 `~/.paseo`。

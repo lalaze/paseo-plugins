@@ -11,6 +11,9 @@ export const ROOT = dirname(fileURLToPath(import.meta.url));
 const BASE = 'dist/server/services/quota-fetcher';
 const MARK = '// paseo-agy-quote:managed';
 const FILES = ['antigravity.js', 'antigravity-local.js'];
+const MANIFEST_ANCHOR = 'export const PROVIDER_USAGE_FETCHERS = [';
+const MANIFEST_PREFIX = `${MARK}\nimport { AntigravityQuotaProvider } from "./providers/antigravity.js";\n`;
+const MANIFEST_ENTRY = `\n    {\n        providerId: "antigravity-acp",\n        create: (options) => new AntigravityQuotaProvider({ logger: options.logger }),\n    },`;
 export const sha = value => createHash('sha256').update(value).digest('hex');
 const json = path => JSON.parse(readFileSync(path, 'utf8'));
 const read = path => readFileSync(path, 'utf8');
@@ -49,9 +52,15 @@ export function locate(cliOverride) {
 
 export function patchedManifest(original) {
   if (/antigravity/i.test(original)) throw new Error('Antigravity registration already exists; inspect upstream support first');
-  const anchor = 'export const PROVIDER_USAGE_FETCHERS = [';
-  if (original.split(anchor).length !== 2) throw new Error('Manifest anchor changed');
-  return `${MARK}\nimport { AntigravityQuotaProvider } from "./providers/antigravity.js";\n` + original.replace(anchor, `${anchor}\n    {\n        providerId: "antigravity-acp",\n        create: (options) => new AntigravityQuotaProvider({ logger: options.logger }),\n    },`);
+  if (original.split(MANIFEST_ANCHOR).length !== 2) throw new Error('Manifest anchor changed');
+  return MANIFEST_PREFIX + original.replace(MANIFEST_ANCHOR, MANIFEST_ANCHOR + MANIFEST_ENTRY);
+}
+
+export function unpatchedManifest(patched) {
+  if (!patched.startsWith(MANIFEST_PREFIX)) throw new Error('Manifest is not this patch; refuse recover');
+  const body = patched.slice(MANIFEST_PREFIX.length);
+  if (!body.includes(MANIFEST_ANCHOR + MANIFEST_ENTRY)) throw new Error('Cannot reverse Antigravity registration; refuse recover');
+  return body.replace(MANIFEST_ANCHOR + MANIFEST_ENTRY, MANIFEST_ANCHOR);
 }
 
 function statePath(target) { return join(ROOT, '.state', `${sha(target.server).slice(0, 20)}.json`); }
@@ -64,7 +73,7 @@ export function check(target) {
   const installed = manifest.startsWith(MARK + '\n');
   let state;
   if (installed) {
-    if (!existsSync(statePath(target))) throw new Error('Managed manifest without backup state; refusing mutation');
+    if (!existsSync(statePath(target))) throw new Error('Managed manifest without backup state; run node patch.mjs recover');
     state = json(statePath(target));
     if (state.server !== target.server || sha(manifest) !== state.afterHash || sha(state.before) !== state.beforeHash) throw new Error('Installed manifest or backup was modified');
   }
@@ -131,14 +140,34 @@ export function rollback(target) {
   return 'Rolled back. Restart Paseo to activate. Backup retained.';
 }
 
+export function recover(target) {
+  const manifestPath = join(target.server, BASE, 'manifest.js');
+  const manifest = read(manifestPath);
+  if (!manifest.startsWith(MARK + '\n')) {
+    check(target);
+    return 'Quota manifest already vanilla; nothing to recover.';
+  }
+  const original = unpatchedManifest(manifest);
+  const baseline = json(join(ROOT, 'compatibility.json'));
+  if (sha(original) !== baseline.serverFiles[`${BASE}/manifest.js`]) throw new Error('Reconstructed manifest does not match known Paseo baseline; refuse recover');
+  atomic(manifestPath, original);
+  for (const f of FILES) {
+    const p = join(target.server, BASE, 'providers', f);
+    if (existsSync(p)) unlinkSync(p);
+  }
+  check(target);
+  return 'Recovered vanilla quota manifest without .state. You can now apply from this repo.';
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
-  if (!['check', 'apply', 'rollback', 'live'].includes(command)) throw new Error('Usage: node patch.mjs check|apply|rollback|live [--cli /path/to/@getpaseo/cli]');
+  if (!['check', 'apply', 'rollback', 'recover', 'live'].includes(command)) throw new Error('Usage: node patch.mjs check|apply|rollback|recover|live [--cli /path/to/@getpaseo/cli]');
   if (args.length && (args.length !== 2 || args[0] !== '--cli')) throw new Error('Unknown arguments');
   const target = locate(args[1]);
   if (command === 'check') console.log(JSON.stringify({ ...check(target), server: target.server }, null, 2));
   if (command === 'apply') console.log(apply(target));
   if (command === 'rollback') console.log(rollback(target));
+  if (command === 'recover') console.log(recover(target));
   if (command === 'live') {
     check(target);
     const f = fixture(target);

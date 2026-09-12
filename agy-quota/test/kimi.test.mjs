@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { needsKimiRefresh, createCredentialRefresher, renewWithKimi, portsFromBanner } from '../src/kimi-refresh.js';
 import { locate, ROOT, sha } from '../patch.mjs';
-import { patchedKimi, checkKimi, applyKimi, rollbackKimi, kimiFixture } from '../kimi-patch.mjs';
+import { patchedKimi, checkKimi, applyKimi, rollbackKimi, recoverKimi, kimiFixture } from '../kimi-patch.mjs';
 const target = locate(process.env.PASEO_PATCH_TEST_CLI);
 const now = 1_800_000_000_000;
 const credentials = { access_token: 'synthetic-access', refresh_token: 'synthetic-refresh', expires_at: now / 1000 - 1 };
@@ -98,6 +98,28 @@ test('Kimi patch apply, idempotence, drift refusal and exact independent rollbac
     writeFileSync(file, original + '// upstream update');
     assert.throws(() => applyKimi(t, { runTests: false }), /Incompatible/);
     assert.throws(() => patchedKimi('unknown implementation'), /changed/);
+  } finally { rmSync(dir, { recursive: true, force: true }); rmSync(state, { force: true }); }
+});
+test('recover restores vanilla Kimi when .state is missing', () => {
+  const base = 'dist/server/services/quota-fetcher/providers';
+  const dir = mkdtempSync(join(tmpdir(), 'kimi-recover-test-'));
+  const t = { ...target, server: dir };
+  const state = join(ROOT, '.state', `kimi-${sha(dir).slice(0, 20)}.json`);
+  try {
+    mkdirSync(join(dir, base), { recursive: true });
+    cpSync(join(target.server, base, '../usage.js'), join(dir, base, '../usage.js'));
+    let original = readFileSync(join(target.server, base, 'kimi.js'), 'utf8');
+    if (original.startsWith('// paseo-agy-quote:kimi-refresh')) original = JSON.parse(readFileSync(join(ROOT, '.state', `kimi-${sha(target.server).slice(0, 20)}.json`), 'utf8')).before;
+    const file = join(dir, base, 'kimi.js');
+    writeFileSync(file, original);
+    applyKimi(t, { runTests: false });
+    rmSync(state, { force: true });
+    assert.throws(() => checkKimi(t), /run node kimi-patch.mjs recover/);
+    assert.match(recoverKimi(t), /Recovered vanilla/);
+    assert.equal(readFileSync(file, 'utf8'), original);
+    assert.equal(existsSync(join(dir, base, 'kimi-refresh.js')), false);
+    assert.equal(checkKimi(t).installed, false);
+    assert.match(recoverKimi(t), /already vanilla/);
   } finally { rmSync(dir, { recursive: true, force: true }); rmSync(state, { force: true }); }
 });
 

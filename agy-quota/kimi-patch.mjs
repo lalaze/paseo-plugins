@@ -8,15 +8,24 @@ import { locate, ROOT, sha } from './patch.mjs';
 import { needsKimiRefresh, renewWithKimi } from './src/kimi-refresh.js';
 const BASE = 'dist/server/services/quota-fetcher/providers';
 const MARK = '// paseo-agy-quote:kimi-refresh';
+const KIMI_PREFIX = `${MARK}\nimport { ensureKimiCredentialsFresh } from "./kimi-refresh.js";\n`;
+const KIMI_ANCHOR = '                return { ...credentials, access_token: credentials.access_token };';
+const KIMI_REPLACEMENT = `                await ensureKimiCredentialsFresh(path, credentials);\n                const refreshed = await this.readCredentialFile(path);\n                if (!refreshed?.access_token) return null;\n                return { ...refreshed, access_token: refreshed.access_token };`;
 const read = p => readFileSync(p, 'utf8');
 const json = p => JSON.parse(read(p));
 const atomic = (p, text) => { const t = `${p}.${process.pid}.tmp`; writeFileSync(t, text, { mode: 0o600 }); renameSync(t, p); };
 const statePath = t => join(ROOT, '.state', `kimi-${sha(t.server).slice(0, 20)}.json`);
 
 export function patchedKimi(original) {
-  const anchor = '                return { ...credentials, access_token: credentials.access_token };';
-  if (original.includes(MARK) || original.split(anchor).length !== 2) throw new Error('Kimi provider changed; refuse blind patch');
-  return `${MARK}\nimport { ensureKimiCredentialsFresh } from "./kimi-refresh.js";\n` + original.replace(anchor, `                await ensureKimiCredentialsFresh(path, credentials);\n                const refreshed = await this.readCredentialFile(path);\n                if (!refreshed?.access_token) return null;\n                return { ...refreshed, access_token: refreshed.access_token };`);
+  if (original.includes(MARK) || original.split(KIMI_ANCHOR).length !== 2) throw new Error('Kimi provider changed; refuse blind patch');
+  return KIMI_PREFIX + original.replace(KIMI_ANCHOR, KIMI_REPLACEMENT);
+}
+
+export function unpatchedKimi(patched) {
+  if (!patched.startsWith(KIMI_PREFIX)) throw new Error('Kimi file is not this patch; refuse recover');
+  const body = patched.slice(KIMI_PREFIX.length);
+  if (!body.includes(KIMI_REPLACEMENT)) throw new Error('Cannot reverse Kimi renewal patch; refuse recover');
+  return body.replace(KIMI_REPLACEMENT, KIMI_ANCHOR);
 }
 export function checkKimi(target) {
   if (process.platform !== 'linux' && process.platform !== 'darwin') throw new Error('Linux or macOS required');
@@ -26,6 +35,7 @@ export function checkKimi(target) {
   const file = join(target.server, BASE, 'kimi.js');
   const contents = read(file);
   const installed = contents.startsWith(MARK + '\n');
+  if (installed && !existsSync(statePath(target))) throw new Error('Managed Kimi without backup state; run node kimi-patch.mjs recover');
   const state = installed ? json(statePath(target)) : null;
   if (installed && (state.server !== target.server || sha(contents) !== state.afterHash || sha(state.before) !== state.beforeHash)) throw new Error('Kimi installation or backup changed');
   if (sha(installed ? state.before : contents) !== baseline.kimiFileSha256) throw new Error('Incompatible upstream Kimi provider; no files written');
@@ -74,6 +84,22 @@ export function rollbackKimi(target) {
   unlinkSync(helper);
   return 'Kimi renewal rolled back; Google quota patch unchanged. Restart Paseo to activate.';
 }
+export function recoverKimi(target) {
+  const file = join(target.server, BASE, 'kimi.js');
+  const helper = join(target.server, BASE, 'kimi-refresh.js');
+  const contents = read(file);
+  if (!contents.startsWith(MARK + '\n')) {
+    checkKimi(target);
+    return 'Kimi provider already vanilla; nothing to recover.';
+  }
+  const original = unpatchedKimi(contents);
+  const baseline = json(join(ROOT, 'compatibility.json'));
+  if (sha(original) !== baseline.kimiFileSha256) throw new Error('Reconstructed Kimi provider does not match known Paseo baseline; refuse recover');
+  atomic(file, original);
+  if (existsSync(helper)) unlinkSync(helper);
+  checkKimi(target);
+  return 'Recovered vanilla Kimi provider without .state. You can now apply from this repo.';
+}
 export function kimiFixture(target) {
   const dir = mkdtempSync(join(tmpdir(), 'paseo-kimi-test-'));
   writeFileSync(join(dir, 'package.json'), '{"type":"module"}');
@@ -88,11 +114,12 @@ export function kimiFixture(target) {
 }
 async function main() {
   const [command, ...args] = process.argv.slice(2);
-  if (!['check', 'apply', 'rollback', 'live'].includes(command) || (args.length && (args.length !== 2 || args[0] !== '--cli'))) throw new Error('Usage: node kimi-patch.mjs check|apply|rollback|live [--cli /path/to/@getpaseo/cli]');
+  if (!['check', 'apply', 'rollback', 'recover', 'live'].includes(command) || (args.length && (args.length !== 2 || args[0] !== '--cli'))) throw new Error('Usage: node kimi-patch.mjs check|apply|rollback|recover|live [--cli /path/to/@getpaseo/cli]');
   const target = locate(args[1]);
   if (command === 'check') console.log(JSON.stringify(checkKimi(target), null, 2));
   if (command === 'apply') console.log(applyKimi(target));
   if (command === 'rollback') console.log(rollbackKimi(target));
+  if (command === 'recover') console.log(recoverKimi(target));
   if (command === 'live') {
     checkKimi(target);
     const home = homedir();

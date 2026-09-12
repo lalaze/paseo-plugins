@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, cpSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { locate, check, apply, rollback, ROOT, sha, patchedManifest } from '../patch.mjs';
+import { locate, check, apply, rollback, recover, ROOT, sha, patchedManifest } from '../patch.mjs';
 const target = locate(process.env.PASEO_PATCH_TEST_CLI);
 const base = 'dist/server/services/quota-fetcher';
 
@@ -41,5 +41,29 @@ test('apply is idempotent, rollback exact, drift refused without mutation', () =
     writeFileSync(join(dir, base, 'usage.js'), '// changed upstream');
     assert.throws(() => apply(t, { runTests: false }), /Incompatible/);
     assert.equal(readFileSync(manifest, 'utf8'), before);
+  } finally { rmSync(dir, { recursive: true, force: true }); rmSync(state, { force: true }); }
+});
+test('recover restores vanilla files when .state is missing', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'paseo-patch-recover-test-'));
+  const t = { ...target, server: dir };
+  const state = join(ROOT, '.state', `${sha(dir).slice(0, 20)}.json`);
+  try {
+    mkdirSync(join(dir, base, 'providers'), { recursive: true });
+    const compatible = JSON.parse(readFileSync(join(ROOT, 'compatibility.json'), 'utf8'));
+    for (const relative of Object.keys(compatible.serverFiles)) cpSync(join(target.server, relative), join(dir, relative));
+    const manifest = join(dir, base, 'manifest.js');
+    if (readFileSync(manifest, 'utf8').startsWith('// paseo-agy-quote:managed')) {
+      const liveState = JSON.parse(readFileSync(join(ROOT, '.state', `${sha(target.server).slice(0, 20)}.json`), 'utf8'));
+      writeFileSync(manifest, liveState.before);
+    }
+    const before = readFileSync(manifest, 'utf8');
+    apply(t, { runTests: false });
+    rmSync(state, { force: true });
+    assert.throws(() => check(t), /run node patch.mjs recover/);
+    assert.match(recover(t), /Recovered vanilla/);
+    assert.equal(readFileSync(manifest, 'utf8'), before);
+    assert.equal(existsSync(join(dir, base, 'providers/antigravity.js')), false);
+    assert.equal(check(t).installed, false);
+    assert.match(recover(t), /already vanilla/);
   } finally { rmSync(dir, { recursive: true, force: true }); rmSync(state, { force: true }); }
 });
