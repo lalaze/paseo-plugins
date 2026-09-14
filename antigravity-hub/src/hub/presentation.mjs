@@ -106,9 +106,37 @@ function planBody(input) {
   return plan && typeof body === 'string' ? { path, body } : plan && path ? { path, body: '' } : null;
 }
 
+export function questionOptionText(option) {
+  const text = typeof option === 'string' ? option : option.text || '';
+  const recommended = /^\s*\((?:recommended|推荐)\)\s*/i;
+  return { text: text.replace(recommended, '').trim(), recommended: recommended.test(text) };
+}
+
+export function questionPresentation(questions, { index = 0, total = questions.length, selected } = {}) {
+  const text = questions.map((question, offset) => {
+    const multiple = question.isMultiSelect ?? question.is_multi_select ?? false;
+    const picked = selected || new Set(question.selectedOptionIds || []);
+    const options = (question.options || []).map((option, i) => {
+      const label = questionOptionText(option);
+      const marker = picked.has(option.id) ? ' ✓ 已选' : '';
+      return `${i + 1}. ${label.text}${label.recommended ? '（推荐）' : ''}${marker}`;
+    });
+    return [total > 1 ? `第 ${index + offset + 1} / ${total} 题 · ${multiple ? '可多选' : '单选'}` : multiple ? '可多选' : '单选',
+      question.question, ...options,
+      question.skipped ? '已跳过此题' : !options.length ? '请取消后在聊天中输入你的回答。' : multiple ? '点击下方编号切换选项，选好后提交。' : '点击下方编号选择对应方案。',
+    ].filter(Boolean).join('\n\n');
+  }).join('\n\n──────────\n\n');
+  return { title: total > 1 ? `需要你确认 · ${index + 1}/${total}` : '需要你确认', kind: 'other',
+    // Older clients may fall back to rawInput; keep that human-readable too.
+    rawInput: text, content: [{ type: 'content', content: { type: 'text', text } }] };
+}
+
 export function toolPresentation(step, call, args) {
   const input = args && typeof args === 'object' && !Array.isArray(args) ? { ...args } : {};
   const name = call?.name || '';
+  const questions = step.requestedInteraction?.askQuestion?.questions || step.askQuestion?.questions ||
+    (/^(ask_user|ask_question|ask_user_question)$/.test(name) ? input.questions : undefined);
+  if (Array.isArray(questions) && questions.length) return questionPresentation(questions);
   const execute = Boolean(step.runCommand || name === 'run_command');
   if (execute) {
     const command = step.runCommand?.commandLine ?? input.CommandLine ?? input.commandLine ?? input.command;

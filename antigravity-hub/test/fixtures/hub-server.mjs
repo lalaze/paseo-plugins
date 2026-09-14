@@ -56,6 +56,15 @@ const server = createServer(async (req, res) => {
         }] } } }); return;
       }
       if (prompt === 'error') steps(id, [{ type: 'CORTEX_STEP_TYPE_ERROR_MESSAGE', status: 'CORTEX_STEP_STATUS_DONE', errorMessage: { error: { shortError: 'fixture execution failed' } } }]);
+      else if (prompt.startsWith('question')) {
+        const questions = [{ question: '请选择前端改动范围', options: [{ id: 'scope-agent', text: '仅更新充值代理管理' }, { id: 'scope-both', text: '同时更新用户管理' }, { id: 'scope-user', text: '仅更新用户管理' }] }];
+        if (prompt === 'question-multiple') questions.push({ question: '选择需要的功能', isMultiSelect: true, options: [{ id: 'toggle', text: '开关' }, { id: 'filter', text: '搜索筛选' }, { id: 'column', text: '列表字段' }] }, { question: '补充说明', options: [] });
+        const waiting = { type: 'CORTEX_STEP_TYPE_ASK_QUESTION', status: 'CORTEX_STEP_STATUS_WAITING', metadata: { sourceTrajectoryStepInfo: { trajectoryId: id, stepIndex: 7 } }, requestedInteraction: { askQuestion: { questions } } };
+        // Include a generic tool as in the reported screenshot, except in the
+        // native-step case, which has no tool metadata at all.
+        if (prompt !== 'question-native') waiting.metadata.toolCall = { id: 'question-tool', name: 'ask_user', argumentsJson: JSON.stringify({ questions: questions.map(q => ({ ...q, options: q.options.map(o => o.text) })), toolSummary: 'Ask user to clarify scope' }) };
+        steps(id, [{ type: 'CORTEX_STEP_TYPE_USER_INPUT', status: 'CORTEX_STEP_STATUS_DONE', userInput: { userResponse: prompt } }, waiting, waiting], true); return;
+      }
       else if (prompt === 'permission') {
         actions.set(id, true);
         steps(id, [
@@ -86,6 +95,16 @@ const server = createServer(async (req, res) => {
   }
   if (method === 'HandleCascadeUserInteraction') {
     const interaction = body.interaction;
+    if (interaction.askQuestion) {
+      const { responses, cancelled } = interaction.askQuestion;
+      // Match Hub's protobuf message shape; the old ["Allow once"] payload
+      // must fail here instead of being silently accepted by the fixture.
+      if (typeof cancelled !== 'boolean' || !Array.isArray(responses) || responses.some(r => !r || typeof r !== 'object' || !Array.isArray(r.selectedOptionIds) || r.selectedOptionIds.some(id => !r.options.some(o => o.id === id)))) {
+        res.writeHead(400); res.end('{"message":"invalid AskQuestionEntry responses"}'); return;
+      }
+      record({ interaction }); res.end('{}');
+      setTimeout(() => steps(body.cascadeId, [text(cancelled ? 'question cancelled' : 'question answered')], true), 10); return;
+    }
     const allow = interaction.permission?.allow ?? interaction.approvalInteraction?.confirm ?? interaction.runCommand?.confirm;
     record({ decision: interaction.permission, interaction }); res.end('{}');
     setTimeout(() => { steps(body.cascadeId, [text(allow ? 'approved' : 'denied')]); frame(body.cascadeId, { fullyIdle: true }); }, 10); return;

@@ -149,3 +149,74 @@ test('Hub ACP plan mode shows Proceed, starts execution, and restores the saved 
     assert.equal(rpcLog().filter(x => x.interaction).at(-1).interaction.approvalInteraction.confirm, true);
   } finally { await c.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('Hub ACP submits structured question answers with actual option IDs, multi-select, skip and cancellation', { timeout: 30000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hub-acp-questions-'));
+  copyFileSync(join(ROOT, 'test/fixtures/hub-server.mjs'), join(dir, 'fake-hub')); chmodSync(join(dir, 'fake-hub'), 0o700);
+  writeFileSync(join(dir, 'rpc.jsonl'), '');
+  const c = client(dir);
+  const interactions = () => readFileSync(join(dir, 'rpc.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse).filter(x => x.method === 'HandleCascadeUserInteraction');
+  const select = (request, optionId) => c.send({ id: request.id, result: { outcome: { outcome: 'selected', optionId } } });
+  const start = async text => {
+    const { sessionId } = await c.request('session/new', { cwd: dir, mcpServers: [] });
+    return { sessionId, running: c.request('session/prompt', { sessionId, prompt: [{ type: 'text', text }] }) };
+  };
+  try {
+    for (const name of ['question', 'question-native']) {
+      const { sessionId, running } = await start(name);
+      const request = await c.permission();
+      assert.equal(request.params.toolCall.title, '需要你确认');
+      assert.equal(typeof request.params.toolCall.rawInput, 'string');
+      assert.doesNotMatch(request.params.toolCall.rawInput, /toolSummary|is_multi_select|toolAction/);
+      assert.deepEqual(request.params.options.map(o => o.name), ['选择 1', '选择 2', '选择 3', '跳过此题', '取消回答']);
+      assert.match(request.params.toolCall.content[0].content.text, /2\. 同时更新用户管理/);
+      const snapshot = c.notifications.filter(n => n.sessionId === sessionId && n.update.toolCallId === request.params.toolCall.toolCallId).at(-1).update;
+      assert.deepEqual(snapshot.content, request.params.toolCall.content);
+      assert.equal(snapshot.rawInput, request.params.toolCall.rawInput);
+      select(request, 'answer:1');
+      assert.deepEqual(await running, { stopReason: 'end_turn' });
+      const sent = interactions().filter(x => x.body.cascadeId === sessionId);
+      assert.equal(sent.length, 1, 'duplicate waiting snapshots must not ask twice');
+      assert.equal(sent[0].body.interaction.trajectoryId, sessionId);
+      assert.equal(sent[0].body.interaction.stepIndex, 7);
+      assert.deepEqual(sent[0].body.interaction.askQuestion, { responses: [{ question: '请选择前端改动范围', options: [{ id: 'scope-agent', text: '仅更新充值代理管理' }, { id: 'scope-both', text: '同时更新用户管理' }, { id: 'scope-user', text: '仅更新用户管理' }], isMultiSelect: false, selectedOptionIds: ['scope-both'], writeInResponse: '', skipped: false }], cancelled: false });
+    }
+    const multiple = await start('question-multiple');
+    select(await c.permission(), 'answer:2');
+    let request = await c.permission();
+    assert.match(request.params.toolCall.title, /2\/3/);
+    assert.ok(!request.params.options.some(o => o.optionId === 'submit'));
+    select(request, 'answer:0');
+    request = await c.permission();
+    assert.equal(request.params.options[0].name, '☑ 1');
+    select(request, 'answer:1');
+    select(await c.permission(), 'answer:0'); // Toggle the first choice off.
+    request = await c.permission();
+    assert.equal(request.params.options[0].name, '☐ 1');
+    assert.equal(request.params.options[1].name, '☑ 2');
+    assert.equal(interactions().filter(x => x.body.cascadeId === multiple.sessionId).length, 0);
+    select(request, 'submit');
+    request = await c.permission();
+    assert.match(request.params.toolCall.title, /3\/3/);
+    select(request, 'skip');
+    await multiple.running;
+    const answers = interactions().at(-1).body.interaction.askQuestion;
+    assert.equal(answers.cancelled, false);
+    assert.deepEqual(answers.responses.map(r => r.selectedOptionIds), [['scope-user'], ['filter'], []]);
+    assert.deepEqual(answers.responses.map(r => r.skipped), [false, false, true]);
+
+    for (const outcome of [{ outcome: 'selected', optionId: 'cancel' }, { outcome: 'selected', optionId: 'allow_once' }, { outcome: 'cancelled' }]) {
+      const { running } = await start('question-multiple');
+      select(await c.permission(), 'answer:0');
+      const request = await c.permission();
+      c.send({ id: request.id, result: { outcome } });
+      await running;
+      assert.deepEqual(interactions().at(-1).body.interaction.askQuestion, { responses: [], cancelled: true });
+    }
+    const cancelled = await start('question');
+    await c.permission();
+    c.send({ method: 'session/cancel', params: { sessionId: cancelled.sessionId } });
+    assert.deepEqual(await cancelled.running, { stopReason: 'cancelled' });
+    assert.equal(interactions().filter(x => x.body.cascadeId === cancelled.sessionId).length, 0);
+  } finally { await c.close(); rmSync(dir, { recursive: true, force: true }); }
+});

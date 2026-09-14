@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { rpc, updates, stopHub } from './runtime.mjs';
 import { mcpSpec, promptContent } from './content.mjs';
-import { markdownSnapshot, toolPresentation, PLAN_MODE_INJECTION, isPlanConfirmation, isPlanFile, planEntries } from './presentation.mjs';
+import { markdownSnapshot, toolPresentation, questionPresentation, questionOptionText, PLAN_MODE_INJECTION, isPlanConfirmation, isPlanFile, planEntries } from './presentation.mjs';
 
 if (process.argv.includes('--version')) { console.log('agy-hub-acp 0.3.0'); process.exit(0); }
 
@@ -96,7 +96,7 @@ function emitPlan(s, text) {
 }
 function toolUpdate(s, step, index, u) {
   const call = step.metadata?.toolCall || step.mcpTool?.toolCall;
-  if (!call && !step.runCommand && !step.generic?.args && !step.writeFile) return null;
+  if (!call && !step.runCommand && !step.generic?.args && !step.writeFile && !step.askQuestion && !step.requestedInteraction?.askQuestion) return null;
   const id = call?.id || `${u.trajectoryId}:${index}`;
   let input = step.generic?.args || {};
   try { if (call?.argumentsJson) input = { ...input, ...JSON.parse(call.argumentsJson) }; } catch {}
@@ -120,6 +120,44 @@ function selectedAllow(result, options) {
   const chosen = options.find(o => o.optionId === optionId);
   return { allow: Boolean(chosen?.kind?.startsWith('allow')), optionId };
 }
+async function answerQuestions(s, request, tool, key, signal) {
+  const questions = request.questions || [];
+  if (!questions.length) throw new Error('Hub question interaction has no questions');
+  const responses = [];
+  for (const [index, question] of questions.entries()) {
+    const choices = question.options || [];
+    const selected = new Set();
+    let skipped = false;
+    while (true) {
+      // ACP permission responses contain one option ID. For multiple selection,
+      // offer toggles until the user explicitly submits the selected set.
+      const options = choices.map((choice, i) => ({ optionId: `answer:${i}`, name: `${question.isMultiSelect ? (selected.has(choice.id) ? '☑ ' : '☐ ') : '选择 '}${i + 1}${questionOptionText(choice).recommended ? ' · 推荐' : ''}`, kind: 'allow_once' }));
+      if (question.isMultiSelect && selected.size) options.push({ optionId: 'submit', name: '提交所选答案', kind: 'allow_once' });
+      options.push({ optionId: 'skip', name: '跳过此题', kind: 'reject_once' }, { optionId: 'cancel', name: '取消回答', kind: 'reject_once' });
+      const toolCall = { toolCallId: tool?.toolCallId || key, status: 'pending',
+        ...questionPresentation([question], { index, total: questions.length, selected }) };
+      // Paseo can use its cached tool snapshot for permission details. Refresh
+      // it before every question/toggle so that clients show the current choice.
+      notify(s.id, { sessionUpdate: s.tools.has(toolCall.toolCallId) ? 'tool_call_update' : 'tool_call', ...toolCall });
+      s.tools.set(toolCall.toolCallId, JSON.stringify(toolCall));
+      const result = await requestClient('session/request_permission', {
+        sessionId: s.id,
+        toolCall,
+        options,
+      }, signal);
+      const optionId = result?.outcome?.outcome === 'selected' ? result.outcome.optionId : null;
+      if (!options.some(o => o.optionId === optionId) || optionId === 'cancel') return { responses: [], cancelled: true };
+      if (optionId === 'skip') { selected.clear(); skipped = true; break; }
+      if (optionId === 'submit') break;
+      const choice = choices[Number(optionId.slice('answer:'.length))];
+      if (selected.has(choice.id)) selected.delete(choice.id); else selected.add(choice.id);
+      if (!question.isMultiSelect) break;
+    }
+    // Hub responses are AskQuestionEntry messages, not strings or button labels.
+    responses.push({ question: question.question, options: choices, isMultiSelect: Boolean(question.isMultiSelect), selectedOptionIds: [...selected], writeInResponse: '', skipped });
+  }
+  return { responses, cancelled: false };
+}
 async function handlePermission(s, step, tool, signal) {
   const info = step.metadata?.sourceTrajectoryStepInfo;
   const request = step.requestedInteraction;
@@ -128,6 +166,15 @@ async function handlePermission(s, step, tool, signal) {
   if (s.permissions.has(key) || s.pendingPermissions.has(key)) return false;
   const type = Object.keys(request).find(k => INTERACTION_TYPES.includes(k));
   if (!type) throw new Error('Unsupported Hub interaction; cancelled to avoid hanging.');
+  if (type === 'askQuestion') {
+    s.pendingPermissions.add(key);
+    try {
+      const askQuestion = await answerQuestions(s, request.askQuestion, tool, key, signal);
+      await rpc('HandleCascadeUserInteraction', { cascadeId: s.id, interaction: { trajectoryId: info.trajectoryId, stepIndex: info.stepIndex || 0, askQuestion } }, signal);
+      s.permissions.add(key);
+      return true;
+    } finally { s.pendingPermissions.delete(key); }
+  }
   const path = tool?.locations?.[0]?.path || tool?.rawInput?.TargetFile || tool?.rawInput?.targetFile;
   const switchMode = type === 'approvalInteraction' || s.mode === 'plan' && (tool?.kind === 'think' || isPlanFile(path));
   const options = permissionOptions(switchMode);
@@ -138,9 +185,8 @@ async function handlePermission(s, step, tool, signal) {
   s.pendingPermissions.add(key);
   try {
     const result = await requestClient('session/request_permission', { sessionId: s.id, toolCall, options }, signal);
-    const { allow, optionId } = selectedAllow(result, options);
+    const { allow } = selectedAllow(result, options);
     const value = type === 'permission' || type === 'filePermission' ? { allow, scope: 'PERMISSION_SCOPE_ONCE' }
-      : type === 'askQuestion' ? { responses: allow ? [options.find(o => o.optionId === optionId)?.name].filter(Boolean) : [], cancelled: !allow }
       : { confirm: allow };
     if (type === 'runCommand') { value.proposedCommandLine = step.runCommand?.commandLine || ''; value.submittedCommandLine = value.proposedCommandLine; }
     if (type === 'filePermission') value.absolutePathUri = request.filePermission?.absolutePathUri;
