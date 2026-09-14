@@ -20,8 +20,8 @@ export default function contribute(client: PluginClientContext) {
   } });
   client.addTimelineRenderer({ kind: "director-reply", version: 1, schema: ReplyCardSchema, Component: DirectorReplyCard });
   client.addSurface("director", DirectorSurface);
-  client.addWorkspacePanel({ id: "director", title: "Director", icon: "Workflow", context: "workspace", Component: props => <DirectorPanel {...props} requests={command.requests} /> });
-  client.addCommandCenterItem({ id: "open-director", title: "Director：安排 AI 协作", icon: "Workflow", context: "workspace", onSelect: ({ openPanel }) => openPanel("director") });
+  client.addWorkspacePanel({ id: "director", title: "AI 协作", icon: "Workflow", context: "workspace", Component: props => <DirectorPanel {...props} requests={command.requests} /> });
+  client.addCommandCenterItem({ id: "open-director", title: "AI 协作：安排任务", icon: "Workflow", context: "workspace", onSelect: ({ openPanel }) => openPanel("director") });
   client.addSlashCommand({ name: "director", description: "使用已保存的 AI 分工下发任务；留空打开面板", argumentHint: "任务描述", context: "workspace", onSubmit: command.submit });
   return () => command.dispose();
 }

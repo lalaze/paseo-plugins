@@ -84,7 +84,7 @@ function DirectorContent({ theme, layout, navigation, host, initialDirectory = "
   const showCreateActions = !selectedId && page === "create" && !showSettings && !!settings && !settingsQuery.isError;
   return <KeyboardAvoidingView behavior={layout.platform === "ios" ? "padding" : undefined} style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface0 }}>
     <View style={{ padding: layout.compact ? 12 : 24, maxWidth: 1100, width: "100%", alignSelf: "center", flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-      <Text style={{ color: theme.colors.foreground, fontSize: 26, fontWeight: "700" }}>Director</Text>
+      <Text style={{ color: theme.colors.foreground, fontSize: 26, fontWeight: "700" }}>AI 协作</Text>
       <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}><Button theme={theme} secondary selected={page === "tasks" && !selectedId} disabled={busy || settingsSaving} label="任务记录" onPress={() => navigate("tasks")} /><Button theme={theme} secondary selected={page === "create" && !showSettings} disabled={busy || settingsSaving} label="新建任务" onPress={() => navigate("create")} /><Button theme={theme} secondary selected={showSettings} disabled={busy || settingsSaving} label="协作设置" onPress={() => navigate("settings")} /></View>
     </View>
     {!!notice && <View accessibilityLiveRegion="polite"><Label theme={theme}>{notice}</Label></View>}

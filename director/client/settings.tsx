@@ -186,7 +186,7 @@ function SettingsFormEditor({ initial, seed, cwd, hostId, theme, compact = false
       <Card title="需要多个执行 AI？" theme={theme}>
         <Label theme={theme} muted>通常选一个执行 AI 就够了。你也可以指定前端、后端等任务分别交给谁。</Label>
         <Disclosure theme={theme} title="按任务分配不同 AI" summary={assignedCount ? `已设置 ${assignedCount} 条指定规则` : "未指定的任务都交给默认执行 AI"} defaultOpen={!!ruleProfile}>
-          <Label theme={theme} muted>优先级：具体任务指定 → 类型指定 → 设计 AI 挑选（需开启）→ 默认执行者。这里选择已配置的供应商与模型，执行会话由 Director 创建。</Label>
+          <Label theme={theme} muted>优先级：具体任务指定 → 类型指定 → 设计 AI 挑选（需开启）→ 默认执行者。这里选择已配置的供应商与模型，执行会话由 AI 协作创建。</Label>
           <SelectionCard theme={theme} title="允许设计 AI 挑选执行者" description="仅从你已配置的 AI 中选择；你指定的任务和类型规则仍然优先。" selected={allowSelection} onPress={() => setAllowSelection(!allowSelection)} />
           {[...Object.entries(overrides).map(([key, id]) => ({ kind: "category", key, id })), ...Object.entries(taskOverrides).map(([key, id]) => ({ kind: "task", key, id }))].map(rule => <View key={`${rule.kind}-${rule.key}`} style={{ gap: 6 }}>
             <Label theme={theme}>{rule.kind === "category" ? "类型" : "任务"} {rule.key} → {profiles.find(p => p.id === rule.id)?.label ?? rule.id}</Label>

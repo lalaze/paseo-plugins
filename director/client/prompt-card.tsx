@@ -17,7 +17,7 @@ export function DirectorPromptCard({ item, theme, layout }: PluginTimelineItemPr
   const actor = data.actor ?? (data.stage === "execute" ? "执行 AI" : "总 AI");
   return <View style={{ width: "100%", maxWidth: 900, minWidth: 0, alignSelf: "center", paddingVertical: 8 }}>
     <Card theme={theme} title={`${actor} · ${stage.title}`}>
-      <Label theme={theme} muted>Director 自动交接 · 本轮任务</Label>
+      <Label theme={theme} muted>AI 协作自动交接 · 本轮任务</Label>
       <Text selectable style={{ color: theme.colors.foreground, fontSize: 17, lineHeight: 25, fontWeight: "600" }}>{data.goal}</Text>
       <Label theme={theme}>{stage.instruction}</Label>
       {!!data.preInstructions?.length && <Disclosure theme={theme} title="本轮前置提示词" summary={`${data.preInstructions.length} 项要求 · 展开查看实际发送的内容`}>

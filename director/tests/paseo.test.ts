@@ -21,11 +21,11 @@ test("director and worker are created in the exact originating workspace; legacy
   await gateway.create(run, lead, run.settings.profiles[0], "unused");
   await h.complete(plan); const worker = await h.until("execute");
   await gateway.create({ ...run, tasks: h.run().tasks, directorAgentId: "original-director" }, worker, run.settings.profiles[1], "unused");
-  assert.deepEqual(calls, [{ workspaceId: "origin-workspace", parent: undefined, title: "Director · 总 AI · 实现新功能" }, { workspaceId: "origin-workspace", parent: "original-director", title: "Director · 执行 AI · 实现" }]);
+  assert.deepEqual(calls, [{ workspaceId: "origin-workspace", parent: undefined, title: "AI 协作 · 总 AI · 实现新功能" }, { workspaceId: "origin-workspace", parent: "original-director", title: "AI 协作 · 执行 AI · 实现" }]);
   assert.deepEqual(opened, []);
   await gateway.create({ ...run, workspaceId: undefined }, lead, run.settings.profiles[0], "unused");
   assert.deepEqual(opened, [h.directory]); assert.equal(calls[2].workspaceId, "isolated-workspace");
-  assert.deepEqual(titles, ["Director · 实现新功能"]);
+  assert.deepEqual(titles, ["AI 协作 · 实现新功能"]);
 });
 
 test("workspace names are pinned before branch changes and explicit titles are respected", async t => {
@@ -58,7 +58,7 @@ test("separate reviewer uses its configured provider, permissions and workspace 
   t.mock.method(gateway.api.workspaces, "open", async () => { throw new Error("不得新建工作区"); });
   const run = { ...h.run(), cwd: h.directory, workspaceId: "original-workspace" };
   await gateway.create(run, audit, run.settings.profiles[2], "test-review-token");
-  assert.equal(calls[0].parent, run.directorAgentId); assert.match(calls[0].title, /^Director · 审核 AI ·/);
+  assert.equal(calls[0].parent, run.directorAgentId); assert.match(calls[0].title, /^AI 协作 · 审核 AI ·/);
   assert.equal(calls[0].labels["director-role"], "reviewer");
   assert.equal(calls[0].config.provider, "vendor-c/model-c"); assert.equal(calls[0].config.modeId, "auto-review"); assert.equal(calls[0].config.thinkingOptionId, "high");
   assert.equal(calls[0].config.mcpServers.director.headers.Authorization, "Bearer test-review-token");

@@ -36,7 +36,7 @@ export function createDirectorCommand() {
     if (goal.length > 32000) throw new Error("任务描述最多 32000 个字符，请缩短后提交。");
     const { id: workspaceId, directory } = context.workspace;
     if (!directory.trim()) throw new Error("请先打开一个项目工作区，再使用 /director 下发任务。");
-    if (disposed) throw new Error("Director 已重新加载，请重新提交命令。");
+    if (disposed) throw new Error("AI 协作已重新加载，请重新提交命令。");
     const previous = attempts.get(workspaceId);
     // Each workspace has one creation in flight. Keep the request ID on failure
     // so a retry reconciles a committed run if its RPC response was lost.
@@ -53,7 +53,7 @@ export function createDirectorCommand() {
     const pending = Promise.resolve().then(async () => {
       publish({ status: "submitting" });
       try {
-        if (disposed) throw new Error("Director 已重新加载，请重新提交命令。");
+        if (disposed) throw new Error("AI 协作已重新加载，请重新提交命令。");
         context.openPanel("director");
         const saved = await context.rpc(getSettingsRpc, {});
         if (saved.error) throw new Error(saved.error);
@@ -62,7 +62,7 @@ export function createDirectorCommand() {
           attempts.delete(workspaceId);
           return;
         }
-        if (disposed) throw new Error("Director 已重新加载，请重新提交命令。");
+        if (disposed) throw new Error("AI 协作已重新加载，请重新提交命令。");
         // The server loads the saved host configuration, just like a new task.
         const result = await context.rpc(createRunRpc, { requestId: attempt.requestId, repository: directory, goal, workspaceId });
         publish({ status: "created", runId: result.id });

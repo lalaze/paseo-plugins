@@ -55,7 +55,7 @@ export class PaseoGateway implements AgentGateway {
     this.api = createPaseoApi(this.driver);
   }
   async connect() {
-    if (this.isClosed) throw new Error("Director 后台已关闭");
+    if (this.isClosed) throw new Error("AI 协作后台已关闭");
     if (this.driver.getConnectionState().status === "connected") return;
     if (!this.connectPromise) this.connectPromise = this.driver.connect().finally(() => { this.connectPromise = undefined; });
     await this.connectPromise;
@@ -86,14 +86,14 @@ export class PaseoGateway implements AgentGateway {
     const workspace = run.workspaceId ? this.api.workspaces.ref(run.workspaceId) : await this.api.workspaces.open(run.cwd);
     if (run.workspaceId && await realpath(await this.workspaceDirectory(run.workspaceId)) !== await realpath(run.cwd)) throw new Error("工作区目录已变化，请检查后重新发起任务");
     const goalTitle = Array.from(run.goal.trim().replace(/\s+/g, " ")).slice(0, 60).join("");
-    if (!run.workspaceId) await this.retainWorkspaceName(workspace.id, `Director · ${goalTitle}`);
+    if (!run.workspaceId) await this.retainWorkspaceName(workspace.id, `AI 协作 · ${goalTitle}`);
     const taskTitle = run.tasks.find(task => task.spec.id === op.taskId)?.spec.title ?? goalTitle;
     const role = operationRole(run.settings, op.kind);
     const agent = await workspace.agents.create({
       config: { provider: profile.provider, ...(profile.modeId ? { modeId: profile.modeId } : {}), ...(profile.thinkingOptionId ? { thinkingOptionId: profile.thinkingOptionId } : {}), systemPrompt: ROLE_PROMPT,
         ...(profile.transport === "mcp" ? { mcpServers: { director: { type: "http", url: this.mcpUrl(), headers: { Authorization: `Bearer ${token}` } } } } : {}) },
       parent: role !== "director" ? run.directorAgentId : undefined,
-      title: `Director · ${operationLabel(run.settings, op.kind)} · ${op.kind === "execute" ? Array.from(taskTitle.trim().replace(/\s+/g, " ")).slice(0, 60).join("") : goalTitle}`,
+      title: `AI 协作 · ${operationLabel(run.settings, op.kind)} · ${op.kind === "execute" ? Array.from(taskTitle.trim().replace(/\s+/g, " ")).slice(0, 60).join("") : goalTitle}`,
       requestId: op.id, labels: { "director-run": run.id, "director-operation": op.id, "director-role": role },
     });
     return agent.id;

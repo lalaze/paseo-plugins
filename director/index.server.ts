@@ -18,7 +18,7 @@ export default function contribute(server: PluginServerContext) {
   mcp = new DirectorMcp(store, engine);
   let startupError: string | null = null, stopped = false;
   const ready = mcp.start().then(() => { if (!stopped) engine.start(); }).catch(error => {
-    startupError = `Director 后台启动失败：${error instanceof Error ? error.message : String(error)}`;
+    startupError = `AI 协作后台启动失败：${error instanceof Error ? error.message : String(error)}`;
     console.error(startupError);
   });
   server.handle(getSettingsRpc, () => ({ settings: store.settings() ?? null, error: startupError }));

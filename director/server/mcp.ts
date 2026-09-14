@@ -10,7 +10,7 @@ export class DirectorMcp {
   private server?: Server;
   private port = 0;
   constructor(private store: Store, private engine: Engine) {}
-  url() { if (!this.port) throw new Error("Director MCP 尚未启动"); return `http://127.0.0.1:${this.port}/mcp`; }
+  url() { if (!this.port) throw new Error("AI 协作 MCP 尚未启动"); return `http://127.0.0.1:${this.port}/mcp`; }
   async start() {
     this.server = createServer(async (req, res) => {
       if (req.url !== "/mcp") { res.writeHead(404).end(); return; }

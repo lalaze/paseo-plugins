@@ -36,7 +36,7 @@ export function DirectorReplyCard({ item, agentId, theme, layout }: PluginTimeli
       <Label theme={theme}>{data.kind === "draft" ? data.summary || (running ? "正在生成回复…" : "暂无可展示的摘要。") : data.payload.summary}</Label>
       {data.kind === "draft" && <>
         {Boolean(data.architecture) && <Section title="实现方案" theme={theme} initiallyOpen><Label theme={theme}>{data.architecture}</Label></Section>}
-        <Label theme={theme} muted>{running ? "回复仍在生成，任务安排和审核结论以完整结果为准。" : "这段回复尚未完整解析，请在 Director 查看处理状态。"}</Label>
+        <Label theme={theme} muted>{running ? "回复仍在生成，任务安排和审核结论以完整结果为准。" : "这段回复尚未完整解析，请在「AI 协作」查看处理状态。"}</Label>
       </>}
       {data.kind === "plan" && <>
         <Section title="实现方案" theme={theme} initiallyOpen><Label theme={theme}>{data.payload.architecture}</Label></Section>
@@ -62,7 +62,7 @@ export function DirectorReplyCard({ item, agentId, theme, layout }: PluginTimeli
           <Label theme={theme}>问题：{finding.problem}</Label><Label theme={theme}>修改方法：{finding.change}</Label><Label theme={theme}>复验要求：{finding.verification}</Label><Label theme={theme} muted>对应任务：{finding.taskId}</Label>
         </Section>)}
       </>}
-      <Label theme={theme} muted>任务是否已进入下一步，请在 Director 查看。</Label>
+      <Label theme={theme} muted>任务是否已进入下一步，请在「AI 协作」查看。</Label>
       <Section title="查看原始回复" theme={theme}><ScrollView nestedScrollEnabled style={{ maxHeight: 400 }}><Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18, fontFamily: layout.platform === "ios" ? "Menlo" : "monospace" }}>{data.raw}</Text></ScrollView></Section>
     </Card>
   </View>;

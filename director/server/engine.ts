@@ -46,7 +46,7 @@ export class Engine {
         const directory = await this.agents.workspaceDirectory(input.workspaceId);
         const source = await realpath(input.repository);
         if (source !== await realpath(directory)) throw new Error("项目路径与当前工作区不一致，请使用当前目录或选择独立工作区");
-        if (this.store.unfinishedWorkspaceRuns().some(r => r.workspaceId === input.workspaceId || r.cwd === source)) throw new Error("当前目录已有未结束的 Director 任务，请先完成或取消该任务");
+        if (this.store.unfinishedWorkspaceRuns().some(r => r.workspaceId === input.workspaceId || r.cwd === source)) throw new Error("当前目录已有未结束的 AI 协作任务，请先完成或取消该任务");
         // Untitled Paseo workspaces derive their name from the live branch.
         // Pin the existing display name before prepare() switches that branch.
         await this.agents.retainWorkspaceName(input.workspaceId);

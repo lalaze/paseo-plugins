@@ -24,7 +24,7 @@ export class GitRepository implements Repository {
     if (!isAbsolute(repository)) throw new Error("仓库路径必须是绝对路径");
     const repositoryRoot = await realpath(await this.git(await realpath(repository), ["rev-parse", "--show-toplevel"]));
     if (currentWorkspace && await realpath(repository) !== repositoryRoot) throw new Error("请在项目根目录的工作区启动，或选择独立工作区执行");
-    if ((await this.git(repositoryRoot, ["ls-files", "--unmerged"])).trim()) throw new Error("仓库存在未解决的合并冲突，请先解决冲突后再启动 Director");
+    if ((await this.git(repositoryRoot, ["ls-files", "--unmerged"])).trim()) throw new Error("仓库存在未解决的合并冲突，请先解决冲突后再启动 AI 协作");
     if (!currentWorkspace && (await this.git(repositoryRoot, ["status", "--porcelain"])).trim()) throw new Error("独立工作区从当前提交创建，不包含未提交改动。要审核或修复当前改动，请选择「在当前工作区执行」或「使用已有工作区」");
     const baseCommit = await this.git(repositoryRoot, ["rev-parse", "HEAD"]);
     const cwd = join(this.root, "worktrees", runId), branch = `director/${runId}`;
@@ -107,8 +107,8 @@ export function executeCheck(command: Command, cwd: string, signal: AbortSignal)
     if (signal.aborted) stop();
     const finish = (exitCode: number | null) => {
       if (finished) return; finished = true; clearTimeout(timer); signal.removeEventListener("abort", stop);
-      if (timedOut) output += "\n[Director: 验证超时]";
-      if (signal.aborted) output += "\n[Director: 验证取消]";
+      if (timedOut) output += "\n[AI 协作: 验证超时]";
+      if (signal.aborted) output += "\n[AI 协作: 验证取消]";
       resolve({ exitCode: timedOut || signal.aborted ? null : exitCode, output });
     };
     child.stdout.on("data", append); child.stderr.on("data", append);

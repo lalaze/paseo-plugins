@@ -20,7 +20,7 @@ export class Store {
         if (owner) {
           let alive = true;
           try { process.kill(owner.pid, 0); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ESRCH") alive = false; }
-          if (alive) throw new Error("另一个 Director 实例正在使用此数据库");
+          if (alive) throw new Error("另一个 AI 协作实例正在使用此数据库");
         }
         this.setMeta("owner", { pid: process.pid, token: this.owner }); this.db.exec("COMMIT");
       } catch (e) { this.db.exec("ROLLBACK"); this.db.close(); throw e; }

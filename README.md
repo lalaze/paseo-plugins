@@ -36,7 +36,7 @@ node -e 'console.log(require("fs").realpathSync(process.argv[1]))' "$(which pase
 
 插件与补丁均在 daemon 用户权限下运行，安装前请阅读对应目录源码。
 
-## [Director](director)
+## [AI 协作（Director）](director)
 
 由你选择设计、执行和审核 AI，完成设计、实现、审核与验收协作。插件 ID：`paseo-director`。
 

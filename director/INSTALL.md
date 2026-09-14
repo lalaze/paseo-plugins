@@ -1,6 +1,6 @@
-# 在其他机器安装 Paseo Director
+# 在其他机器安装 Paseo AI 协作
 
-插件安装在运行 Paseo daemon 的主机上。如果另一台电脑只是连接同一个 daemon，直接打开 Director 即可，不需要再安装。
+插件安装在运行 Paseo daemon 的主机上。如果另一台电脑只是连接同一个 daemon，直接打开 AI 协作即可，不需要再安装。
 
 ## 准备目标主机
 
@@ -32,7 +32,7 @@ paseo plugin install git@github.com:lalaze/paseo-plugins.git:director --ref main
 /director 为这个项目增加登录功能，并补齐测试
 ```
 
-「新建工作区」页面不支持插件命令，在那里发送 `/director` 会进入普通 AI 聊天。请先进入已有 Git 工作区，再用 `/director` 或工作区命令中心的 **Director：安排 AI 协作** 打开面板；默认在当前工作区执行，不额外增加侧栏工作区条目。只有选择「新建独立工作区」才需要填写项目路径，并新增独立工作区。进入已有工作区后，输入 `/dir` 应能看到 `/director` 候选。
+「新建工作区」页面不支持插件命令，在那里发送 `/director` 会进入普通 AI 聊天。请先进入已有 Git 工作区，再用 `/director` 或工作区命令中心的 **AI 协作：安排任务** 打开面板；默认在当前工作区执行，不额外增加侧栏工作区条目。只有选择「新建独立工作区」才需要填写项目路径，并新增独立工作区。进入已有工作区后，输入 `/dir` 应能看到 `/director` 候选。
 
 ## 更新
 
@@ -71,7 +71,7 @@ paseo plugin add lalaze/paseo-plugins --path director
 paseo plugin ls paseo-director --json
 ```
 
-Paseo 0.8.0 的移除操作不会删除原来的源码目录或 Director 数据目录。同一 daemon、同一 Director 数据目录下重新安装，会继续使用已保存的团队配置和任务记录。
+Paseo 0.8.0 的移除操作不会删除原来的源码目录或 AI 协作数据目录。同一 daemon、同一 AI 协作数据目录下重新安装，会继续使用已保存的团队配置和任务记录。
 
 ## 从源码包安装（备选）
 
@@ -110,7 +110,7 @@ Paseo 0.8.0 的移除操作不会删除原来的源码目录或 Director 数据�
 paseo plugin remove paseo-director
 ```
 
-移除只取消安装登记，不会删除原来的源码目录、`$PASEO_HOME/director` 数据目录或工作区代码。同一 daemon、同一 Director 数据目录下重新安装，会继续使用已保存的团队配置和任务记录。
+移除只取消安装登记，不会删除原来的源码目录、`$PASEO_HOME/director` 数据目录或工作区代码。同一 daemon、同一 AI 协作数据目录下重新安装，会继续使用已保存的团队配置和任务记录。
 
 失败时查看：
 
