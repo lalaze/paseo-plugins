@@ -150,7 +150,7 @@ install_plugin() {
 
   case "$kind" in
     git|local)
-      note "SKIP $id（已从本仓库安装）"
+      note "SKIP ${id}（已从本仓库安装）"
       skip=$((skip + 1))
       ;;
     missing)
@@ -158,9 +158,9 @@ install_plugin() {
         note "OK   $id"
         ok=$((ok + 1))
         need_reload=1
-        [ "$DRY_RUN" = 0 ] && refresh_plugins
+        if [ "$DRY_RUN" = 0 ]; then refresh_plugins; fi
       else
-        note "FAIL $id（安装失败）"
+        note "FAIL ${id}（安装失败）"
         fail=$((fail + 1))
       fi
       ;;
@@ -168,19 +168,19 @@ install_plugin() {
       path="$(info_field "$info" path)"
       remote="$(info_field "$info" remote)"
       if [ "$REPLACE" = 1 ]; then
-        say "→ 替换 $id（${remote:-$path}）"
+        say "→ 替换 ${id}（${remote:-$path}）"
         if [ "$DRY_RUN" = 1 ]; then
-          note "DRY $id（remove + install）"
+          note "DRY ${id}（remove + install）"
           ok=$((ok + 1))
           return
         fi
         if paseo plugin remove "$id" && add_plugin; then
-          note "OK   $id（已从旧来源切换到本仓库）"
+          note "OK   ${id}（已从旧来源切换到本仓库）"
           ok=$((ok + 1))
           need_reload=1
           refresh_plugins
         else
-          note "FAIL $id（替换失败）"
+          note "FAIL ${id}（替换失败）"
           fail=$((fail + 1))
         fi
       else
@@ -344,7 +344,7 @@ say "=== 安装结果 ==="
 for line in "${RESULTS[@]}"; do
   say "$line"
 done
-say "完成：成功 $ok，跳过 $skip，警告 $warn，失败 $fail"
+say "完成：成功 ${ok}，跳过 ${skip}，警告 ${warn}，失败 $fail"
 
 if [ "$fail" -gt 0 ]; then
   exit 1

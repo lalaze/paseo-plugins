@@ -141,23 +141,23 @@ update_plugin() {
 
   case "$kind" in
     missing)
-      note "SKIP $id（未安装）"
+      note "SKIP ${id}（未安装）"
       skip=$((skip + 1))
       ;;
     git)
       say "→ paseo plugin update $id"
       if run paseo plugin update "$id"; then
-        note "OK   $id（GitHub 更新）"
+        note "OK   ${id}（GitHub 更新）"
         ok=$((ok + 1))
       else
-        note "FAIL $id（paseo plugin update）"
+        note "FAIL ${id}（paseo plugin update）"
         fail=$((fail + 1))
       fi
       ;;
     local)
-      say "→ 本地 $dir：npm ci、typecheck、reload"
+      say "→ 本地 ${dir}：npm ci、typecheck、reload"
       if [ "$DRY_RUN" = 1 ]; then
-        note "DRY $id（本地 reload）"
+        note "DRY ${id}（本地 reload）"
         ok=$((ok + 1))
         return
       fi
@@ -167,10 +167,10 @@ update_plugin() {
         npm run typecheck
         paseo plugin reload "$id"
       ); then
-        note "OK   $id（本地 reload）"
+        note "OK   ${id}（本地 reload）"
         ok=$((ok + 1))
       else
-        note "FAIL $id（本地 reload）"
+        note "FAIL ${id}（本地 reload）"
         fail=$((fail + 1))
       fi
       ;;
@@ -315,7 +315,7 @@ say "=== 更新结果 ==="
 for line in "${RESULTS[@]}"; do
   say "$line"
 done
-say "完成：成功 $ok，跳过 $skip，警告 $warn，失败 $fail"
+say "完成：成功 ${ok}，跳过 ${skip}，警告 ${warn}，失败 $fail"
 
 if [ "$fail" -gt 0 ]; then
   exit 1
