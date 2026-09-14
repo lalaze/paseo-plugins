@@ -13,7 +13,7 @@ export type LaunchRequest = {
 };
 
 // A separate store per plugin contribution keeps different Paseo hosts apart.
-// The SDK cannot pass arbitrary data through openPanel in Paseo 0.8.
+// Keep pending setup and retry state isolated to this host.
 export class LaunchRequests {
   private states = new Map<string, LaunchRequest>();
   private listeners = new Set<() => void>();
@@ -26,12 +26,13 @@ export class LaunchRequests {
   clear() { this.states.clear(); this.listeners.clear(); }
 }
 
-type SubmitContext = Pick<PluginWorkspaceCommandContext, "workspace" | "rpc" | "openPanel"> & { args: string; fresh?: boolean };
+type SubmitContext = Pick<PluginWorkspaceCommandContext, "workspace" | "rpc" | "openSettings"> & { args: string; fresh?: boolean };
 type Attempt = { directory: string; goal: string; requestId: string; pending?: Promise<void> };
 
 export function createDirectorCommand() {
   const requests = new LaunchRequests();
   const attempts = new Map<string, Attempt>();
+  const setup = new Map<string, SubmitContext>();
   let disposed = false;
   async function submit(context: SubmitContext): Promise<void> {
     const goal = context.args.trim();
@@ -57,12 +58,12 @@ export function createDirectorCommand() {
       publish({ status: "submitting" });
       try {
         if (disposed) throw new Error("AI 协作已重新加载，请重新提交命令。");
-        context.openPanel("director");
         const saved = await context.rpc(getSettingsRpc, {});
         if (saved.error) throw new Error(saved.error);
         if (!saved.settings) {
-          publish({ status: "setup", message: "请先保存设计、执行和审核 AI 的安排。任务描述已保留，保存后进入主对话。" });
-          attempts.delete(workspaceId);
+          publish({ status: "setup", message: "请先保存设计、执行和审核 AI 的安排。任务描述已保留，保存后创建主对话标签。" });
+          setup.set(workspaceId, context);
+          context.openSettings("director-settings");
           return;
         }
         if (disposed) throw new Error("AI 协作已重新加载，请重新提交命令。");
@@ -70,6 +71,7 @@ export function createDirectorCommand() {
         const result = await context.rpc(openConversationRpc, { requestId: attempt.requestId, goal: goal || undefined, workspaceId, fresh: context.fresh || !!goal });
         publish({ status: "created", conversationId: result.id, agentId: result.agentId, runId: result.runId });
         attempts.delete(workspaceId);
+        setup.delete(workspaceId);
       } catch (error) {
         publish({ status: "failed", message: `${error instanceof Error ? error.message : String(error)}\n可以重试提交；本次请求标识会保留，避免重复创建。` });
         throw error;
@@ -78,5 +80,8 @@ export function createDirectorCommand() {
     attempt.pending = pending;
     try { await pending; } finally { attempt.pending = undefined; }
   }
-  return { requests, submit, dispose() { disposed = true; attempts.clear(); requests.clear(); } };
+  async function resumeSetup() {
+    for (const context of [...setup.values()]) await submit(context);
+  }
+  return { requests, submit, resumeSetup, dispose() { disposed = true; setup.clear(); attempts.clear(); requests.clear(); } };
 }

@@ -3,15 +3,13 @@ import { useRpc, type PluginClientContext, type PluginTimelineItemProps } from "
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import { resyncConversationRpc, getConversationRpc, listConversationsRpc } from "../shared/rpc";
-import { Button, ErrorText } from "./ui";
-import type { LaunchRequests } from "./launch";
+import { Button, ErrorText, Label } from "./ui";
 
 export const ConversationLinkSchema = z.object({ conversationId: z.string() });
-type OpenAgent = (workspaceId: string, agentId: string) => void;
 
 // Keep links from legacy history and recovery errors; child navigation belongs
 // to Paseo's native subagent control.
-export function createConversationRenderer(openAgent: OpenAgent) {
+export function createConversationRenderer() {
   return function ConversationLink({ item, theme, agentId, host }: PluginTimelineItemProps<z.infer<typeof ConversationLinkSchema>>) {
     const get = useRpc(getConversationRpc), resync = useRpc(resyncConversationRpc);
     const sync = useMutation({ mutationFn: resync });
@@ -23,17 +21,13 @@ export function createConversationRenderer(openAgent: OpenAgent) {
     return <View style={{ gap: 8 }}>
       <ErrorText theme={theme} error={error} />
       {summary?.error && <Button theme={theme} secondary label="重新同步到主对话" disabled={sync.isPending} onPress={() => sync.mutate({ id: summary.id })} />}
-      {migrated && <Button theme={theme} label="进入新的主对话" onPress={() => openAgent(summary.workspaceId, summary.agentId!)} />}
+      {migrated && <Label theme={theme}>此任务已迁移，请从工作区会话列表打开主对话：{summary.title}。</Label>}
     </View>;
   };
 }
-export function installConversationControls(client: PluginClientContext, requests: LaunchRequests) {
+export function installConversationControls(client: PluginClientContext) {
   const headers = new Map<string, ReturnType<PluginClientContext["addHeaderButton"]>>();
   let disposed = false, polling = false;
-  const openAgent: OpenAgent = (workspaceId, agentId) => {
-    requests.set(workspaceId, { status: "created", requestId: `navigation-${agentId}`, goal: "", agentId });
-    client.openPanel("director", { workspaceId });
-  };
   const poll = async () => {
     if (disposed || polling) return; polling = true;
     try {
@@ -51,7 +45,7 @@ export function installConversationControls(client: PluginClientContext, request
     } catch (error) { console.warn("Director controls:", error instanceof Error ? error.message : String(error)); }
     finally { polling = false; }
   };
-  const renderer = client.addTimelineRenderer({ kind: "director-conversation", version: 1, schema: ConversationLinkSchema, Component: createConversationRenderer(openAgent) });
+  const renderer = client.addTimelineRenderer({ kind: "director-conversation", version: 1, schema: ConversationLinkSchema, Component: createConversationRenderer() });
   void poll(); const timer = setInterval(() => { void poll(); }, 2500);
   return () => { disposed = true; clearInterval(timer); renderer(); for (const r of headers.values()) r.remove(); };
 }

@@ -13,7 +13,7 @@ function fixture() {
   };
   const context = {
     args: " 实现登录功能 ", workspace: { id: "workspace-a", directory: "/projects/current" },
-    openPanel: (id: string) => { state.opened.push(id); },
+    openSettings: (id: string) => { state.opened.push(id); },
     rpc: async (contract: { name: string }, input: Record<string, unknown>) => {
       state.calls.push({ name: contract.name, input });
       if (contract.name === "director.settings.get") return { settings: state.saved, error: null };
@@ -27,7 +27,7 @@ function fixture() {
 test("bare slash restores native chat; a goal creates a fresh conversation with saved host roles", async () => {
   const command = createDirectorCommand(), { state, context } = fixture();
   await command.submit({ ...context, args: " " });
-  assert.deepEqual(state.opened, ["director"]); assert.equal(state.calls.length, 2);
+  assert.deepEqual(state.opened, []); assert.equal(state.calls.length, 2);
   await command.submit(context);
   const call = state.calls.filter(c => c.name === "director.conversation.open").at(-1)!;
   assert.equal(call.input.fresh, true); assert.equal(call.input.goal, "实现登录功能");
@@ -41,6 +41,7 @@ test("missing settings opens setup and keeps the goal without creating a task", 
   const command = createDirectorCommand(), { state, context } = fixture(); state.saved = null;
   await command.submit(context);
   assert.equal(state.calls.length, 1);
+  assert.deepEqual(state.opened, ["director-settings"]);
   assert.equal(command.requests.get("workspace-a")?.status, "setup");
   assert.equal(command.requests.get("workspace-a")?.goal, "实现登录功能");
 });
@@ -93,9 +94,22 @@ test("new blank collaboration preserves the selected workspace and fresh intent 
   await command.submit({ ...context, args: "", fresh: true });
   assert.equal(command.requests.get("workspace-a")?.fresh, true);
   state.saved = settings();
-  await command.submit({ ...context, args: "", fresh: true });
+  await command.resumeSetup();
   const call = state.calls.filter(c => c.name === "director.conversation.open").at(-1)!;
   assert.equal(call.input.workspaceId, "workspace-a");
   assert.equal(call.input.fresh, true);
   assert.equal(call.input.goal, undefined);
+});
+
+test("saving setup retries the original request without opening a workspace panel", async () => {
+  const command = createDirectorCommand(), { state, context } = fixture();
+  state.saved = null;
+  await command.submit(context);
+  const requestId = command.requests.get("workspace-a")!.requestId;
+  state.saved = settings();
+  await command.resumeSetup();
+  assert.equal(command.requests.get("workspace-a")!.requestId, requestId);
+  assert.deepEqual(state.opened, ["director-settings"]);
+  await command.resumeSetup();
+  assert.equal(state.calls.filter(c => c.name === "director.conversation.open").length, 1);
 });
