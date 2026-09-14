@@ -83,6 +83,10 @@ export class PaseoGateway implements AgentGateway {
     const catalog = await this.api.providers.waitForReady({ cwd: run.cwd, timeoutMs: 12000 });
     const entry = catalog.entries.find(e => e.provider === provider);
     if (!entry || entry.status !== "ready" || !entry.models?.some(m => m.id === model)) throw new Error(`指定的 AI 不可用：${profile.provider}；请检查 Paseo 的供应商登录与模型配置`);
+    // Resolve the live catalog default explicitly so the selector and new
+    // session agree. Never substitute a different mode for a saved choice.
+    const modeId = profile.modeId || entry.defaultModeId || undefined;
+    if (modeId && entry.modes !== undefined && !entry.modes.some(mode => mode.id === modeId)) throw new Error(`指定的执行权限不可用：${modeId}（${profile.provider}）；请检查供应商配置或重新选择权限后新建任务`);
     const workspace = run.workspaceId ? this.api.workspaces.ref(run.workspaceId) : await this.api.workspaces.open(run.cwd);
     if (run.workspaceId && await realpath(await this.workspaceDirectory(run.workspaceId)) !== await realpath(run.cwd)) throw new Error("工作区目录已变化，请检查后重新发起任务");
     const goalTitle = Array.from(run.goal.trim().replace(/\s+/g, " ")).slice(0, 60).join("");
@@ -90,7 +94,7 @@ export class PaseoGateway implements AgentGateway {
     const taskTitle = run.tasks.find(task => task.spec.id === op.taskId)?.spec.title ?? goalTitle;
     const role = operationRole(run.settings, op.kind);
     const agent = await workspace.agents.create({
-      config: { provider: profile.provider, ...(profile.modeId ? { modeId: profile.modeId } : {}), ...(profile.thinkingOptionId ? { thinkingOptionId: profile.thinkingOptionId } : {}), systemPrompt: ROLE_PROMPT,
+      config: { provider: profile.provider, ...(modeId ? { modeId } : {}), ...(profile.thinkingOptionId ? { thinkingOptionId: profile.thinkingOptionId } : {}), systemPrompt: ROLE_PROMPT,
         ...(profile.transport === "mcp" ? { mcpServers: { director: { type: "http", url: this.mcpUrl(), headers: { Authorization: `Bearer ${token}` } } } } : {}) },
       parent: role !== "director" ? run.directorAgentId : undefined,
       title: `AI 协作 · ${operationLabel(run.settings, op.kind)} · ${op.kind === "execute" ? Array.from(taskTitle.trim().replace(/\s+/g, " ")).slice(0, 60).join("") : goalTitle}`,

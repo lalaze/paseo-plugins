@@ -5,6 +5,7 @@ import type { Profile } from "../shared/schema";
 import { profileParts } from "./settings-model";
 import { Choice, Field, Label, outline, type Theme } from "./ui";
 import { InstructionsEditor } from "./instructions-editor";
+import { permissionChoices } from "./permission-model";
 
 export type Catalog = Awaited<ReturnType<ReturnType<typeof usePaseo>["providers"]["waitForReady"]>>;
 
@@ -39,18 +40,19 @@ export function ProfileEditor({ profile, catalog, onChange, theme }: { profile?:
   // Preserve a saved selection even while provider discovery is loading or unavailable.
   if (parts.provider && !providerOptions.some(p => p.id === parts.provider)) providerOptions.unshift({ id: parts.provider, label: `${parts.provider}（已保存，当前未就绪）` });
   if (parts.model && !modelOptions.some(m => m.id === parts.model)) modelOptions.unshift({ id: parts.model, label: `${parts.model}（已保存）` });
-  const modes = [{ id: "", label: "跟随 Paseo 默认设置" }, ...(entry?.modes ?? []).map(m => ({ id: m.id, label: m.label }))];
+  const permissions = permissionChoices(entry, profile?.modeId);
   const thinking = [{ id: "", label: "使用模型默认强度" }, ...(model?.thinkingOptions ?? []).map(o => ({ id: o.id, label: o.label }))];
-  if (profile?.modeId && !modes.some(m => m.id === profile.modeId)) modes.push({ id: profile.modeId, label: `${profile.modeId}（已保存）` });
   if (profile?.thinkingOptionId && !thinking.some(m => m.id === profile.thinkingOptionId)) thinking.push({ id: profile.thinkingOptionId, label: `${profile.thinkingOptionId}（已保存）` });
   return <View style={{ gap: 14 }}>
     <Choice theme={theme} label="AI 供应商 / 工具" value={parts.provider} options={providerOptions} onChange={id => onChange({ provider: `${id}/`, modeId: undefined, thinkingOptionId: undefined })} />
     <Choice theme={theme} label="使用模型" value={parts.model} options={modelOptions} onChange={id => onChange({ provider: `${parts.provider}/${id}`, thinkingOptionId: undefined })} />
     {!parts.provider && <Label theme={theme} muted>先选供应商，下面会显示它可用的模型。</Label>}
-    <Disclosure theme={theme} title="模型高级设置" summary={`${profile?.transport === "mcp" ? "MCP 工具交接" : "默认兼容交接"} · 权限和推理强度可单独调整`}>
+    <Choice theme={theme} label="执行权限" disabled={!parts.provider} value={profile?.modeId ?? ""} options={permissions.options} onChange={id => onChange({ modeId: id || undefined })} />
+    <Label theme={theme} muted>{permissions.unavailable ? "已保存的权限模式当前不可用，请重新选择；不会自动替换成其他权限。" : "用于这个 AI 新建的协作会话，不继承当前聊天的权限。跟随默认会在创建会话时读取供应商默认模式；明确选择后固定使用该模式。"}</Label>
+    {!!permissions.description && <Label theme={theme} muted>{permissions.description}</Label>}
+    <Disclosure theme={theme} title="模型高级设置" summary={`${profile?.transport === "mcp" ? "MCP 工具交接" : "默认兼容交接"} · 推理强度和补充提示词可单独调整`}>
       <Field theme={theme} label="AI 昵称" value={profile?.label ?? ""} onChange={label => onChange({ label })} placeholder="例如：前端执行者" />
       <InstructionsEditor theme={theme} label="这个 AI 的补充提示词" description="与当前角色的前置提示词一起使用，适用于所有分配给这个 AI 的任务。" value={profile?.instructions ?? ""} onChange={instructions => onChange({ instructions: instructions || undefined })} />
-      <Choice theme={theme} label="执行权限" value={profile?.modeId ?? ""} options={modes} onChange={id => onChange({ modeId: id || undefined })} />
       <Choice theme={theme} label="推理强度" value={profile?.thinkingOptionId ?? ""} options={thinking} onChange={id => onChange({ thinkingOptionId: id || undefined })} />
       <Choice theme={theme} label="AI 如何交接任务" value={profile?.transport ?? "structured"} options={[{ id: "structured", label: "兼容模式（默认）" }, { id: "mcp", label: "MCP 工具模式" }]} onChange={id => onChange({ transport: id as Profile["transport"] })} />
       <Label theme={theme} muted>MCP 模式需要所选 AI 支持 HTTP MCP；不确定时保留兼容模式即可。</Label>

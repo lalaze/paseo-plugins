@@ -11,6 +11,7 @@ import { Button, Card, Choice, ErrorText, Field, Label, outline, type Theme } fr
 import { Disclosure, ProfileEditor, SelectionCard } from "./settings-controls";
 import { checkPresets, commandLine, makeCheck, makeAssignment, profileParts, sameCommand, savedRolePrompts, taskCategories, validateSettings } from "./settings-model";
 import { InstructionsEditor } from "./instructions-editor";
+import { permissionChoices } from "./permission-model";
 
 const steps = ["选择设计 AI", "选择执行 AI", "选择审核 AI"];
 const newId = () => `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -93,6 +94,7 @@ function SettingsFormEditor({ initial, seed, cwd, hostId, theme, compact = false
     if (!parts.provider || !parts.model) return `请先为${name}选择供应商和模型。`;
     if ((profile?.instructions?.length ?? 0) > 8000) return `${name}的补充提示词最多 8000 个字符。`;
     if (!ProfileSchema.safeParse(profile).success) return `请检查${name}的 AI 昵称和模型设置；昵称需为 1 至 120 个字符。`;
+    if (permissionChoices(catalog.data?.entries.find(entry => entry.provider === parts.provider), profile?.modeId).unavailable) return `${name}的权限模式当前不可用，请重新选择执行权限。`;
     return null;
   }
   function move(next: number) { setStep(next); setError(null); mutation.reset(); }
@@ -241,7 +243,7 @@ function SettingsFormEditor({ initial, seed, cwd, hostId, theme, compact = false
         {separateReview ? <>
           <ProfileEditor profile={auditor} catalog={catalog.data} theme={theme} onChange={patch => updateRole("reviewer", patch)} />
           <Label theme={theme} muted>审核使用独立会话。设计总纲、代码差异和执行报告会自动传给它。</Label>
-        </> : <Label theme={theme}>审核模型：{profileSummary(lead)}</Label>}
+        </> : <><Label theme={theme}>审核模型：{profileSummary(lead)}</Label><Label theme={theme} muted>审核沿用设计 AI 的会话和执行权限；需要不同权限时请选择独立审核 AI。</Label></>}
         {rolePrompt("review")}
       </Card>
       <Card title="审核与最终验收" theme={theme}>

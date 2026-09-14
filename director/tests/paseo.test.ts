@@ -46,6 +46,37 @@ test("workspace names are pinned before branch changes and explicit titles are r
   assert.equal(title, "zeMc");
 });
 
+test("new sessions resolve live default permissions, honor explicit choices and reject unavailable modes", async t => {
+  const h = await harness(); t.after(() => h.cleanup());
+  const op = await h.until("plan"), run = { ...h.run(), cwd: h.directory, workspaceId: "workspace" };
+  const gateway = new PaseoGateway({ url: "ws://127.0.0.1:1/ws" }, () => "http://127.0.0.1:1/mcp"); t.after(() => gateway.close());
+  t.mock.method(gateway, "connect", async () => {});
+  let defaultModeId: string | null = "auto-review";
+  let modes: { id: string; label: string }[] | undefined = ["auto", "auto-review", "full-access"].map(id => ({ id, label: id }));
+  t.mock.method(gateway.api.providers, "waitForReady", async () => ({ entries: [{ provider: "vendor-a", status: "ready", models: [{ id: "model-a" }], modes, defaultModeId }] }));
+  const configs: Record<string, unknown>[] = [];
+  const handle = { id: "workspace", directory: h.directory, current: () => ({}), refresh: async () => ({ name: "项目" }), agents: { create: async ({ config }: { config: Record<string, unknown> }) => { configs.push(config); return { id: "created" }; } } };
+  t.mock.method(gateway.api.workspaces, "ref", () => handle);
+  for (const modeId of [undefined, "auto", "auto-review", "full-access"]) {
+    await gateway.create(run, op, { ...run.settings.profiles[0], modeId }, "unused");
+    assert.equal(configs.at(-1)?.modeId, modeId ?? "auto-review");
+  }
+  defaultModeId = "auto";
+  await gateway.create(run, op, run.settings.profiles[0], "unused");
+  assert.equal(configs.at(-1)?.modeId, "auto");
+  const before = configs.length;
+  await assert.rejects(gateway.create(run, op, { ...run.settings.profiles[0], modeId: "removed" }, "unused"), /执行权限不可用/);
+  defaultModeId = "removed";
+  await assert.rejects(gateway.create(run, op, run.settings.profiles[0], "unused"), /执行权限不可用/);
+  assert.equal(configs.length, before);
+  defaultModeId = null; modes = [];
+  await gateway.create(run, op, run.settings.profiles[0], "unused");
+  assert.equal(Object.hasOwn(configs.at(-1)!, "modeId"), false);
+  modes = undefined;
+  await gateway.create(run, op, { ...run.settings.profiles[0], modeId: "custom" }, "unused");
+  assert.equal(configs.at(-1)?.modeId, "custom");
+});
+
 test("separate reviewer uses its configured provider, permissions and workspace without a design role label", async t => {
   const h = await harness(reviewerSettings()); t.after(() => h.cleanup());
   await h.until("plan"); await h.complete(plan); await h.until("execute"); await h.complete(result); const audit = await h.until("review");
