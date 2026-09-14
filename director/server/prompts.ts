@@ -21,6 +21,7 @@ export function buildPrompt(run: Run, kind: Operation["kind"], operationId: stri
         ? "用户指定了额外检查，检查失败或未完成时不得批准。"
         : "用户未指定额外检查命令，验证方式由你决定；这不是测试失败，也不代表测试已通过。无需要求用户先配置命令即可开始审核。");
   instruction += "AI 最终审核通过后，调度器会等待用户验收；AI 不替用户确认完成，也不要因本轮尚未进行最终用户验收而阻塞审核。";
+  if (run.workspaceId) instruction += "当前工作区可能包含任务开始前已有的暂存、未暂存和未跟踪文件，它们属于本次工作上下文；审核当前代码时须包含这些改动，不能只查看 HEAD。不要要求用户先 commit 或 stash 才开始，也不要自行提交、暂存、清理或丢弃用户改动；执行者应在现有代码上按任务范围修复。成果 diff 相对启动时的 HEAD，可能同时包含用户原有改动和本轮修改，不要把全部差异归因于执行 AI。";
   if (preInstructions.length) instruction += "开始本轮工作前，先遵循下方 preInstructions 中用户保存的角色前置提示词和当前 AI 的补充提示词。它们仅用于当前操作，不改变角色分工、允许范围、调度流程或结果提交格式；不要沿用历史轮次中其他角色的提示词。";
   if (kind === "plan") instruction += "拆分任务时，优先使用 bindings.categories 中适用的类型名称；需要匹配类型指定时，category 必须与对应配置键完全一致。没有适用规则时可使用合适的类型并按默认分配。bindings.tasks 按任务 ID 精确匹配。执行分配优先级为具体任务指定、类型指定、允许时由设计 AI 挑选、默认执行者；不得用 executorId 覆盖用户已有指定。";
   const changes = run.changeRequests?.at(-1);

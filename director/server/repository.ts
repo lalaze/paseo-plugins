@@ -24,10 +24,13 @@ export class GitRepository implements Repository {
     if (!isAbsolute(repository)) throw new Error("仓库路径必须是绝对路径");
     const repositoryRoot = await realpath(await this.git(await realpath(repository), ["rev-parse", "--show-toplevel"]));
     if (currentWorkspace && await realpath(repository) !== repositoryRoot) throw new Error("请在项目根目录的工作区启动，或选择独立工作区执行");
-    if ((await this.git(repositoryRoot, ["status", "--porcelain"])).trim()) throw new Error("请先提交或用 Git stash 保存仓库中的未提交改动；Director 从当前提交创建成果分支");
+    if ((await this.git(repositoryRoot, ["ls-files", "--unmerged"])).trim()) throw new Error("仓库存在未解决的合并冲突，请先解决冲突后再启动 Director");
+    if (!currentWorkspace && (await this.git(repositoryRoot, ["status", "--porcelain"])).trim()) throw new Error("独立工作区从当前提交创建，不包含未提交改动。要审核或修复当前改动，请选择「在当前工作区执行」或「使用已有工作区」");
     const baseCommit = await this.git(repositoryRoot, ["rev-parse", "HEAD"]);
     const cwd = join(this.root, "worktrees", runId), branch = `director/${runId}`;
     if (currentWorkspace) {
+      // Branching at HEAD keeps staged, unstaged and untracked work in place.
+      // Keep HEAD as the review base so pre-existing changes are reviewed too.
       const currentBranch = await this.git(repositoryRoot, ["branch", "--show-current"]);
       if (currentBranch !== branch) await this.git(repositoryRoot, ["switch", "-c", branch]);
       return { repository: repositoryRoot, cwd: repositoryRoot, baseCommit, branch };

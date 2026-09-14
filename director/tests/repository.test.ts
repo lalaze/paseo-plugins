@@ -10,27 +10,79 @@ import { settings } from "./helpers";
 import type { Run } from "../shared/schema";
 const exec = promisify(execFile);
 
-test("current-workspace mode creates a branch in place and refuses dirty or switched checkouts", async t => {
+test("current-workspace mode preserves dirty work and index, reviews existing changes, and refuses switched checkouts", async t => {
   const root = await mkdtemp(join(tmpdir(), "director-current-")); t.after(() => rm(root, { recursive: true, force: true }));
   const repo = join(root, "repo"); await mkdir(repo);
   for (const args of [["init", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"]]) await exec("git", args, { cwd: repo });
-  await writeFile(join(repo, "app.txt"), "before\n"); await exec("git", ["add", "."], { cwd: repo }); await exec("git", ["commit", "-m", "base"], { cwd: repo });
-  const repository = new GitRepository(join(root, "state"));
-  await writeFile(join(repo, "app.txt"), "unsaved\n");
-  await assert.rejects(repository.prepare(repo, "current", true), /未提交改动/);
-  assert.equal((await exec("git", ["branch", "--show-current"], { cwd: repo })).stdout.trim(), "main");
-  assert.equal(await readFile(join(repo, "app.txt"), "utf8"), "unsaved\n");
   await writeFile(join(repo, "app.txt"), "before\n");
+  await writeFile(join(repo, "deleted.txt"), "delete me\n");
+  await writeFile(join(repo, ".gitignore"), "ignored.txt\n");
+  await exec("git", ["add", "."], { cwd: repo }); await exec("git", ["commit", "-m", "base"], { cwd: repo });
+  const repository = new GitRepository(join(root, "state"));
+  const baseCommit = (await exec("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim();
+  await writeFile(join(repo, "app.txt"), "staged\n");
+  await exec("git", ["add", "app.txt"], { cwd: repo });
+  await writeFile(join(repo, "app.txt"), "unsaved\n");
+  await writeFile(join(repo, "new.txt"), "untracked\n");
+  await writeFile(join(repo, "ignored.txt"), "ignored\n");
+  await rm(join(repo, "deleted.txt"));
+  const status = (await exec("git", ["status", "--porcelain"], { cwd: repo })).stdout;
+  const staged = (await exec("git", ["diff", "--cached", "--binary"], { cwd: repo })).stdout;
   const work = await repository.prepare(repo, "current", true);
   assert.equal(work.cwd, repo); assert.equal(work.branch, "director/current");
+  assert.equal(work.baseCommit, baseCommit);
+  assert.equal((await exec("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim(), baseCommit);
+  assert.equal((await exec("git", ["branch", "--show-current"], { cwd: repo })).stdout.trim(), work.branch);
   assert.equal((await exec("git", ["worktree", "list", "--porcelain"], { cwd: repo })).stdout.match(/^worktree /gm)?.length, 1);
   assert.deepEqual(await repository.prepare(repo, "current", true), work);
   const run = { ...work, id: "current", workspaceId: "workspace", settings: settings() } as Run;
+  const evidence = await repository.capture(run);
+  assert.deepEqual(evidence.changedFiles, ["app.txt", "deleted.txt", "new.txt"]);
+  assert.match(evidence.diff, /unsaved/); assert.match(evidence.diff, /untracked/);
+  assert.equal((await exec("git", ["status", "--porcelain"], { cwd: repo })).stdout, status);
+  assert.equal((await exec("git", ["diff", "--cached", "--binary"], { cwd: repo })).stdout, staged);
+  assert.equal(await readFile(join(repo, "app.txt"), "utf8"), "unsaved\n");
+  assert.equal(await readFile(join(repo, "new.txt"), "utf8"), "untracked\n");
+  assert.equal(await readFile(join(repo, "ignored.txt"), "utf8"), "ignored\n");
   await writeFile(join(repo, "app.txt"), "after\n");
-  assert.deepEqual((await repository.capture(run)).changedFiles, ["app.txt"]);
+  const updated = await repository.capture(run);
+  assert.notEqual(updated.id, evidence.id);
+  assert.match(updated.diff, /after/);
+  assert.equal((await exec("git", ["diff", "--cached", "--binary"], { cwd: repo })).stdout, staged);
   assert.equal((await exec("git", ["show", "main:app.txt"], { cwd: repo })).stdout, "before\n");
   await exec("git", ["switch", "main"], { cwd: repo });
   await assert.rejects(repository.capture(run), /切回 director\/current/);
+});
+
+test("isolated mode directs dirty repositories to current-workspace mode without changing user work", async t => {
+  const root = await mkdtemp(join(tmpdir(), "director-isolated-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const repo = join(root, "repo"); await mkdir(repo);
+  for (const args of [["init", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"]]) await exec("git", args, { cwd: repo });
+  await writeFile(join(repo, "app.txt"), "before\n");
+  await exec("git", ["add", "."], { cwd: repo }); await exec("git", ["commit", "-m", "base"], { cwd: repo });
+  const repository = new GitRepository(join(root, "state"));
+  await writeFile(join(repo, "new.txt"), "untracked\n");
+  await assert.rejects(repository.prepare(repo, "isolated"), /在当前工作区执行/);
+  assert.equal((await exec("git", ["branch", "--show-current"], { cwd: repo })).stdout.trim(), "main");
+  assert.equal(await readFile(join(repo, "new.txt"), "utf8"), "untracked\n");
+  assert.equal((await exec("git", ["worktree", "list", "--porcelain"], { cwd: repo })).stdout.match(/^worktree /gm)?.length, 1);
+});
+
+test("current-workspace mode refuses unresolved conflicts without switching branches", async t => {
+  const root = await mkdtemp(join(tmpdir(), "director-conflict-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const repo = join(root, "repo"); await mkdir(repo);
+  for (const args of [["init", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"]]) await exec("git", args, { cwd: repo });
+  await writeFile(join(repo, "app.txt"), "base\n");
+  await exec("git", ["add", "."], { cwd: repo }); await exec("git", ["commit", "-m", "base"], { cwd: repo });
+  await exec("git", ["switch", "-c", "other"], { cwd: repo });
+  await writeFile(join(repo, "app.txt"), "other\n"); await exec("git", ["commit", "-am", "other"], { cwd: repo });
+  await exec("git", ["switch", "main"], { cwd: repo });
+  await writeFile(join(repo, "app.txt"), "main\n"); await exec("git", ["commit", "-am", "main"], { cwd: repo });
+  await assert.rejects(exec("git", ["merge", "other"], { cwd: repo }));
+  const status = (await exec("git", ["status", "--porcelain"], { cwd: repo })).stdout;
+  await assert.rejects(new GitRepository(join(root, "state")).prepare(repo, "conflict", true), /未解决的合并冲突/);
+  assert.equal((await exec("git", ["branch", "--show-current"], { cwd: repo })).stdout.trim(), "main");
+  assert.equal((await exec("git", ["status", "--porcelain"], { cwd: repo })).stdout, status);
 });
 
 test("worktree and immutable snapshot include untracked source, preserve user's index, and catch failing checks", async t => {

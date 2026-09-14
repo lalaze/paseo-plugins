@@ -112,7 +112,7 @@ function DirectorContent({ theme, layout, navigation, host, initialDirectory = "
         <Disclosure theme={theme} title="执行位置" summary={isolated ? "新建独立工作区 · 原工作区保留当前分支" : "在工作区新建成果分支 · 已有会话会看到修改"} defaultOpen={!workspaceId}>
         <View accessibilityRole="radiogroup" accessibilityLabel="执行位置" style={{ gap: 8 }}>
           <SelectionCard role="radio" theme={theme} disabled={busy} title={workspaceId ? "在当前工作区执行" : "使用已有工作区"} description="在选定工作区新建成果分支，所有 AI 会话放在一起。已有会话也会看到代码修改。" selected={!isolated} onPress={() => { setIsolated(false); editDraft(); }} />
-          <SelectionCard role="radio" theme={theme} disabled={busy} title="新建独立工作区" description="创建独立代码目录，并在侧栏新增工作区条目。原工作区保留当前分支。" selected={isolated} onPress={() => { setIsolated(true); editDraft(); }} />
+          <SelectionCard role="radio" theme={theme} disabled={busy} title="新建独立工作区" description="从当前提交创建独立代码目录，并在侧栏新增工作区条目。原工作区保留当前分支；来源仓库需无未提交改动。" selected={isolated} onPress={() => { setIsolated(true); editDraft(); }} />
         </View>
         {!workspaceId && !isolated && <>
           <ErrorText theme={theme} error={workspaces.error} />
@@ -128,7 +128,7 @@ function DirectorContent({ theme, layout, navigation, host, initialDirectory = "
           <Label theme={theme} muted>{settings.reviewerProfileId ? "审核使用独立会话" : "审核沿用设计会话"} · {Object.keys(settings.categoryOverrides).length + Object.keys(settings.taskOverrides).length} 条执行分配规则</Label>
           <Button theme={theme} secondary disabled={busy} label="调整团队设置" onPress={() => navigate("settings")} />
         </Disclosure>}
-        {!isolated && <Label theme={theme} muted>开始前请提交或暂存当前目录的未提交改动。</Label>}
+        <Label theme={theme} muted>{isolated ? "要审核或修复未提交改动，请选择在已有工作区执行。" : "可直接审核和修复未提交改动，无需先提交或 stash。创建成果分支时会保留现有文件和暂存状态，审核包含这些改动。"}</Label>
       </Card>}
       {page === "tasks" && <Card theme={theme} title="任务记录">
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "space-between" }}><Label theme={theme} muted>当前主机的全部任务 · 最新创建在前</Label><Button theme={theme} secondary label={runs.isFetching ? "刷新中…" : "刷新记录"} disabled={runs.isFetching} onPress={() => { void runs.refetch(); }} /></View>
