@@ -9,8 +9,8 @@ test("approval, delivery and accepted review times survive restart and event tru
   assert.equal(workflowEvidence(h.run()).planApproval.userApprovedAt, null);
   h.elapse(1000); await h.engine.control(h.id, "approve_plan");
   h.elapse(1000); const worker = await h.until("execute");
-  h.elapse(1000); await h.complete(result); await h.until("review");
-  h.elapse(1000); await h.complete(review());
+  h.elapse(1000); await h.complete(result); await h.until("final");
+  h.elapse(1000); await h.complete(review(true));
   const r = h.run(); r.events = []; h.store.save(r); await h.restart();
   const evidence = workflowEvidence(h.run());
   assert.equal(evidence.planApproval.timestampSource, "checkpoint");
@@ -18,7 +18,7 @@ test("approval, delivery and accepted review times survive restart and event tru
   assert.ok(evidence.planApproval.userApprovedAt! < execution.sendRequestedAt!);
   assert.ok(execution.deliveryConfirmedAt! >= execution.sendRequestedAt!);
   assert.ok(execution.resultAcceptedAt! > execution.deliveryConfirmedAt!);
-  const approved = evidence.operations.find(op => op.kind === "review")!;
+  const approved = evidence.operations.find(op => op.kind === "final")!;
   assert.equal(approved.reviewDecision, "approved");
   assert.equal(approved.artifactId, "artifact-v1");
   assert.ok(approved.resultAcceptedAt! > execution.resultAcceptedAt!);
@@ -58,7 +58,7 @@ test("blocked final review receives workflow evidence on retry without rerunning
   const h = await harness({ requirePlanApproval: true }); t.after(() => h.cleanup());
   const director = await h.until("plan"); await h.complete(plan);
   await h.engine.control(h.id, "approve_plan");
-  await h.until("execute"); await h.complete(result); await h.until("review"); await h.complete(review());
+  await h.until("execute"); await h.complete(result);
   await h.until("final"); await h.complete({ ...review(true, "blocked"), summary: "缺少流程记录" });
   assert.equal(h.run().control, "needs_attention");
   const executions = h.agents.sent.filter(sent => sent.prompt.includes("你是执行 AI。"));
@@ -72,6 +72,6 @@ test("blocked final review receives workflow evidence on retry without rerunning
   assert.equal(context.workflowEvidence.operations.some((op: { prompt?: string; response?: unknown }) => op.prompt || op.response), false);
   assert.deepEqual(h.agents.sent.filter(sent => sent.prompt.includes("你是执行 AI。")), executions);
   assert.equal(h.agents.created.length, 2);
-  assert.equal(h.run().tasks[0].status, "approved");
+  assert.equal(h.run().tasks[0].status, "executed");
   await h.complete(review(true)); assert.equal(h.run().phase, "awaiting_acceptance");
 });

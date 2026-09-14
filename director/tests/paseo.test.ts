@@ -79,7 +79,7 @@ test("new sessions resolve live default permissions, honor explicit choices and 
 
 test("separate reviewer uses its configured provider, permissions and workspace without a design role label", async t => {
   const h = await harness(reviewerSettings()); t.after(() => h.cleanup());
-  await h.until("plan"); await h.complete(plan); await h.until("execute"); await h.complete(result); const audit = await h.until("review");
+  await h.until("plan"); await h.complete(plan); await h.until("execute"); await h.complete(result); const audit = await h.until("final");
   const gateway = new PaseoGateway({ url: "ws://127.0.0.1:1/ws" }, () => "http://127.0.0.1:1234/mcp"); t.after(() => gateway.close());
   t.mock.method(gateway, "connect", async () => {});
   t.mock.method(gateway.api.providers, "waitForReady", async () => ({ entries: [{ provider: "vendor-c", status: "ready", models: [{ id: "model-c" }] }] }));

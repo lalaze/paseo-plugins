@@ -14,7 +14,7 @@ export function StatusBadge({ label, tone, theme }: { label: string; tone: Statu
 export function RunProgress({ stage, completed, done, total, theme }: { stage: number; completed: boolean; done: number; total: number; theme: Theme }) {
   return <View style={{ gap: 12 }}>
     <View style={{ flexDirection: "row", gap: 6 }}>
-      {["设计总纲", "执行与审核", "最终审核", "你的验收"].map((label, index) => {
+      {["设计总纲", "串行执行", "统一审核", "你的验收"].map((label, index) => {
         const passed = completed || index < stage, current = !completed && index === stage;
         return <View key={label} accessibilityLabel={`${label}：${passed ? "已完成" : current ? "当前阶段" : "尚未开始"}`} style={{ flex: 1, minWidth: 0, gap: 7 }}>
           <View style={{ height: 4, borderRadius: 2, backgroundColor: passed ? theme.colors.statusSuccess : current ? theme.colors.accent : outline(theme, "panel") }} />
@@ -22,6 +22,6 @@ export function RunProgress({ stage, completed, done, total, theme }: { stage: n
         </View>;
       })}
     </View>
-    <Label theme={theme} muted>{total ? `子任务已通过审核 ${done} / ${total}` : "总纲生成后会显示子任务进度"}</Label>
+    <Label theme={theme} muted>{total ? `子任务已执行 ${done} / ${total}` : "总纲生成后会显示子任务进度"}</Label>
   </View>;
 }

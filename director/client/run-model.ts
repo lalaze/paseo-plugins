@@ -1,6 +1,6 @@
-import { awaitingAcceptance, type Run, type RunSummary } from "../shared/schema";
+import { awaitingAcceptance, executionComplete, type Run, type RunSummary } from "../shared/schema";
 
-export const phaseLabels: Record<string, string> = { planning: "设计总纲", executing: "执行任务", reviewing: "审核任务", final_review: "最终审核", awaiting_acceptance: "等待你验收", completed: "已完成", running: "进行中", paused: "已暂停", waiting_permission: "等待权限 / 回答", needs_attention: "需要处理", canceling: "正在停止", canceled: "已结束", pending: "等待执行", approved: "已通过" };
+export const phaseLabels: Record<string, string> = { planning: "设计总纲", executing: "执行任务", reviewing: "审核任务", final_review: "统一审核", awaiting_acceptance: "等待你验收", completed: "已完成", running: "进行中", paused: "已暂停", waiting_permission: "等待权限 / 回答", needs_attention: "需要处理", canceling: "正在停止", canceled: "已结束", pending: "等待执行", executed: "已执行，待统一审核", approved: "已通过" };
 export type StatusTone = "accent" | "success" | "warning" | "danger" | "muted";
 
 export function runStatus(run: Pick<RunSummary, "phase" | "control">): { label: string; tone: StatusTone } {
@@ -31,7 +31,7 @@ export function runPresentation(run: Run) {
   else if (run.phase === "completed") next = run.userAcceptance?.decision === "approved" ? "你已验收通过；如需调整，可以继续提交修改意见。" : "任务已完成，请查看保存的成果和运行记录。";
   else if (awaitingPlan) next = "请查看下方设计总纲与验收要求，确认后开始执行。";
   else if (run.control === "paused") next = "后续派发已暂停，当前 AI 仍可能完成本轮。准备好后点击「继续」。";
-  return { status, stage, next, ended, awaitingPlan, awaitingFinal, done: run.tasks.filter(task => task.status === "approved").length };
+  return { status, stage, next, ended, awaitingPlan, awaitingFinal, done: run.tasks.filter(executionComplete).length };
 }
 
 export function createRunHint(input: { goal: string; directory: string; needsWorkspace: boolean }): string | null {

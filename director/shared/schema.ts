@@ -54,7 +54,7 @@ export const ResultSchema = z.object({
 export const ReviewSchema = z.object({
   decision: z.enum(["approved", "changes_requested", "blocked"]),
   artifactId: z.string().min(1), summary: Text,
-  criteria: z.array(z.object({ criterion: Text, passed: z.boolean(), evidence: Text })).min(1).max(60),
+  criteria: z.array(z.object({ criterion: Text, passed: z.boolean(), evidence: Text })).min(1).max(930),
   findings: z.array(z.object({ taskId: Id, location: Text, problem: Text, change: Text, verification: Text })).max(60),
 }).superRefine((r, ctx) => {
   if (r.decision === "approved" && (r.findings.length || r.criteria.some(c => !c.passed))) {
@@ -82,6 +82,8 @@ export type Operation = {
   state: "pending" | "creating" | "ready" | "sending" | "sent" | "done" | "abandoned";
   prompt: string; createdAt: number; sentAt?: number; deliveryConfirmedAt?: number; completedAt?: number; observedBusy?: boolean;
   response?: unknown; responseHash?: string; formatRetries: number;
+  /** New unified reviews cover both plan and task criteria; absent on legacy operations. */
+  reviewScope?: "all_tasks";
 };
 export type AgentRole = "director" | "worker" | "reviewer";
 // Task IDs cannot contain ':', so this actor cannot collide with a legacy task.
@@ -115,7 +117,7 @@ export type Run = {
   userAcceptance?: UserAcceptance; changeRequests?: ChangeRequest[];
   /** Explicit user-requested rounds get their own bounded execution budget. */
   roundStartedAt?: number; roundOperationOffset?: number;
-  tasks: { spec: Task; profileId: string; status: "pending" | "executing" | "reviewing" | "approved"; reworks: number; agentId?: string; feedback?: string; result?: Result; evidence?: Evidence; review?: Review }[];
+  tasks: { spec: Task; profileId: string; status: "pending" | "executing" | "executed" | "reviewing" | "approved"; reworks: number; agentId?: string; feedback?: string; result?: Result; evidence?: Evidence; review?: Review }[];
   operations: Operation[]; activeOperationId?: string; finalEvidence?: Evidence; finalReview?: Review;
   events: { time: number; message: string }[];
 };
@@ -125,6 +127,8 @@ export function hasFinalResult(run: Run): boolean {
     && run.finalReview?.decision === "approved" && !!run.finalEvidence && !run.activeOperationId;
 }
 export function awaitingAcceptance(run: Run): boolean { return hasFinalResult(run) && !run.userAcceptance; }
+export function executionComplete(task: Run["tasks"][number]): boolean { return task.status === "executed" || task.status === "approved"; }
+export function finalAcceptance(plan: Plan): string[] { return [...new Set([...plan.acceptance, ...plan.tasks.flatMap(task => task.acceptance)])]; }
 /** Planning can resume before a plan exists; a saved plan still needs approval. */
 export function canResumeRun(run: Run): boolean {
   return !["completed", "awaiting_acceptance"].includes(run.phase)
@@ -134,7 +138,7 @@ export type RunSummary = Pick<Run, "id" | "goal" | "cwd" | "phase" | "control" |
 export function summarize(run: Run): RunSummary {
   const { id, goal, cwd, phase, control, message, createdAt, updatedAt } = run;
   const waiting = awaitingAcceptance(run);
-  return { id, goal, cwd, phase: waiting ? "awaiting_acceptance" : phase, control: waiting ? "paused" : control, message: waiting ? `${operationLabel(run.settings, "final")}最终审核通过，等待你验收或提出修改意见` : message, createdAt, updatedAt, done: run.tasks.filter(t => t.status === "approved").length, total: run.tasks.length };
+  return { id, goal, cwd, phase: waiting ? "awaiting_acceptance" : phase, control: waiting ? "paused" : control, message: waiting ? `${operationLabel(run.settings, "final")}最终审核通过，等待你验收或提出修改意见` : message, createdAt, updatedAt, done: run.tasks.filter(executionComplete).length, total: run.tasks.length };
 }
 export function profileForTask(settings: Settings, task: Task): string {
   return settings.taskOverrides[task.id] ?? settings.categoryOverrides[task.category]

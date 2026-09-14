@@ -14,7 +14,7 @@ export const instructionRoles: Record<InstructionRole, { label: string; descript
   },
   review: {
     label: "审核 AI",
-    description: "每项任务审核、返工复审和最终审核时使用；沿用设计会话也会应用。",
+    description: "全部任务完成后的统一审核与返工复审时使用；沿用设计会话也会应用。",
     example: "逐项对照验收标准，独立检查实际代码、差异和执行报告，按需运行测试或构建。重点检查功能遗漏、边界情况、回归风险和验证证据。问题需注明位置、具体修改要求及复验方法；只审核，不修改源代码。通过时写清依据，未验证的部分如实说明，不把推测当成已通过。",
   },
 };

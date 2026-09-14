@@ -9,7 +9,7 @@ const stages = {
   plan: { title: "设计总纲", instruction: "阅读项目，制定实现方案，拆分任务并写清验收要求。" },
   execute: { title: "实现任务", instruction: "按总纲完成本项任务，验证结果并说明遇到的问题。" },
   review: { title: "审核任务", instruction: "检查实际代码与执行结果，按验收要求验证，决定通过或返工。" },
-  final: { title: "最终审核", instruction: "检查全部任务的集成成果，逐项核对目标和用户的修改要求；通过后交给用户验收。" },
+  final: { title: "统一审核", instruction: "检查全部任务的集成成果，逐项核对目标和用户的修改要求；通过后交给用户验收。" },
 };
 export function DirectorPromptCard({ item, theme, layout }: PluginTimelineItemProps<PromptCardData>) {
   const [expanded, setExpanded] = useState(false), [focused, setFocused] = useState(false);

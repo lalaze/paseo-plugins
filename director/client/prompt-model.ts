@@ -18,6 +18,7 @@ const ContextSchema = z.object({
   bindings: z.object({ director: z.string(), worker: z.string(), reviewer: z.string().optional() }).optional(),
   reviewer: z.object({ profileId: z.string(), separateSession: z.boolean() }).optional(),
   requirePlanApproval: z.boolean().optional(),
+  acceptance: z.array(z.string()).optional(),
   userChangeRequests: z.array(z.object({ feedback: z.string() })).optional(),
   preInstructions: z.array(z.object({ source: z.string(), text: z.string() })).optional(),
   plan: PlanSchema.optional(), task: TaskSchema.optional(),
@@ -55,8 +56,8 @@ export function readDirectorPrompt(raw: string): PromptCardData | undefined {
   }
   const reviewer = context.reviewer?.separateSession ? "审核 AI" : "总 AI";
   const next = stage === "plan"
-    ? context.requirePlanApproval ? `总纲完成后等你确认，再安排执行 AI 实现；完成后交给${reviewer}审核。` : context.requirePlanApproval === false ? `总纲完成后自动安排执行 AI 实现，再交给${reviewer}审核。` : "总纲提交后按已保存的协作设置进入执行，完成后交回总 AI 审核。"
-    : stage === "execute" ? `实现完成后自动交给${reviewer}审核。有问题会带着修改要求安排返工。`
+    ? context.requirePlanApproval ? `总纲完成后等你确认，再按依赖串行执行全部任务，完成后交给${reviewer}统一审核。` : context.requirePlanApproval === false ? `总纲完成后自动串行执行全部任务，再交给${reviewer}统一审核。` : "总纲提交后按已保存的协作设置进入执行，完成后交回总 AI 审核。"
+    : stage === "execute" ? `本项完成后继续串行执行后续任务，全部完成后交给${reviewer}统一审核；有问题再安排返工。`
       : stage === "review" ? "通过后自动进入下一项任务；有问题则交回执行 AI 修改。"
         : `${reviewer}审核通过后等你验收；你可以确认完成、提出修改意见，或不采纳并结束任务。`;
   return {
@@ -64,7 +65,7 @@ export function readDirectorPrompt(raw: string): PromptCardData | undefined {
     ...(context.task ? { task: context.task.title, description: context.task.description } : {}),
     ...(context.userChangeRequests?.length ? { changes: context.userChangeRequests.map(change => change.feedback) } : {}),
     ...(context.preInstructions?.length ? { preInstructions: context.preInstructions } : {}),
-    acceptance: (stage === "final" ? context.plan?.acceptance : context.task?.acceptance) ?? [],
+    acceptance: (stage === "final" ? context.acceptance ?? context.plan?.acceptance : context.task?.acceptance) ?? [],
     files: context.task?.files ?? [], next, raw,
   };
 }

@@ -12,7 +12,6 @@ async function finishRound(h: Harness) {
   await h.until("plan"); await h.complete(plan);
   if (!h.run().planApproved) await h.engine.control(h.id, "approve_plan");
   await h.until("execute"); await h.complete(result);
-  await h.until("review"); await h.complete(review());
   await h.until("final"); await h.complete(review(true));
 }
 
@@ -33,7 +32,7 @@ test("AI final approval waits durably for the user, never resumes itself or cons
 });
 
 test("user feedback preserves goal, evidence and team, gates the revised plan, and requires another final acceptance", async t => {
-  const h = await harness({ requirePlanApproval: true, maxAttempts: 4 }); t.after(() => h.cleanup()); await finishRound(h);
+  const h = await harness({ requirePlanApproval: true, maxAttempts: 3 }); t.after(() => h.cleanup()); await finishRound(h);
   const original = h.run(), worker = original.tasks[0].agentId;
   h.elapse(original.settings.runTimeoutMs * 2);
   const request = { ...input(original), feedback: "空输入要说明原因，并提供重试入口" };
@@ -58,12 +57,11 @@ test("user feedback preserves goal, evidence and team, gates the revised plan, a
   await h.engine.control(h.id, "approve_plan");
   const execution = await h.until("execute"); assert.equal(execution.agentId, worker);
   assert.equal(context(execution.prompt).userChangeRequests[0].feedback, request.feedback);
-  await h.complete(result); const check = await h.until("review"); assert.equal(check.agentId, original.directorAgentId);
-  await h.complete(review()); const final = await h.until("final");
+  await h.complete(result); const final = await h.until("final"); assert.equal(final.agentId, original.directorAgentId);
   assert.match(final.prompt, /不替用户确认完成/);
   assert.equal(context(final.prompt).userChangeRequests[0].feedback, request.feedback);
   await h.complete(review(true)); assert.equal(h.run().phase, "awaiting_acceptance");
-  assert.equal(h.agents.created.length, 2); assert.equal(h.run().operations.length, 8);
+  assert.equal(h.agents.created.length, 2); assert.equal(h.run().operations.length, 6);
   // Same artifact in a newer round is still a different acceptance decision.
   await assert.rejects(h.engine.control(h.id, "accept_final", undefined, input(original)), /版本已变化/);
   await h.engine.control(h.id, "accept_final", undefined, input(h.run())); assert.equal(h.run().phase, "completed");
@@ -110,7 +108,7 @@ test("final controls reject absent/stale evidence, empty feedback and acceptance
 test("blocked final reviews cannot be approved by the user as a shortcut", async t => {
   const h = await harness(); t.after(() => h.cleanup());
   await h.until("plan"); await h.complete(plan); await h.until("execute"); await h.complete(result);
-  await h.until("review"); await h.complete(review()); await h.until("final"); await h.complete(review(true, "blocked"));
+  await h.until("final"); await h.complete(review(true, "blocked"));
   assert.equal(h.run().control, "needs_attention");
   await assert.rejects(h.engine.control(h.id, "accept_final", undefined, input(h.run())), /没有可验收/);
 });

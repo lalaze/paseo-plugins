@@ -235,7 +235,7 @@ function SettingsFormEditor({ initial, seed, cwd, hostId, theme, compact = false
 
     {step === 2 && <>
       <Card title="谁负责检查最终成果？" theme={theme}>
-        <Label theme={theme} muted>审核 AI 检查每项任务和最终集成成果，提出问题后交给执行 AI 返工。它负责审核，不直接修改代码。</Label>
+        <Label theme={theme} muted>全部任务串行完成后，审核 AI 统一检查各项成果和集成效果，提出问题后交给执行 AI 返工。它负责审核，不直接修改代码。</Label>
         <View accessibilityRole="radiogroup" accessibilityLabel="审核方式" style={{ gap: 8 }}>
           <SelectionCard role="radio" theme={theme} title="沿用设计 AI 审核" description="使用设计 AI 的原会话完成审核，保持现有协作方式。" selected={!separateReview} onPress={() => { setSeparateReview(false); setError(null); }} />
           <SelectionCard role="radio" theme={theme} title="单独选择审核 AI" description="新建独立审核会话，可以选择不同的供应商、模型、权限和推理强度。" selected={separateReview} onPress={() => { setSeparateReview(true); setError(null); }} />
@@ -247,9 +247,9 @@ function SettingsFormEditor({ initial, seed, cwd, hostId, theme, compact = false
         {rolePrompt("review")}
       </Card>
       <Card title="审核与最终验收" theme={theme}>
-        <Label theme={theme}>审核 AI 按需运行测试，决定通过或返工。最终审核通过后，由你验收或提出修改意见。你无需填写测试命令。</Label>
+        <Label theme={theme}>全部任务执行完成后，审核 AI 统一检查并按需运行测试，决定通过或返工。最终审核通过后，由你验收或提出修改意见。你无需填写测试命令。</Label>
         <Disclosure theme={theme} title="指定额外检查命令（可选）" summary={checks.length ? `已配置 ${checks.length} 项，将在 AI 审核前执行` : "默认由审核 AI 决定验证方式"} defaultOpen={showCommand}>
-        <Label theme={theme} muted>只有你想固定执行某些测试或构建时才需要设置。指定后，每项审核前和最终交付前都会运行；失败时不能批准成果。</Label>
+        <Label theme={theme} muted>只有你想固定执行某些测试或构建时才需要设置。指定后，每轮统一审核前运行一次；失败时不能批准成果。</Label>
         {checks.length > 0 && <Button theme={theme} secondary label="移除全部额外检查" disabled={showCommand} onPress={() => { setChecks([]); setError(null); }} />}
         <Text style={{ color: theme.colors.foreground, fontWeight: "600", marginTop: 4 }}>点选常用检查</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>

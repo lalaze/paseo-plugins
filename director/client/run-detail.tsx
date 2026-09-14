@@ -88,7 +88,7 @@ export function RunDetail({ id, hostId, theme, navigation }: { id: string; hostI
       </>}
       <ErrorText theme={theme} error={action.error} />
     </Card>}
-    {run.finalReview && !finalAvailable && <Card theme={theme} title={`${reviewLabel}最终审核`}><Label theme={theme}>{run.finalReview.summary}</Label><ReviewDetails theme={theme} review={run.finalReview} />{run.finalEvidence && <EvidenceDetails theme={theme} evidence={run.finalEvidence} />}</Card>}
+    {run.finalReview && !finalAvailable && <Card theme={theme} title={`${reviewLabel}统一审核`}><Label theme={theme}>{run.finalReview.summary}</Label><ReviewDetails theme={theme} review={run.finalReview} />{run.finalEvidence && <EvidenceDetails theme={theme} evidence={run.finalEvidence} />}</Card>}
     {!!run.changeRequests?.length && <Disclosure theme={theme} title="你的修改意见" summary={`共 ${run.changeRequests.length} 轮修改 · 展开查看历史`}>{run.changeRequests.map((change, i) => <View key={i} style={{ gap: 4 }}><Label theme={theme} muted>{new Date(change.requestedAt).toLocaleString()} · 第 {change.planVersion} 版</Label><Label theme={theme}>{change.feedback}</Label></View>)}</Disclosure>}
     {run.plan && <Card theme={theme} title="设计总纲"><Label theme={theme}>{run.plan.summary}</Label>{run.plan.acceptance.map((a, i) => <Label key={i} theme={theme}>• {a}</Label>)}<Disclosure key={`${run.planVersion ?? 1}:${awaitingPlanApproval}`} theme={theme} title="实现方案" summary={`${run.tasks.length} 项子任务 · ${awaitingPlanApproval ? "请确认方案后开始执行" : "展开查看架构与实现安排"}`} defaultOpen={awaitingPlanApproval}><Label theme={theme}>{run.plan.architecture}</Label></Disclosure></Card>}
     {run.tasks.map(task => <Card theme={theme} key={task.spec.id} title={`${task.spec.title} · ${phaseLabels[task.status]}`}>

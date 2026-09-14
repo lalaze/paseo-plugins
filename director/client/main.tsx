@@ -124,7 +124,7 @@ function DirectorContent({ theme, layout, navigation, host, initialDirectory = "
         {isolated && <Field theme={theme} disabled={busy} label="项目仓库路径" value={repository} onChange={s => { setRepository(s); editDraft(); }} placeholder="主机上的绝对路径" />}
         </Disclosure>
         {settings && <Disclosure theme={theme} title="本次 AI 团队" summary={`设计：${settings.profiles.find(p => p.id === settings.directorProfileId)?.label} · 执行：${settings.profiles.find(p => p.id === settings.workerProfileId)?.label} · 审核：${settings.profiles.find(p => p.id === (settings.reviewerProfileId ?? settings.directorProfileId))?.label}`}>
-          <Label theme={theme}>设计制定总纲 → 执行实现 → 审核检查 → 你验收</Label>
+          <Label theme={theme}>设计总纲 → 串行完成全部任务 → 统一审核 → 你验收</Label>
           <Label theme={theme} muted>{settings.reviewerProfileId ? "审核使用独立会话" : "审核沿用设计会话"} · {Object.keys(settings.categoryOverrides).length + Object.keys(settings.taskOverrides).length} 条执行分配规则</Label>
           <Button theme={theme} secondary disabled={busy} label="调整团队设置" onPress={() => navigate("settings")} />
         </Disclosure>}
@@ -138,7 +138,7 @@ function DirectorContent({ theme, layout, navigation, host, initialDirectory = "
         {runs.data?.runs.map(run => <View key={run.id} style={{ gap: 9, borderBottomWidth: 1, borderColor: outline(theme, "panel"), paddingVertical: 12 }}>
           <StatusBadge theme={theme} {...runStatus(run)} />
           <Text numberOfLines={2} style={{ color: theme.colors.foreground, fontSize: 16, lineHeight: 24, fontWeight: "600" }}>{run.goal}</Text>
-          <Label theme={theme} muted>代码目录：{run.cwd}{"\n"}更新于 {new Date(run.updatedAt).toLocaleString()} · {run.total ? `子任务已通过 ${run.done} / ${run.total}` : "尚未生成子任务"}</Label>
+          <Label theme={theme} muted>代码目录：{run.cwd}{"\n"}更新于 {new Date(run.updatedAt).toLocaleString()} · {run.total ? `子任务已执行 ${run.done} / ${run.total}` : "尚未生成子任务"}</Label>
           <Text numberOfLines={2} style={{ color: theme.colors.foregroundMuted, fontSize: 14, lineHeight: 21 }}>{run.message}</Text>
           <Button theme={theme} secondary label="查看任务" onPress={() => { setSelectedId(run.id); resetScroll(); }} />
         </View>)}

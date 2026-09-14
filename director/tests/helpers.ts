@@ -10,7 +10,7 @@ export const settings = () => SettingsSchema.parse({ profiles: [{ id: "lead", la
 export const reviewerSettings = () => SettingsSchema.parse({ ...settings(), profiles: [...settings().profiles, { id: "audit", label: "审核 AI", provider: "vendor-c/model-c", modeId: "auto-review", thinkingOptionId: "high", transport: "mcp" }], reviewerProfileId: "audit" });
 export const plan: Plan = { summary: "实现功能", architecture: "模块接口", acceptance: ["完整功能可用"], tasks: [{ id: "task-1", title: "实现", description: "实现接口", category: "backend", dependsOn: [], files: ["src/**"], acceptance: ["接口测试通过"] }] };
 export const result = { status: "ready_for_review", summary: "实现完毕", tests: ["npm test"], issues: [] };
-export const review = (final = false, decision = "approved") => ({ decision, artifactId: "artifact-v1", summary: "审核结论", criteria: [{ criterion: final ? "完整功能可用" : "接口测试通过", passed: decision === "approved", evidence: "代码和测试记录" }], findings: decision === "changes_requested" ? [{ taskId: "task-1", location: "src/api.ts:10", problem: "遗漏空值", change: "增加空值处理", verification: "增加空值用例" }] : [] });
+export const review = (final = false, decision = "approved") => ({ decision, artifactId: "artifact-v1", summary: "审核结论", criteria: (final ? ["完整功能可用", "接口测试通过"] : ["接口测试通过"]).map(criterion => ({ criterion, passed: decision === "approved", evidence: "代码和测试记录" })), findings: decision === "changes_requested" ? [{ taskId: "task-1", location: "src/api.ts:10", problem: "遗漏空值", change: "增加空值处理", verification: "增加空值用例" }] : [] });
 
 export class FakeAgents implements AgentGateway {
   directory = "/repo";
@@ -59,7 +59,8 @@ export async function harness(overrides = {}) {
         if (op?.kind === kind && op.state === "sent") return op;
         await engine.tick();
       }
-      throw new Error(`没有到达 ${kind}: ${JSON.stringify(store.get(id))}`);
+      const run = store.get(id);
+      throw new Error(`没有到达 ${kind}: ${run.phase}/${run.control}: ${run.message}`);
     },
     async complete(payload: unknown) {
       const run = store.get(id), op = run.operations.find(o => o.id === run.activeOperationId)!;

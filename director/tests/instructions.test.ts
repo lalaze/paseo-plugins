@@ -26,13 +26,13 @@ for (const separate of [false, true]) test(`${separate ? "independent" : "shared
   const worker = await h.until("execute"); check(worker, "execute", "specialist"); assert.equal(worker.profileId, extraWorker.id);
   assert.equal(worker.prompt.includes("AI worker 的补充要求"), false, "the assigned worker replaces the default worker's instructions");
   await h.complete(result);
-  const auditor = await h.until("review"); check(auditor, "review", separate ? "audit" : "lead");
+  const auditor = await h.until("final"); check(auditor, "review", separate ? "audit" : "lead");
   assert.equal(auditor.agentId === designer.agentId, !separate);
-  await h.complete(review(false, "changes_requested"));
+  await h.complete(review(true, "changes_requested"));
   h.store.saveSettings({ ...s, rolePrompts: { execute: "之后新任务的要求" } });
   await h.restart();
   const rework = await h.until("execute"); check(rework, "execute", "specialist"); assert.equal(rework.agentId, worker.agentId);
-  await h.complete(result); check(await h.until("review"), "review", separate ? "audit" : "lead"); await h.complete(review());
+  await h.complete(result);
   check(await h.until("final"), "review", separate ? "audit" : "lead"); await h.complete(review(true));
   const ready = h.run();
   await h.engine.control(h.id, "request_changes", undefined, { feedback: "增加错误提示", expectedRevision: ready.revision, artifactId: ready.finalEvidence!.id });

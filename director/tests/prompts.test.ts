@@ -6,7 +6,7 @@ import { PromptCardSchema, readDirectorPrompt } from "../client/prompt-model";
 
 test("all workflow prompts become readable cards while preserving the complete original", async t => {
   const h = await harness(); t.after(() => h.cleanup());
-  for (const [kind, payload] of [["plan", plan], ["execute", result], ["review", review()], ["final", review(true)]] as const) {
+  for (const [kind, payload] of [["plan", plan], ["execute", result], ["final", review(true)]] as const) {
     const op = await h.until(kind);
     const card = readDirectorPrompt(op.prompt)!;
     assert.equal(PromptCardSchema.safeParse(card).success, true);
@@ -15,8 +15,7 @@ test("all workflow prompts become readable cards while preserving the complete o
     assert.deepEqual(JSON.parse(JSON.stringify(card)), card);
     if (kind === "plan") assert.deepEqual(card.team.map(p => p.name), ["总 AI · vendor-a/model-a", "执行 AI · vendor-b/model-b"]);
     if (kind === "execute") assert.deepEqual(card.files, plan.tasks[0].files);
-    if (kind === "review") assert.deepEqual(card.acceptance, plan.tasks[0].acceptance);
-    if (kind === "final") assert.deepEqual(card.acceptance, plan.acceptance);
+    if (kind === "final") assert.deepEqual(card.acceptance, [...plan.acceptance, ...plan.tasks[0].acceptance]);
     await h.complete(payload);
   }
 });

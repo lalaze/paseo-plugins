@@ -18,7 +18,7 @@ test("retry recovers an existing streamed plan without another AI call", async t
   await h.engine.control(h.id, "retry");
   assert.equal(h.run().phase, "executing"); assert.deepEqual(h.run().plan, plan);
   assert.equal(h.agents.sent.length, sent); assert.equal(h.run().operations.length, 3);
-  await h.until("execute"); await h.complete(result); await h.until("review"); await h.complete(review());
+  await h.until("execute"); await h.complete(result);
   await h.until("final"); await h.complete(review(true)); assert.equal(h.run().phase, "awaiting_acceptance");
 });
 
@@ -108,10 +108,9 @@ test("full workflow uses selected AI, returns to original director and requires 
   const h = await harness(); t.after(() => h.cleanup());
   const director = await h.until("plan"); await h.complete(plan);
   const worker = await h.until("execute"); await h.complete(result);
-  const reviewer = await h.until("review"); assert.equal(reviewer.agentId, director.agentId); await h.complete(review());
   assert.notEqual(h.run().phase, "completed");
   const final = await h.until("final"); assert.equal(final.agentId, director.agentId); await h.complete(review(true));
-  assert.equal(h.run().phase, "awaiting_acceptance"); assert.equal(h.repository.verifications, 2);
+  assert.equal(h.run().phase, "awaiting_acceptance"); assert.equal(h.repository.verifications, 1);
   assert.notEqual(worker.agentId, director.agentId);
   assert.deepEqual(h.agents.created.map(a => a.profile.provider), ["vendor-a/model-a", "vendor-b/model-b"]);
 });
@@ -126,15 +125,15 @@ test("without extra commands the original director reviews, requests rework and 
   const h = await harness({ verificationCommands: [] }); t.after(() => h.cleanup());
   const director = await h.until("plan"); await h.complete(plan);
   const worker = await h.until("execute"); await h.complete(result);
-  assert.equal(h.run().phase, "reviewing");
-  const firstReview = await h.until("review");
+  assert.equal(h.run().phase, "executing");
+  const firstReview = await h.until("final");
   assert.equal(firstReview.agentId, director.agentId);
   assert.match(firstReview.prompt, /用户未指定额外检查命令，验证方式由你决定/);
-  assert.equal(h.run().tasks[0].evidence?.passed, false);
-  assert.equal(h.run().tasks[0].evidence?.verificationStatus, "not_configured");
-  await h.complete(review(false, "changes_requested"));
+  assert.equal(h.run().finalEvidence?.passed, false);
+  assert.equal(h.run().finalEvidence?.verificationStatus, "not_configured");
+  await h.complete(review(true, "changes_requested"));
   assert.equal((await h.until("execute")).agentId, worker.agentId);
-  await h.complete(result); await h.until("review"); await h.complete(review());
+  await h.complete(result);
   assert.notEqual(h.run().phase, "completed");
   const final = await h.until("final"); assert.equal(final.agentId, director.agentId);
   await h.complete(review(true)); assert.equal(h.run().phase, "awaiting_acceptance");
@@ -143,8 +142,8 @@ test("without extra commands the original director reviews, requests rework and 
 
 test("AI-only review still requires evidence for every original criterion", async t => {
   const h = await harness({ verificationCommands: [] }); t.after(() => h.cleanup());
-  await h.until("plan"); await h.complete(plan); await h.until("execute"); await h.complete(result); await h.until("review");
-  await h.complete({ ...review(), criteria: [{ criterion: "其他标准", passed: true, evidence: "查看了代码" }] });
+  await h.until("plan"); await h.complete(plan); await h.until("execute"); await h.complete(result); await h.until("final");
+  await h.complete({ ...review(true), criteria: [{ criterion: "其他标准", passed: true, evidence: "查看了代码" }] });
   assert.equal(h.run().control, "needs_attention"); assert.match(h.run().message, /审核未覆盖/);
 });
 
@@ -156,29 +155,29 @@ test("duplicate events, restart, and duplicate create request never duplicate a 
   await h.restart(); await h.engine.tick();
   assert.equal(h.agents.sent.length, count); assert.equal(h.op()?.id, worker.id);
   assert.equal(await h.engine.create({ requestId: "request-1", repository: "/repo", goal: "same", settings: settings() }), h.id);
-  await h.complete(result); await h.until("review"); assert.equal(h.agents.created.length, 2);
+  await h.complete(result); await h.until("final"); assert.equal(h.agents.created.length, 2);
 });
 
 test("rework returns precise instructions to original worker and respects limit", async t => {
   const h = await harness({ maxReworks: 1 }); t.after(() => h.cleanup());
   await h.until("plan"); await h.complete(plan); const worker = await h.until("execute"); await h.complete(result);
-  await h.until("review"); await h.complete(review(false, "changes_requested"));
+  await h.until("final"); await h.complete(review(true, "changes_requested"));
   const redo = await h.until("execute"); assert.equal(redo.agentId, worker.agentId); assert.match(redo.prompt, /增加空值处理/);
-  await h.complete(result); await h.until("review"); await h.complete(review(false, "changes_requested"));
+  await h.complete(result); await h.until("final"); await h.complete(review(true, "changes_requested"));
   assert.equal(h.run().control, "needs_attention"); assert.match(h.run().message, /返工次数上限/);
 });
 
 test("failed automatic verification cannot be overridden by director approval", async t => {
   const h = await harness(); t.after(() => h.cleanup());
   await h.until("plan"); await h.complete(plan); await h.until("execute"); await h.complete(result);
-  h.repository.passed = false; await h.until("review"); await h.complete(review());
+  h.repository.passed = false; await h.until("final"); await h.complete(review(true));
   assert.equal(h.run().control, "needs_attention"); assert.notEqual(h.run().phase, "completed");
 });
 
 test("stale artifact and incomplete criteria are rejected", async t => {
   const h = await harness(); t.after(() => h.cleanup());
-  await h.until("plan"); await h.complete(plan); await h.until("execute"); await h.complete(result); await h.until("review");
-  h.repository.version = "artifact-v2"; await h.complete(review());
+  await h.until("plan"); await h.complete(plan); await h.until("execute"); await h.complete(result); await h.until("final");
+  h.repository.version = "artifact-v2"; await h.complete(review(true));
   assert.equal(h.run().control, "needs_attention"); assert.match(h.run().message, /版本/);
 });
 
@@ -189,7 +188,7 @@ test("pause gates new work, optional plan approval cannot be bypassed", async t 
   await assert.rejects(h.engine.control(h.id, "resume"), /批准总纲/);
   await h.engine.control(h.id, "approve_plan"); await h.until("execute");
   await h.engine.control(h.id, "pause"); await h.complete(result); assert.equal(h.run().phase, "executing");
-  await h.engine.control(h.id, "resume"); await h.engine.tick(); assert.equal(h.run().phase, "reviewing");
+  await h.engine.control(h.id, "resume"); await h.engine.tick(); assert.equal(h.run().phase, "executing");
 });
 
 test("planning paused before a plan exists can resume, then still waits for plan approval", async t => {
@@ -218,7 +217,7 @@ test("review queue reports a busy director and permissions before delivery, then
   const h = await harness(); t.after(() => h.cleanup());
   const director = await h.until("plan"); await h.complete(plan);
   await h.until("execute"); await h.complete(result);
-  await h.engine.tick(); await h.engine.tick();
+  await h.engine.tick(); await h.engine.tick(); await h.engine.tick();
   assert.equal(h.op()?.state, "ready"); assert.match(h.run().message, /准备.*审核/);
   const sent = h.agents.sent.length;
   h.agents.states.set(director.agentId!, { status: "running", seen: false, output: "" });
@@ -232,9 +231,9 @@ test("review queue reports a busy director and permissions before delivery, then
   h.agents.states.set(director.agentId!, { status: "idle", seen: false, output: "" });
   await h.engine.tick(); assert.equal(h.run().control, "running");
   assert.match(h.run().message, /已发送.*审核.*等待总 AI/);
-  await h.engine.tick(); assert.match(h.run().message, /总 AI 正在审核/);
+  await h.engine.tick(); assert.match(h.run().message, /总 AI 正在统一审核/);
   await h.engine.tick(); assert.equal(h.agents.sent.length, sent + 1);
-  await h.complete(review()); assert.equal(h.run().tasks[0].status, "approved");
+  await h.complete(review(true)); assert.equal(h.run().tasks[0].status, "approved");
 });
 
 test("permission resolution records resumed work even when the operation was already busy", async t => {
@@ -331,11 +330,11 @@ test("cancel reconciles a child created just before a checkpoint crash", async t
   assert.equal(h.run().control, "canceled"); assert.deepEqual(h.agents.stopped, [h.agents.created[0].id]);
 });
 
-test("final review rework invalidates accepted dependent tasks", async t => {
+test("unified review rework invalidates executed dependent tasks", async t => {
   const h = await harness(); t.after(() => h.cleanup()); await h.until("plan");
   const second = { ...plan.tasks[0], id: "task-2", title: "依赖任务", dependsOn: ["task-1"] };
   await h.complete({ ...plan, tasks: [...plan.tasks, second] });
-  for (let i = 0; i < 2; i++) { await h.until("execute"); await h.complete(result); await h.until("review"); await h.complete(review()); }
+  for (let i = 0; i < 2; i++) { await h.until("execute"); await h.complete(result); }
   await h.until("final"); await h.complete(review(true, "changes_requested"));
   assert.deepEqual(h.run().tasks.map(task => task.status), ["pending", "pending"]);
   assert.equal(h.run().tasks[0].reworks, 1); assert.equal(h.run().tasks[1].review, undefined);

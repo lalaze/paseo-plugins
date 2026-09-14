@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
-import { SettingsSchema, PlanSchema, ResultSchema, ReviewSchema, hasFinalResult, canResumeRun, parseOutput, profileForTask, validatePlan, operationRole, operationLabel, REVIEWER_ACTOR, type Run, type Operation, type Settings, type Profile, type Review, type ControlAction, type FinalControl } from "../shared/schema";
+import { SettingsSchema, PlanSchema, ResultSchema, ReviewSchema, hasFinalResult, canResumeRun, executionComplete, finalAcceptance, parseOutput, profileForTask, validatePlan, operationRole, operationLabel, REVIEWER_ACTOR, type Run, type Operation, type Settings, type Profile, type Review, type ControlAction, type FinalControl } from "../shared/schema";
 import type { Repository } from "./repository";
 import { Store } from "./store";
 import { buildPrompt, responseSchema } from "./prompts";
@@ -75,16 +75,18 @@ export class Engine {
   }
   private describe(run: Run, op: Operation) {
     const actor = operationLabel(run.settings, op.kind);
-    const action = op.kind === "plan" ? "设计" : op.kind === "execute" ? "执行" : op.kind === "final" ? "最终审核" : "审核";
+    const action = op.kind === "plan" ? "设计" : op.kind === "execute" ? "执行" : op.kind === "final" ? "统一审核" : "审核";
     const title = run.tasks.find(t => t.spec.id === op.taskId)?.spec.title;
     return { actor, action, detail: title ? `：${title}` : "" };
   }
   private enqueue(run: Run, kind: Operation["kind"], taskId?: string, formatRetries = 0) {
     if (run.operations.length - (run.roundOperationOffset ?? 0) >= run.settings.maxAttempts) throw new Error("已达到本轮任务的调用次数上限");
     const task = run.tasks.find(t => t.spec.id === taskId);
+    if (kind === "final" && (!run.tasks.length || !run.tasks.every(executionComplete))) throw new Error("全部任务执行完成后才能统一审核");
     const id = randomUUID();
     const role = operationRole(run.settings, kind);
     const op: Operation = { id, kind, taskId, state: "pending", profileId: role === "worker" ? task!.profileId : role === "reviewer" ? run.settings.reviewerProfileId! : run.settings.directorProfileId, agentId: role === "worker" ? task?.agentId : role === "reviewer" ? run.reviewerAgentId : run.directorAgentId, createdAt: this.now(), formatRetries, prompt: buildPrompt(run, kind, id, taskId) };
+    if (kind === "final") op.reviewScope = "all_tasks";
     run.operations.push(op); run.activeOperationId = id;
     const { actor, action, detail } = this.describe(run, op);
     this.event(run, `准备交给${actor}${action}${detail}`);
@@ -117,17 +119,29 @@ export class Engine {
       if (this.now() - (run.roundStartedAt ?? run.createdAt) >= run.settings.runTimeoutMs) {
         run.control = "canceling"; run.stopTarget = "needs_attention"; this.event(run, "已达到任务总时间上限，正在停止"); this.store.save(run); return;
       }
+      // Upgrade queued legacy task reviews without discarding a review already
+      // sent to an AI. In-flight reviews finish once, then use unified review.
+      if (run.phase === "reviewing" && (!op || (op.kind === "review" && ["pending", "ready"].includes(op.state)))) {
+        const task = run.tasks.find(task => task.status === "reviewing");
+        if (!task || task.result?.status !== "ready_for_review") throw new Error("缺少已执行的任务成果，无法继续后续任务");
+        task.status = "executed";
+        if (op) op.state = "abandoned";
+        run.activeOperationId = undefined; run.phase = "executing";
+        this.event(run, "已改为全部任务执行完成后统一审核，继续串行执行后续任务");
+        this.store.save(run); return;
+      }
       if (!op) {
         await this.repository.assertBranch(run);
         if (run.phase === "planning") this.enqueue(run, "plan");
         else if (run.phase === "executing") {
-          const ready = run.tasks.filter(t => t.status === "pending" && t.spec.dependsOn.every(dep => run.tasks.find(d => d.spec.id === dep)?.status === "approved"));
+          const ready = run.tasks.filter(t => t.status === "pending" && t.spec.dependsOn.every(dep => { const dependency = run.tasks.find(d => d.spec.id === dep); return dependency && executionComplete(dependency); }));
           const task = run.dispatchOrder?.map(id => ready.find(t => t.spec.id === id)).find(Boolean) ?? ready[0];
           if (task) run.dispatchOrder = run.dispatchOrder?.filter(id => id !== task.spec.id);
           if (task) { task.status = "executing"; this.enqueue(run, "execute", task.spec.id); }
-          else if (run.tasks.length && run.tasks.every(t => t.status === "approved")) { run.phase = "final_review"; this.event(run, `准备将最终集成成果交给${operationLabel(run.settings, "final")}审核`); this.store.save(run); }
+          else if (run.tasks.length && run.tasks.every(executionComplete)) { run.phase = "final_review"; this.event(run, `全部任务已执行，准备交给${operationLabel(run.settings, "final")}统一审核`); this.store.save(run); }
           else throw new Error("没有可以执行的任务，请检查依赖和状态");
         } else {
+          if (run.phase === "final_review" && (!run.tasks.length || !run.tasks.every(executionComplete))) throw new Error("全部任务执行完成后才能统一审核");
           const task = run.phase === "reviewing" ? run.tasks.find(t => t.status === "reviewing") : undefined;
           if (run.phase === "reviewing" && !task) throw new Error("缺少待审核任务");
           const controller = new AbortController(); this.checks.set(id, controller);
@@ -242,13 +256,15 @@ export class Engine {
       const result = ResultSchema.parse(value), task = run.tasks.find(t => t.spec.id === op.taskId)!;
       task.result = result;
       if (result.status === "blocked") { this.hold(run, `执行受阻：${result.summary}`); return; }
-      task.status = "reviewing"; run.phase = "reviewing"; this.event(run, run.settings.verificationCommands.length ? `执行完成，运行指定检查后交给${operationLabel(run.settings, "review")}审核` : `执行完成，准备将成果交给${operationLabel(run.settings, "review")}审核`);
+      task.status = "executed"; run.phase = "executing";
+      this.event(run, `执行完成：${task.spec.title}；全部任务完成后统一审核`);
     } else {
       const review = ReviewSchema.parse(value), task = run.tasks.find(t => t.spec.id === op.taskId);
       const evidence = op.kind === "final" ? run.finalEvidence! : task!.evidence!;
       if (review.artifactId !== evidence.id || (await this.repository.capture(run)).id !== evidence.id) throw new Error("审核版本与当前成果不一致，需重新验证后审核");
-      const criteria = op.kind === "final" ? run.plan!.acceptance : task!.spec.acceptance;
+      const criteria = op.kind === "final" ? op.reviewScope === "all_tasks" ? finalAcceptance(run.plan!) : run.plan!.acceptance : task!.spec.acceptance;
       if (review.decision === "approved") {
+        if (op.kind === "final" && (!run.tasks.length || !run.tasks.every(executionComplete))) throw new Error("仍有任务未执行完成，不能批准成果");
         if (run.settings.verificationCommands.length && !evidence.passed) throw new Error("用户指定的额外检查未通过，不能批准成果");
         if (criteria.some(c => !review.criteria.some(r => r.criterion === c && r.passed && r.evidence.trim()))) throw new Error("审核未覆盖全部原始验收标准");
       }
@@ -256,7 +272,7 @@ export class Engine {
       if (review.decision === "blocked") { this.hold(run, `审核受阻：${review.summary}`); return; }
       if (review.decision === "changes_requested") this.rework(run, review);
       else if (task) { task.status = "approved"; run.phase = "executing"; this.event(run, `审核通过：${task.spec.title}`); }
-      else { run.phase = "awaiting_acceptance"; run.control = "paused"; this.event(run, `${operationLabel(run.settings, "final")}最终审核通过，等待你验收或提出修改意见`); }
+      else { for (const task of run.tasks) task.status = "approved"; run.phase = "awaiting_acceptance"; run.control = "paused"; this.event(run, `${operationLabel(run.settings, "final")}统一审核通过，等待你验收或提出修改意见`); }
     }
     op.response = value; op.state = "done"; op.completedAt = this.now(); run.activeOperationId = undefined; this.store.save(run);
   }
@@ -310,7 +326,7 @@ export class Engine {
       if (task && task.status !== "pending") throw new Error("任务已派发或已通过");
       run.dispatchOrder = [...new Set([...(run.dispatchOrder ?? []), taskId])];
       this.store.save(run);
-      return { taskId, executorId: profileForTask(run.settings, spec), queued: true, note: "当前轮结束且前置任务通过后执行" };
+      return { taskId, executorId: profileForTask(run.settings, spec), queued: true, note: "当前轮结束且前置任务执行完成后串行执行，全部完成后统一审核" };
     });
   }
   private async finalControl(run: Run, action: ControlAction, input: FinalControl) {
