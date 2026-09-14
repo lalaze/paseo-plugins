@@ -5,6 +5,7 @@ export type LaunchRequest = {
   status: "submitting" | "created" | "failed" | "setup";
   goal: string;
   requestId: string;
+  fresh?: boolean;
   runId?: string;
   conversationId?: string;
   agentId?: string;
@@ -50,7 +51,7 @@ export function createDirectorCommand() {
       : { directory, goal, requestId: `composer-${Date.now()}-${Math.random().toString(36).slice(2)}` };
     attempts.set(workspaceId, attempt);
     const publish = (value: Omit<LaunchRequest, "goal" | "requestId">) => {
-      if (!disposed) requests.set(workspaceId, { ...value, goal, requestId: attempt.requestId });
+      if (!disposed) requests.set(workspaceId, { ...value, goal, fresh: context.fresh || !!goal, requestId: attempt.requestId });
     };
     const pending = Promise.resolve().then(async () => {
       publish({ status: "submitting" });

@@ -62,7 +62,7 @@ export function DirectorReplyCard({ item, agentId, theme, layout }: PluginTimeli
           <Label theme={theme}>问题：{finding.problem}</Label><Label theme={theme}>修改方法：{finding.change}</Label><Label theme={theme}>复验要求：{finding.verification}</Label><Label theme={theme} muted>对应任务：{finding.taskId}</Label>
         </Section>)}
       </>}
-      <Label theme={theme} muted>本轮结果由后台校验，最新状态可在主对话的子 Agent 入口查看。</Label>
+      <Label theme={theme} muted>本轮结果由后台校验，最新任务状态可在主对话中询问。</Label>
       <Section title="查看原始回复" theme={theme}><ScrollView nestedScrollEnabled style={{ maxHeight: 400 }}><Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18, fontFamily: layout.platform === "ios" ? "Menlo" : "monospace" }}>{data.raw}</Text></ScrollView></Section>
     </Card>
   </View>;

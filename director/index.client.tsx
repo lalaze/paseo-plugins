@@ -31,7 +31,7 @@ export default function contribute(client: PluginClientContext) {
   } });
   client.addTimelineRenderer({ kind: "director-reply", version: 1, schema: ReplyCardSchema, Component: DirectorReplyCard });
   client.addSurface("director", DirectorSurface);
-  client.addWorkspacePanel({ id: "director", title: "打开主对话", icon: "Workflow", context: "workspace", Component: props => <DirectorPanel {...props} requests={command.requests} /> });
+  client.addWorkspacePanel({ id: "director", title: "新建协作对话", icon: "Workflow", context: "workspace", Component: props => <DirectorPanel {...props} requests={command.requests} /> });
   client.addCommandCenterItem({ id: "open-director", title: "新建协作对话", icon: "Workflow", context: "workspace", onSelect: context => command.submit({ ...context, args: "", fresh: true }) });
   client.addSlashCommand({ name: "director", description: "用原生主对话协作；留空打开当前协作对话", argumentHint: "任务描述", context: "workspace", onSubmit: command.submit });
   return () => { cleanupControls(); command.dispose(); };

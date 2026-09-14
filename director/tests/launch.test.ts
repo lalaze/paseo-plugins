@@ -86,3 +86,16 @@ test("invalid goal or workspace does not issue any RPC", async () => {
   await assert.rejects(command.submit({ ...context, workspace: { ...context.workspace, directory: "" } }), /工作区/);
   assert.equal(state.calls.length, 0);
 });
+
+test("new blank collaboration preserves the selected workspace and fresh intent through setup", async () => {
+  const command = createDirectorCommand(), { state, context } = fixture();
+  state.saved = null;
+  await command.submit({ ...context, args: "", fresh: true });
+  assert.equal(command.requests.get("workspace-a")?.fresh, true);
+  state.saved = settings();
+  await command.submit({ ...context, args: "", fresh: true });
+  const call = state.calls.filter(c => c.name === "director.conversation.open").at(-1)!;
+  assert.equal(call.input.workspaceId, "workspace-a");
+  assert.equal(call.input.fresh, true);
+  assert.equal(call.input.goal, undefined);
+});

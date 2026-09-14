@@ -33,13 +33,13 @@ export function DirectorPanel(props: PluginWorkspacePanelProps & { requests: Lau
   const needsSetup = !configured && (launch?.status === "setup" || settings.data?.settings === null);
   useEffect(() => {
     if (!needsSetup && !launch && settings.data?.settings && !create.isPending && !create.data && !create.error)
-      create.mutate({ requestId: requestId.current, workspaceId });
+      create.mutate({ requestId: requestId.current, workspaceId, fresh: true });
   }, [needsSetup, launch, settings.data, workspaceId, create.isPending, create.data, create.error]);
   const agentId = launch?.agentId ?? create.data?.agentId;
   useEffect(() => {
     if (agentId && navigation && redirected.current !== agentId) { redirected.current = agentId; navigation.openAgent({ agentId }); }
   }, [agentId, navigation]);
-  const resume = () => create.mutate({ requestId: launch?.requestId ?? requestId.current, workspaceId, goal: launch?.goal || undefined, fresh: !!launch?.goal });
+  const resume = () => create.mutate({ requestId: launch?.requestId ?? requestId.current, workspaceId, goal: launch?.goal || undefined, fresh: launch ? launch.fresh || !!launch.goal : true });
   if (needsSetup) return <View style={{ flex: 1, padding: layout.compact ? 12 : 24, gap: 12 }}>
     <Label theme={theme}>先保存主 Agent、执行和审核设置。主 Agent 需要支持 MCP 工具，任务描述已保留。</Label>
     <SettingsEditor hostId={host.id} initial={settings.data?.settings ?? null} cwd={directory ?? ""} compact={layout.compact} theme={theme} onSaved={() => { setConfigured(true); void settings.refetch(); resume(); }} />
