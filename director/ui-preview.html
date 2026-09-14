@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 协作 UI 改进预览</title>
+<style>
+  :root {
+    --surface0: #14161b;
+    --surface1: #1b1e25;
+    --surface2: #252932;
+    --accent: #7b97f4;
+    --accentFg: #101322;
+    --fg: #e7e9ef;
+    --fgMuted: #99a0ad;
+    --success: #52c98d;
+    --warning: #e0b46a;
+    --danger: #e0706f;
+    --border: #2c313c;
+    --panel: #343a47;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--surface0); color: var(--fg); font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 14px; line-height: 1.5; padding: 24px 16px 80px; }
+  .page { max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 48px; }
+  h1 { font-size: 24px; }
+  .lede { color: var(--fgMuted); margin-top: 6px; }
+  .secHead { margin-bottom: 14px; }
+  .secHead h2 { font-size: 18px; }
+  .secHead p { color: var(--fgMuted); margin-top: 4px; }
+  .mock { border: 1px solid var(--border); border-radius: 14px; background: var(--surface0); padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+  .card { background: var(--surface1); border: 1px solid var(--panel); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .cardTitle { font-weight: 700; font-size: 16px; }
+  .muted { color: var(--fgMuted); }
+  .small { font-size: 12px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 8px 14px; border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; border: 2px solid var(--accent); background: var(--accent); color: var(--accentFg); user-select: none; }
+  .btn:hover { filter: brightness(1.08); }
+  .btn.secondary { background: var(--surface2); color: var(--fg); border-color: var(--panel); }
+  .btn.secondary:hover { border-color: var(--fgMuted); }
+  .btn.selected { border-color: var(--fg); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .tab { border: 2px solid var(--panel); background: var(--surface2); color: var(--fg); border-radius: 8px; padding: 8px 14px; min-height: 40px; font-weight: 600; cursor: pointer; }
+  .tab.active { border-color: var(--accent); color: var(--accent); }
+  .badge { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border-radius: 20px; background: var(--surface0); font-size: 13px; font-weight: 600; }
+  .dot { width: 7px; height: 7px; border-radius: 4px; }
+  .t-accent { color: var(--accent); } .t-success { color: var(--success); } .t-warning { color: var(--warning); } .t-danger { color: var(--danger); } .t-muted { color: var(--fgMuted); }
+  .d-accent { background: var(--accent); } .d-success { background: var(--success); } .d-warning { background: var(--warning); } .d-danger { background: var(--danger); } .d-muted { background: var(--fgMuted); }
+  .statusCard { background: var(--surface0); border-left: 3px solid var(--accent); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .stageRow { display: flex; gap: 8px; flex-wrap: wrap; }
+  .stage { flex: 1 1 130px; display: flex; gap: 10px; align-items: center; padding: 12px; border-radius: 10px; background: var(--surface0); border: 1px solid var(--panel); }
+  .stage.current { background: var(--surface2); border-color: var(--accent); }
+  .stageNum { width: 26px; height: 26px; border-radius: 13px; border: 1px solid var(--fgMuted); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; flex-shrink: 0; }
+  .progress { flex: 1; height: 5px; border-radius: 3px; background: var(--panel); overflow: hidden; }
+  .progress > div { height: 5px; background: var(--accent); }
+  .anno { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 10px; background: var(--accent); color: var(--accentFg); font-size: 12px; font-weight: 700; flex-shrink: 0; }
+  .annoNote { display: flex; gap: 8px; align-items: flex-start; color: var(--fgMuted); font-size: 13px; }
+  .disclosure { border-top: 1px solid var(--panel); padding-top: 12px; }
+  .disclosureHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; cursor: pointer; min-height: 40px; }
+  .task { padding: 14px; border-radius: 10px; border: 1px solid var(--panel); background: var(--surface0); display: flex; flex-direction: column; gap: 8px; }
+  .task.active { border-color: var(--accent); }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .compare { grid-template-columns: 1fr; } }
+  .compareBox { border: 1px dashed var(--panel); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .compareTag { font-size: 12px; font-weight: 700; color: var(--fgMuted); letter-spacing: 1px; }
+  .compareTag.new { color: var(--success); }
+  .clickRow { cursor: pointer; }
+  .clickRow:hover { border-color: var(--accent); }
+  .stepTab { flex: 1; min-width: 0; padding: 11px 13px; border-radius: 10px; border: 2px solid var(--panel); background: var(--surface1); cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
+  .stepTab.active { border-color: var(--accent); background: var(--surface2); }
+  .footerBar { border-top: 1px solid var(--panel); background: var(--surface1); padding: 12px 16px; border-radius: 0 0 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .banner { border: 1px solid var(--warning); background: rgba(224,180,106,.08); border-radius: 8px; padding: 10px 12px; color: var(--warning); font-size: 13px; }
+  kbd { background: var(--surface2); border-radius: 4px; padding: 1px 6px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <h1>AI 协作 UI 改进预览</h1>
+    <p class="lede">静态高保真示意，对应审核意见的 ①②③④⑤⑥⑦ 项。带 ▸ 的地方可以点击试试。仅演示交互与信息层级，非最终实现。</p>
+  </header>
+
+  <!-- ================= ① 主导航 ================= -->
+  <section>
+    <div class="secHead">
+      <h2><span class="anno">1</span> 主导航：统一页签样式</h2>
+      <p>现在「新建任务」是主按钮色，看起来像永远高亮的行动按钮；改为与详情页一致的统一样式，当前页用高亮边框表示。</p>
+    </div>
+    <div class="compare">
+      <div class="compareBox">
+        <span class="compareTag">现状</span>
+        <div class="row">
+          <span class="btn secondary">任务记录</span>
+          <span class="btn">新建任务</span>
+          <span class="btn secondary">协作设置</span>
+        </div>
+        <span class="muted small">「新建任务」是实心主色按钮，但它只是切换页面的页签。</span>
+      </div>
+      <div class="compareBox">
+        <span class="compareTag new">改进后（可点击切换）</span>
+        <div class="row" id="navTabs">
+          <span class="tab" data-t="0">任务记录</span>
+          <span class="tab active" data-t="1">新建任务</span>
+          <span class="tab" data-t="2">协作设置</span>
+        </div>
+        <span class="muted small">三者同级，当前页高亮；不再有常驻的实心主按钮。</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ②③⑤⑥ 任务详情 ================= -->
+  <section>
+    <div class="secHead">
+      <h2><span class="anno">2</span><span class="anno">3</span><span class="anno">5</span><span class="anno">6</span> 任务详情页</h2>
+      <p>一张状态卡 + 永远只有一个主按钮（②）；等待确认总纲时页签自动跟随、不再"选 A 显示 B"（③）；子任务结果直接展示不再折叠（⑤）；任务信息平铺（⑥）。</p>
+      <p style="margin-top:8px">演示任务状态：
+        <span class="row" style="display:inline-flex" id="stateSwitch">
+          <span class="tab" data-s="running">执行中</span>
+          <span class="tab active" data-s="plan">等待确认总纲</span>
+          <span class="tab" data-s="accept">等待你验收</span>
+          <span class="tab" data-s="attention">需要处理</span>
+        </span>
+      </p>
+    </div>
+    <div class="mock">
+      <div class="card" style="gap:16px">
+        <div class="row" style="justify-content:space-between">
+          <span class="muted">协作任务</span>
+          <span class="badge" id="dBadge"><span class="dot d-warning"></span><span class="t-warning">等待你确认总纲</span></span>
+        </div>
+        <div style="font-size:20px;font-weight:700;line-height:1.5">给项目增加登录功能，支持邮箱验证码登录，保留现有会话行为</div>
+        <div class="stageRow" id="stageRow"></div>
+        <div class="row"><span class="muted small" id="progText">已执行 0 / 3 项</span><div class="progress"><div id="progBar" style="width:0%"></div></div></div>
+
+        <!-- ② 状态卡：唯一主按钮 -->
+        <div class="statusCard">
+          <strong id="stTitle">需要你处理</strong>
+          <span id="stText">请查看下方设计总纲与验收要求，确认后开始执行。</span>
+          <div class="row" id="stActions"></div>
+        </div>
+        <div class="muted small">② 任何状态下这里都只有一个实心主按钮；次要操作全部收进下方「更多操作」。</div>
+
+        <div class="disclosure">
+          <div class="disclosureHead" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'block' ? 'none' : 'block'">
+            <div><strong>更多操作</strong><div class="muted small">暂停派发 · 修改目标 · 取消任务</div></div>
+            <span class="muted">展开 ▾</span>
+          </div>
+          <div style="display:none; padding-top:10px" class="row">
+            <span class="btn secondary">暂停派发</span>
+            <span class="btn secondary">修改任务目标</span>
+            <span class="btn secondary t-danger" style="color:var(--danger)">取消任务</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ③ 页签 -->
+      <div class="row" style="border-bottom:1px solid var(--panel);padding-bottom:12px" id="dtTabs">
+        <span class="tab" data-t="tasks">子任务 · 3</span>
+        <span class="tab active" data-t="plan">方案与验收标准</span>
+        <span class="tab" data-t="activity">运行记录</span>
+        <span class="tab" data-t="info">任务信息</span>
+      </div>
+      <div class="banner" id="planBanner">③ 正在等你确认总纲，已自动切到「方案与验收标准」——页签显示和实际内容始终一致。</div>
+
+      <!-- 子任务 -->
+      <div class="card" id="tab-tasks" style="display:none">
+        <span class="cardTitle">子任务</span>
+        <span class="muted small">已执行 1 / 3 项 · 按顺序执行，全部完成后统一审核</span>
+
+        <div class="task">
+          <div class="row"><span class="muted">01</span><strong style="flex:1">设计登录接口与会话模型</strong><span class="badge"><span class="dot d-success"></span><span class="t-success">已通过</span></span></div>
+          <!-- ⑤ 结果直接展示 -->
+          <div style="border-top:1px solid var(--panel);padding-top:8px">
+            <div><span class="t-success">✓ 执行结果：</span>新增 /api/login 接口与 session 表，单测 12 项全部通过。</div>
+            <div class="muted small">审核：接口与验收要求一致 · 执行 AI：Claude · 返工 0/2</div>
+          </div>
+          <div class="disclosure">
+            <div class="disclosureHead" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'block' ? 'none' : 'block'">
+              <span class="muted">任务要求与验收标准 · 3 项修改范围</span><span class="muted">展开 ▾</span>
+            </div>
+            <div style="display:none" class="muted small">（参考信息，默认折叠）</div>
+          </div>
+        </div>
+
+        <div class="task active">
+          <div class="row"><span class="muted">02</span><strong style="flex:1">实现登录页面与表单校验</strong><span class="badge"><span class="dot d-accent"></span><span class="t-accent">执行任务</span></span></div>
+          <div class="muted small">执行 AI：GPT · 进行中，完成后这里直接显示结果摘要</div>
+        </div>
+
+        <div class="task">
+          <div class="row"><span class="muted">03</span><strong style="flex:1" class="muted">端到端登录流程测试</strong><span class="badge"><span class="dot d-muted"></span><span class="t-muted">等待执行</span></span></div>
+        </div>
+      </div>
+
+      <!-- 方案 -->
+      <div class="card" id="tab-plan">
+        <span class="cardTitle">设计总纲</span>
+        <span>采用邮箱验证码登录：新增验证码发送与校验接口，复用现有会话签发逻辑，前端增加登录页。</span>
+        <div>
+          <div>• 验证码 5 分钟内有效，错误 5 次锁定</div>
+          <div>• 现有登录态不受影响，旧会话可继续用</div>
+          <div>• 接口与页面均有自动化测试</div>
+        </div>
+        <div class="disclosure">
+          <div class="disclosureHead" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'block' ? 'none' : 'block'">
+            <div><strong>实现方案</strong><div class="muted small">3 项子任务 · 展开查看架构与实现安排</div></div>
+            <span class="muted">展开 ▾</span>
+          </div>
+          <div style="display:none" class="muted small">（架构说明全文）</div>
+        </div>
+      </div>
+
+      <!-- 运行记录 -->
+      <div class="card" id="tab-activity" style="display:none">
+        <span class="cardTitle">运行记录</span>
+        <div class="small" style="display:flex;flex-direction:column;gap:6px">
+          <span class="muted">14:02:11 · <span class="t-accent">●</span> 任务 02 派发执行 AI（GPT）</span>
+          <span class="muted">13:58:40 · <span class="t-success">●</span> 任务 01 审核通过</span>
+          <span class="muted">13:47:03 · <span class="t-warning">●</span> 任务 01 提交审核</span>
+          <span class="muted">13:31:22 · <span class="t-accent">●</span> 总纲 v1 已确认，开始执行</span>
+        </div>
+        <span class="muted small">⑦ 事件带颜色状态点，错误/返工一眼可见。</span>
+      </div>
+
+      <!-- ⑥ 任务信息平铺 -->
+      <div class="card" id="tab-info" style="display:none">
+        <span class="cardTitle">任务信息</span>
+        <div>完整目标：给项目增加登录功能，支持邮箱验证码登录，保留现有会话行为</div>
+        <div class="muted small">成果分支：director/login-20260914<br>代码目录：~/work/myapp</div>
+        <div class="muted small">设计 AI：Claude（claude-sonnet-4）<br>审核 AI：沿用设计会话<br>本轮调用 4 / 10 次</div>
+        <div class="row"><span class="btn secondary">打开设计 AI 会话</span></div>
+        <span class="muted small">⑥ 不再套默认展开的折叠层，信息直接平铺。</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ④ 设置向导 ================= -->
+  <section>
+    <div class="secHead">
+      <h2><span class="anno">4</span> 协作设置：步骤条带状态 + 底部操作精简</h2>
+      <p>步骤可自由切换，但每步显示校验状态与「供应商 / 模型」摘要（现在显示的是供应商名，三步常长一样）；底部只留保存与翻页，草稿/故障操作收进折叠区。</p>
+    </div>
+    <div class="mock" style="padding:0;gap:0">
+      <div style="padding:20px;display:flex;flex-direction:column;gap:16px">
+        <div>
+          <div style="font-size:20px;font-weight:700">安排你的 AI 团队</div>
+          <div class="muted small">随时切换角色编辑；保存后用于当前主机的新任务。</div>
+        </div>
+        <div class="row" style="gap:8px" id="stepTabs">
+          <div class="stepTab active" data-t="0">
+            <span class="small t-success">✓ 01</span>
+            <strong>选择设计 AI</strong>
+            <span class="muted small">anthropic / claude-sonnet-4</span>
+          </div>
+          <div class="stepTab" data-t="1">
+            <span class="small t-danger">! 02</span>
+            <strong>选择执行 AI</strong>
+            <span class="small t-danger">还缺模型</span>
+          </div>
+          <div class="stepTab" data-t="2">
+            <span class="small t-muted">03</span>
+            <strong>选择审核 AI</strong>
+            <span class="muted small">沿用设计 AI</span>
+          </div>
+        </div>
+        <span class="muted small">④ 完成的步骤打 ✓，缺信息的步骤标 ! 并写明原因——保存前哪里没填一眼可见，不用再靠报错逐条试错。</span>
+        <div class="card">
+          <span class="cardTitle">谁负责设计总纲？</span>
+          <span class="muted small">（供应商 / 模型 / 执行权限等表单与现状一致，此处省略）</span>
+        </div>
+      </div>
+      <div class="footerBar">
+        <span class="muted small">有未生效的修改 · 草稿已保留在当前主机</span>
+        <div class="row">
+          <span class="btn">保存设置</span>
+          <span class="btn secondary">下一步</span>
+          <span class="muted small" style="cursor:pointer">草稿与故障处理 ▾（放弃草稿 / 重新读取）</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ⑦ 任务列表 ================= -->
+  <section>
+    <div class="secHead">
+      <h2><span class="anno">7</span> 任务记录：整行可点 + 路径缩短</h2>
+    </div>
+    <div class="compare">
+      <div class="compareBox">
+        <span class="compareTag">现状</span>
+        <div class="task">
+          <span class="badge"><span class="dot d-accent"></span><span class="t-accent">执行任务</span></span>
+          <strong>给项目增加登录功能，支持邮箱验证码登录…</strong>
+          <span class="muted small">代码目录：/home/user/work/company/myapp<br>更新于 2026/9/14 14:02:11 · 子任务已执行 1 / 3</span>
+          <span class="btn secondary">查看任务</span>
+        </div>
+      </div>
+      <div class="compareBox">
+        <span class="compareTag new">改进后（整行可点，悬停试试）</span>
+        <div class="task clickRow" onclick="this.querySelector('.hint').textContent = '（这里会打开任务详情）'">
+          <div class="row" style="justify-content:space-between">
+            <span class="badge"><span class="dot d-accent"></span><span class="t-accent">执行任务</span></span>
+            <span class="muted small">2 分钟前</span>
+          </div>
+          <strong>给项目增加登录功能，支持邮箱验证码登录…</strong>
+          <span class="muted small">…/company/myapp · 子任务 1 / 3 · 任务 02 执行中</span>
+          <span class="muted small hint"></span>
+        </div>
+        <span class="muted small">完整路径在详情页「任务信息」里保留，列表只显示末两级。</span>
+      </div>
+    </div>
+  </section>
+
+  <footer class="muted small">
+    未包含在此预览里的低优先级项：首次使用引导文案、术语统一（总纲/方案、任务记录/所有任务、「总 AI」→「设计 AI」）、按钮 hover 态、聊天卡片加「查看任务进度」入口。
+  </footer>
+</div>
+
+<script>
+// ① 主导航切换
+document.querySelectorAll('#navTabs .tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('#navTabs .tab').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+});
+// ④ 步骤切换
+document.querySelectorAll('#stepTabs .stepTab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('#stepTabs .stepTab').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+});
+// ③ 详情页签切换
+const tabIds = ['tasks','plan','activity','info'];
+function setTab(id) {
+  document.querySelectorAll('#dtTabs .tab').forEach(x => x.classList.toggle('active', x.dataset.t === id));
+  tabIds.forEach(k => document.getElementById('tab-' + k).style.display = k === id ? 'flex' : 'none');
+}
+document.querySelectorAll('#dtTabs .tab').forEach(t => t.onclick = () => setTab(t.dataset.t));
+
+// ②③ 状态演示
+const states = {
+  running: { badge: ['执行任务','accent'], title: '当前动态', text: 'AI 正在推进任务，进度会自动更新。',
+    actions: [['打开当前 AI 会话','primary']], tab: 'tasks', stage: 1, done: 1, banner: false },
+  plan: { badge: ['等待你确认总纲','warning'], title: '需要你处理', text: '请查看下方设计总纲与验收要求，确认后开始执行。',
+    actions: [['总纲通过，开始执行','primary'],['打开当前 AI 会话','secondary']], tab: 'plan', stage: 0, done: 0, banner: true },
+  accept: { badge: ['等待你验收','warning'], title: '需要你处理', text: 'AI 已完成审核。请查看成果与审核依据，再验收或提交修改意见。',
+    actions: [['验收通过，完成任务','primary'],['提出修改意见','secondary']], tab: 'tasks', stage: 3, done: 3, banner: false },
+  attention: { badge: ['需要处理','danger'], title: '需要你处理', text: '执行 AI 请求了文件写入权限。请打开会话处理，或检查后重试当前步骤。',
+    actions: [['我已检查，重试此步骤','primary'],['打开 AI 会话，处理请求','secondary']], tab: 'tasks', stage: 1, done: 1, banner: false },
+};
+const stageNames = ['制定方案','执行子任务','审核成果','你的验收'];
+function setState(key) {
+  const s = states[key];
+  document.querySelectorAll('#stateSwitch .tab').forEach(x => x.classList.toggle('active', x.dataset.s === key));
+  document.getElementById('dBadge').innerHTML = `<span class="dot d-${s.badge[1]}"></span><span class="t-${s.badge[1]}">${s.badge[0]}</span>`;
+  document.getElementById('stTitle').textContent = s.title;
+  document.getElementById('stText').textContent = s.text;
+  document.getElementById('stActions').innerHTML = s.actions.map(([l,k]) => `<span class="btn ${k==='secondary'?'secondary':''}">${l}</span>`).join('');
+  document.getElementById('planBanner').style.display = s.banner ? 'block' : 'none';
+  document.getElementById('progText').textContent = `已执行 ${s.done} / 3 项`;
+  document.getElementById('progBar').style.width = (s.done/3*100) + '%';
+  document.getElementById('stageRow').innerHTML = stageNames.map((name,i) => {
+    const passed = i < s.stage, cur = i === s.stage;
+    const c = passed ? 'var(--success)' : cur ? 'var(--accent)' : 'var(--fgMuted)';
+    return `<div class="stage ${cur?'current':''}"><div class="stageNum" style="border-color:${c};color:${c}">${passed?'✓':i+1}</div>
+      <div><div style="font-size:13px;${cur?'font-weight:700':''}">${name}</div><div style="font-size:11px;color:${c}">${passed?'已完成':cur?'当前阶段':'待开始'}</div></div></div>`;
+  }).join('');
+  setTab(s.tab);
+}
+document.querySelectorAll('#stateSwitch .tab').forEach(t => t.onclick = () => setState(t.dataset.s));
+setState('plan');
+</script>
+</body>
+</html>

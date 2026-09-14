@@ -34,7 +34,7 @@ export class Engine {
   private event(run: Run, message: string) {
     run.message = message; run.events.push({ time: this.now(), message }); run.events = run.events.slice(-300);
   }
-  async create(input: { requestId: string; repository: string; goal: string; settings?: Settings; workspaceId?: string }): Promise<string> {
+  async create(input: { requestId: string; repository: string; goal: string; settings?: Settings; workspaceId?: string; chat?: Run["chat"] }): Promise<string> {
     // Serialize preparation so concurrent requests cannot switch one checkout
     // to different branches before either run is recorded.
     return this.locked("create", async () => {
@@ -52,7 +52,7 @@ export class Engine {
         await this.agents.retainWorkspaceName(input.workspaceId);
       }
       const workspace = await this.repository.prepare(input.repository, id, Boolean(input.workspaceId));
-      const run: Run = { ...workspace, ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}), id, requestId: input.requestId, revision: 0, goal: input.goal, settings, createdAt: this.now(), updatedAt: this.now(), phase: "planning", control: "running", message: `等待${operationLabel(settings, "plan")}制定计划`, planApproved: !settings.requirePlanApproval, tasks: [], operations: [], events: [] };
+      const run: Run = { ...workspace, ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}), id, ...(input.chat ? { chat: input.chat, directorAgentId: input.chat.mainAgentId } : {}), requestId: input.requestId, revision: 0, goal: input.goal, settings, createdAt: this.now(), updatedAt: this.now(), phase: "planning", control: "running", message: `等待${operationLabel(settings, "plan")}制定计划`, planApproved: !settings.requirePlanApproval, tasks: [], operations: [], events: [] };
       this.store.insert(run); return id;
     });
   }
@@ -94,6 +94,7 @@ export class Engine {
   }
   private async advance(id: string) {
     let run = this.store.get(id);
+    if ((run.migrationConversationId && !run.chat) || run.chat?.recovering) return;
     if (this.stopped || run.phase === "completed" || !["running", "waiting_permission", "canceling"].includes(run.control)) return;
     try {
       let op = this.current(run);
@@ -106,7 +107,7 @@ export class Engine {
             if (state.status === "running" || state.status === "permission") return;
           }
         }
-        if (op?.agentId) {
+        if (op?.agentId && op.agentId !== run.chat?.mainAgentId) {
           await this.agents.stop(op.agentId);
           const state = await this.agents.inspect(op.agentId, op.id);
           if (state.status === "running" || state.status === "permission") return;
@@ -188,7 +189,8 @@ export class Engine {
       }
       const state = await this.agents.inspect(op.agentId, op.id);
       if (state.status === "missing" || state.status === "error") throw new Error(state.error ?? "AI 会话不可用");
-      if (state.interrupted) throw new Error("此会话收到其他消息，已暂停自动处理；请检查后重试当前步骤");
+      const conversational = !!run.chat && op.agentId === run.chat.mainAgentId;
+      if (state.interrupted && !conversational) throw new Error("此会话收到其他消息，已暂停自动处理；请检查后重试当前步骤");
       if (op.state === "sending") {
         if (!state.seen) { this.hold(run, "无法确认上一条指令是否送达，已停止自动重发；请检查后重试"); return; }
         op.state = "sent"; this.store.save(run);
@@ -202,7 +204,7 @@ export class Engine {
       if (this.now() - (op.sentAt ?? op.createdAt) >= run.settings.turnTimeoutMs) {
         run.control = "canceling"; run.stopTarget = "needs_attention"; this.event(run, "当前步骤超时，正在停止 AI"); this.store.save(run); return;
       }
-      if (state.status === "running") {
+      if (state.status === "running" && !(conversational && op.response !== undefined)) {
         if (!op.observedBusy) {
           op.observedBusy = true;
           const { actor, action, detail } = this.describe(run, op);
@@ -211,7 +213,9 @@ export class Engine {
         }
         return;
       }
-      if (!state.seen) { if (this.now() - (op.sentAt ?? op.createdAt) > 20000) throw new Error("当前指令未出现在会话记录中"); return; }
+      if (!state.seen && !(conversational && op.response !== undefined)) { if (this.now() - (op.sentAt ?? op.createdAt) > 20000) throw new Error("当前指令未出现在会话记录中"); return; }
+      // A normal reply or canceled chat turn is not an invalid operation result.
+      if (conversational && op.response === undefined) return;
       if (op.response === undefined && !state.output.trim()) { if (this.now() - (op.sentAt ?? op.createdAt) > 20000) throw new Error("本轮没有返回任务结果"); return; }
       let response: unknown;
       try { response = responseSchema(op.kind).parse(op.response ?? parseOutput(state.output)); }
@@ -238,7 +242,7 @@ export class Engine {
     const role = operationRole(run.settings, op.kind);
     if (role === "worker") run.tasks.find(t => t.spec.id === op.taskId)!.agentId = agentId;
     else if (role === "reviewer") run.reviewerAgentId = agentId;
-    else run.directorAgentId = agentId;
+    else if (!run.chat || agentId === run.chat.mainAgentId) run.directorAgentId = agentId;
   }
   private async finish(run: Run, op: Operation, value: unknown) {
     if (op.kind === "plan") {
@@ -301,17 +305,59 @@ export class Engine {
   async submit(runId: string, actor: string, operationId: string, payload: unknown) {
     return this.locked(runId, async () => {
       const run = this.store.get(runId), op = this.current(run);
-      if (!op || op.id !== operationId || !["running", "waiting_permission", "paused"].includes(run.control) || !["sending", "sent"].includes(op.state)) throw new Error("提交对应的步骤已经结束");
+      const conversational = !!op && !!run.chat && op.agentId === run.chat.mainAgentId;
+      if (!op || op.id !== operationId || !["running", "waiting_permission", "paused"].includes(run.control) || !(conversational ? ["pending", "ready", "sending", "sent"] : ["sending", "sent"]).includes(op.state)) throw new Error("提交对应的步骤已经结束");
       if (actor !== this.actor(run, op)) throw new Error("角色无权提交此步骤");
       const response = responseSchema(op.kind).parse(payload);
       const hash = createHash("sha256").update(JSON.stringify(response)).digest("hex");
       if (op.responseHash && op.responseHash !== hash) throw new Error("本轮已提交不同结果");
       if (!op.responseHash) {
+        if (conversational) op.state = "sent";
         op.response = response; op.responseHash = hash;
         this.event(run, `已收到${this.describe(run, op).actor}提交的结果，等待本轮结束后校验`);
         this.store.save(run);
       }
       return { accepted: true };
+    });
+  }
+  async markMigration(id: string, conversationId: string) {
+    return this.locked(id, async () => {
+      const run = this.store.get(id);
+      if (run.chat) return;
+      run.migrationConversationId = conversationId;
+      this.store.save(run);
+    });
+  }
+  async attachConversation(id: string, conversationId: string, mainAgentId: string) {
+    return this.locked(id, async () => {
+      const run = this.store.get(id);
+      if (run.chat) {
+        if (run.chat.conversationId !== conversationId) throw new Error("任务已绑定其他主会话");
+        return;
+      }
+      const old = run.directorAgentId;
+      run.chat = { version: 1, conversationId, mainAgentId, legacyAgentId: old };
+      run.directorAgentId = mainAgentId;
+      // Already-created operations retain their agent and protocol. Only future
+      // operations use the main chat; never resend an in-flight operation.
+      const op = this.current(run);
+      if (op?.kind === "plan" && op.state === "pending" && !op.agentId) op.agentId = mainAgentId;
+      run.migrationConversationId = undefined;
+      this.store.save(run);
+    });
+  }
+  async recoverMain(id: string, agentId?: string) {
+    return this.locked(id, async () => {
+      const run = this.store.get(id);
+      if (!run.chat) throw new Error("任务尚未迁入主对话");
+      if (!agentId) run.chat.recovering = true;
+      else {
+        const old = run.chat.mainAgentId;
+        const op = this.current(run);
+        if (op?.agentId === old) { op.state = "abandoned"; run.activeOperationId = undefined; }
+        run.chat.mainAgentId = agentId; run.chat.recovering = false; run.directorAgentId = agentId;
+      }
+      this.store.save(run);
     });
   }
   async dispatch(id: string, taskId: string) {
@@ -329,7 +375,7 @@ export class Engine {
       return { taskId, executorId: profileForTask(run.settings, spec), queued: true, note: "当前轮结束且前置任务执行完成后串行执行，全部完成后统一审核" };
     });
   }
-  private async finalControl(run: Run, action: ControlAction, input: FinalControl) {
+  private async finalControl(run: Run, action: ControlAction, input: FinalControl, receipt?: string) {
     if (!hasFinalResult(run) || !run.plan || !run.tasks.length || run.tasks.some(t => t.status !== "approved")) throw new Error("当前没有可验收的最终成果");
     if (input.expectedRevision !== run.revision || input.artifactId !== run.finalEvidence!.id || run.finalReview!.artifactId !== run.finalEvidence!.id) throw new Error("任务或审核版本已变化，请刷新后重试");
     if (action !== "request_changes" && run.userAcceptance) throw new Error("该成果已经验收，请刷新查看");
@@ -358,13 +404,15 @@ export class Engine {
       run.phase = "planning"; run.control = "running";
       this.event(run, `修改意见已提交，${operationLabel(run.settings, "plan")}将安排修改；保留原目标和现有文件`);
     }
+    if (receipt) (run.chatReceipts ??= {})[receipt] = action;
     this.store.save(run); return { ok: true };
   }
-  async control(id: string, action: ControlAction, goal?: string, final: FinalControl = {}) {
+  async control(id: string, action: ControlAction, goal?: string, final: FinalControl = {}, receipt?: string) {
     if (action === "cancel" || action === "revise") this.checks.get(id)?.abort();
     const apply = () => this.locked(id, async () => {
       const run = this.store.get(id);
-      if (["accept_final", "reject_final", "request_changes"].includes(action)) return this.finalControl(run, action, final);
+      if (receipt && run.chatReceipts?.[receipt] === action) return { ok: true };
+      if (["accept_final", "reject_final", "request_changes"].includes(action)) return this.finalControl(run, action, final, receipt);
       if (run.phase === "completed" || run.control === "canceled") throw new Error("任务已结束");
       if (run.phase === "awaiting_acceptance" && action !== "cancel") throw new Error("AI 已审核通过，请验收成果或提交修改意见");
       if (action === "pause") { run.control = "paused"; this.event(run, "已暂停后续派发；当前 AI 可完成本轮"); }
@@ -428,7 +476,7 @@ export class Engine {
         if (!goal?.trim()) throw new Error("新目标不能为空");
         const op = this.current(run);
         if (op?.state === "creating" && !op.agentId) throw new Error("请先检查创建中的会话并重试，再修改需求");
-        if (op?.agentId) {
+        if (op?.agentId && op.agentId !== run.chat?.mainAgentId) {
           await this.agents.stop(op.agentId);
           const state = await this.agents.inspect(op.agentId, op.id);
           if (["running", "permission"].includes(state.status)) throw new Error("正在停止原 AI，请稍后保存新要求");

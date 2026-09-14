@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
+import { useAgent, type PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import type { PromptCardData } from "./prompt-model";
 import { Card, Label, outline } from "./ui";
 import { Disclosure } from "./settings-controls";
@@ -11,9 +11,11 @@ const stages = {
   review: { title: "审核任务", instruction: "检查实际代码与执行结果，按验收要求验证，决定通过或返工。" },
   final: { title: "统一审核", instruction: "检查全部任务的集成成果，逐项核对目标和用户的修改要求；通过后交给用户验收。" },
 };
-export function DirectorPromptCard({ item, theme, layout }: PluginTimelineItemProps<PromptCardData>) {
+export function DirectorPromptCard({ item, theme, layout, agentId }: PluginTimelineItemProps<PromptCardData>) {
   const [expanded, setExpanded] = useState(false), [focused, setFocused] = useState(false);
+  const owner = useAgent(agentId, agent => agent.labels["director-role"]);
   const data = item.data, stage = stages[data.stage];
+  if (owner === "chat") return <View style={{ paddingVertical: 6 }}><Disclosure theme={theme} title={`后台交接 · ${stage.title}`} summary="主 Agent 正在处理本轮协作事项"><Label theme={theme} muted>{data.goal}</Label></Disclosure></View>;
   const actor = data.actor ?? (data.stage === "execute" ? "执行 AI" : "总 AI");
   return <View style={{ width: "100%", maxWidth: 900, minWidth: 0, alignSelf: "center", paddingVertical: 8 }}>
     <Card theme={theme} title={`${actor} · ${stage.title}`}>

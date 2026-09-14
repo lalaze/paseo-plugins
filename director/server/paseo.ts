@@ -7,8 +7,9 @@ import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentGateway, AgentSnapshot } from "./engine";
+import type { Conversation } from "../shared/conversation";
 import type { Run, Operation, Profile } from "../shared/schema";
-import { ROLE_PROMPT } from "./prompts";
+import { CHAT_PROMPT, ROLE_PROMPT } from "./prompts";
 import { operationRole, operationLabel } from "../shared/schema";
 import { realpath } from "node:fs/promises";
 
@@ -47,6 +48,8 @@ export function inspectMessages(items: AgentTimelineItem[], operationId: string)
 }
 export class PaseoGateway implements AgentGateway {
   readonly api: PaseoApi;
+  private pluginApi?: PaseoApi;
+  setPluginApi(api: PaseoApi) { this.pluginApi = api; }
   private driver: DaemonClient;
   private connectPromise?: Promise<void>;
   private isClosed = false;
@@ -61,6 +64,7 @@ export class PaseoGateway implements AgentGateway {
     await this.connectPromise;
   }
   async close() { this.isClosed = true; await this.driver.close(); }
+  async workspaceForDirectory(cwd: string) { await this.connect(); return (await this.api.workspaces.open(cwd)).id; }
   async workspaceDirectory(workspaceId: string) {
     await this.connect();
     const workspace = this.api.workspaces.ref(workspaceId);
@@ -96,7 +100,7 @@ export class PaseoGateway implements AgentGateway {
     const agent = await workspace.agents.create({
       config: { provider: profile.provider, ...(modeId ? { modeId } : {}), ...(profile.thinkingOptionId ? { thinkingOptionId: profile.thinkingOptionId } : {}), systemPrompt: ROLE_PROMPT,
         ...(profile.transport === "mcp" ? { mcpServers: { director: { type: "http", url: this.mcpUrl(), headers: { Authorization: `Bearer ${token}` } } } } : {}) },
-      parent: role !== "director" ? run.directorAgentId : undefined,
+      parent: role !== "director" ? run.chat?.mainAgentId ?? run.directorAgentId : undefined,
       title: `AI 协作 · ${operationLabel(run.settings, op.kind)} · ${op.kind === "execute" ? Array.from(taskTitle.trim().replace(/\s+/g, " ")).slice(0, 60).join("") : goalTitle}`,
       requestId: op.id, labels: { "director-run": run.id, "director-operation": op.id, "director-role": role },
     });
@@ -125,6 +129,61 @@ export class PaseoGateway implements AgentGateway {
     }
     return { status, ...inspectMessages(items, operationId), error: agent.lastError ?? undefined };
   }
-  async send(agentId: string, operationId: string, prompt: string) { await this.connect(); await this.api.agents.ref(agentId).send(prompt, { messageId: operationId }); }
+  async send(agentId: string, operationId: string, prompt: string) {
+    await this.connect();
+    const agent = this.api.agents.ref(agentId);
+    const snapshot = await agent.refresh();
+    if (snapshot?.agent.labels?.["director-conversation"] && prompt.startsWith("[paseo-director:")) {
+      prompt += "\n这是主对话中的后台操作。通过 submit_operation 提交（operationId 和 payload），不要在聊天中输出 JSON。可先调用 get_conversation_status 核对最新状态。";
+    }
+    await agent.send(prompt, { messageId: operationId });
+  }
+  async createConversation(conversation: Conversation, token: string) {
+    await this.connect();
+    const profile = conversation.settings.profiles.find(p => p.id === conversation.settings.directorProfileId)!;
+    const slash = profile.provider.indexOf("/"), provider = profile.provider.slice(0, slash), model = profile.provider.slice(slash + 1);
+    const catalog = await this.api.providers.waitForReady({ cwd: conversation.cwd, timeoutMs: 12000 });
+    const entry = catalog.entries.find(e => e.provider === provider);
+    if (!entry || entry.status !== "ready" || !entry.models?.some(m => m.id === model)) throw new Error(`主 Agent 不可用：${profile.provider}；请检查模型及 MCP 接入`);
+    const modeId = profile.modeId || entry.defaultModeId || undefined;
+    if (modeId && entry.modes && !entry.modes.some(m => m.id === modeId)) throw new Error("主 Agent 保存的权限模式不可用，请在设置中重新选择");
+    const workspace = this.api.workspaces.ref(conversation.workspaceId);
+    if (await realpath(await this.workspaceDirectory(workspace.id)) !== await realpath(conversation.cwd)) throw new Error("会话工作区目录已变化");
+    const agent = await workspace.agents.create({
+      requestId: `${conversation.id}:${conversation.generation ?? 0}`, title: `主 Agent · ${(conversation.initialGoal || "AI 协作").slice(0, 50)}`,
+      labels: { "director-conversation": conversation.id, "director-generation": String(conversation.generation ?? 0), "director-role": "chat" },
+      config: { provider: profile.provider, ...(modeId ? { modeId } : {}),
+        ...(profile.thinkingOptionId ? { thinkingOptionId: profile.thinkingOptionId } : {}),
+        systemPrompt: CHAT_PROMPT + (profile.instructions ? `\n用户的主 Agent 补充要求：\n${profile.instructions}` : ""),
+        mcpServers: { director: { type: "http", url: this.mcpUrl(), headers: { Authorization: `Bearer ${token}` } } },
+      },
+    });
+    return agent.id;
+  }
+  async findConversation(id: string, generation = 0) {
+    await this.connect();
+    const page = await this.api.agents.list({ filter: { labels: { "director-conversation": id, "director-generation": String(generation) } }, page: { limit: 100 } });
+    return page.entries.map(e => e.agent.id);
+  }
+  async conversationHistory(agentId: string) {
+    await this.connect();
+    const agent = this.api.agents.ref(agentId);
+    let page = await agent.timeline.refetch({ direction: "tail", limit: 100, projection: "canonical" });
+    const items = page.entries.map(e => e.item);
+    for (let count = 0; page.hasOlder && page.startCursor; count++) {
+      if (count >= 100) throw new Error("聊天记录过长，无法可靠核验用户确认");
+      page = await agent.timeline.refetch({ direction: "before", cursor: page.startCursor, limit: 100, projection: "canonical" });
+      if (page.staleCursor || page.gap) throw new Error("聊天记录发生变化，请重试");
+      items.unshift(...page.entries.map(e => e.item));
+    }
+    return items;
+  }
+  async appendConversationLink(agentId: string, conversationId: string) {
+    await this.connect();
+    const items = await this.conversationHistory(agentId);
+    if (items.some(i => i.type === "plugin" && i.kind === "director-conversation" && (i.data as { conversationId?: string }).conversationId === conversationId)) return;
+    if (!this.pluginApi) throw new Error("等待宿主插件连接，以恢复聊天入口");
+    await this.pluginApi.agents.ref(agentId).timeline.append({ type: "plugin", id: `conversation-${conversationId}`, kind: "director-conversation", version: 1, data: { conversationId } });
+  }
   async stop(agentId: string) { await this.connect(); await this.driver.cancelAgent(agentId); }
 }

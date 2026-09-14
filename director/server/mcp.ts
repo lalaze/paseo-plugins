@@ -1,3 +1,5 @@
+import type { Conversations } from "./conversations";
+import { CHAT_ACTOR } from "../shared/conversation";
 import { createServer, type Server } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -9,7 +11,7 @@ import type { Engine } from "./engine";
 export class DirectorMcp {
   private server?: Server;
   private port = 0;
-  constructor(private store: Store, private engine: Engine) {}
+  constructor(private store: Store, private engine: Engine, private conversations?: Conversations) {}
   url() { if (!this.port) throw new Error("AI 协作 MCP 尚未启动"); return `http://127.0.0.1:${this.port}/mcp`; }
   async start() {
     this.server = createServer(async (req, res) => {
@@ -23,16 +25,25 @@ export class DirectorMcp {
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
       const submit = async (operationId: string, payload: unknown) => result(await this.engine.submit(scope.run_id, scope.actor, operationId, payload));
-      if (scope.actor === "director") {
+      if (scope.actor === CHAT_ACTOR && this.conversations) {
+        const chats = this.conversations;
+        mcp.registerTool("get_conversation_status", { description: "读取当前任务、操作上下文、待确认版本和最新真实用户消息", inputSchema: {} }, async () => result(await chats.status(scope.run_id)));
+        mcp.registerTool("start_task", { description: "用户明确要求实施后启动任务；讨论和提问不启动", inputSchema: { sourceMessageId: z.string(), goal: z.string().trim().min(1).max(32000) } }, async input => result(await chats.start(scope.run_id, input)));
+        mcp.registerTool("submit_operation", { description: "提交当前设计或审核结果；后台校验后派发，聊天中正常回复", inputSchema: { operationId: z.string(), payload: z.union([PlanSchema, ReviewSchema]) } }, async ({ operationId, payload }) => result(await chats.submit(scope.run_id, operationId, payload)));
+        mcp.registerTool("control_task", { description: "按最新用户要求控制任务；批准需要真实明确用户消息及当前 confirmation.key", inputSchema: {
+          sourceMessageId: z.string(), action: z.enum(["pause", "resume", "cancel", "retry", "revise", "approve_plan", "accept_final", "reject_final", "request_changes"]),
+          confirmationKey: z.string().optional(), goal: z.string().trim().min(1).max(32000).optional(), feedback: z.string().trim().min(1).max(16000).optional(),
+        } }, async input => result(await chats.control(scope.run_id, input)));
+      } else if (scope.actor === "director") {
         mcp.registerTool("submit_plan", { description: "提交总纲，结束本轮后自动按用户配置派发任务", inputSchema: { operationId: z.string(), payload: PlanSchema } }, async ({ operationId, payload }) => submit(operationId, payload));
         mcp.registerTool("dispatch_task", { description: "将已提交总纲中的任务加入优先派发队列；遵守用户 AI 配置和任务依赖", inputSchema: { taskId: z.string() } }, async ({ taskId }) => result(await this.engine.dispatch(scope.run_id, taskId)));
-      } else if (scope.actor !== REVIEWER_ACTOR) {
+      } else if (scope.actor !== REVIEWER_ACTOR && scope.actor !== CHAT_ACTOR) {
         mcp.registerTool("submit_result", { description: "提交执行结果或阻塞原因，提交后结束当前轮次", inputSchema: { operationId: z.string(), payload: ResultSchema } }, async ({ operationId, payload }) => submit(operationId, payload));
       }
       if (scope.actor === REVIEWER_ACTOR || (scope.actor === "director" && !this.store.get(scope.run_id).settings.reviewerProfileId)) {
         mcp.registerTool("submit_review", { description: "提交当前成果版本的审核决定", inputSchema: { operationId: z.string(), payload: ReviewSchema } }, async ({ operationId, payload }) => submit(operationId, payload));
       }
-      mcp.registerTool("get_run_status", { description: "查看本次任务的进度", inputSchema: {} }, async () => {
+      if (scope.actor !== CHAT_ACTOR) mcp.registerTool("get_run_status", { description: "查看本次任务的进度", inputSchema: {} }, async () => {
         const run = this.store.get(scope.run_id);
         return result({ ...summarize(run), operationId: run.activeOperationId, tasks: run.tasks.map(t => ({ id: t.spec.id, status: t.status, executorId: t.profileId })) });
       });

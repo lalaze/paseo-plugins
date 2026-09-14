@@ -61,3 +61,30 @@ test("MCP isolates reviewer tools and credentials from designer and legacy task 
   const stale = await reviewer.callTool({ name: "submit_review", arguments: { operationId: audit.id, payload: review(true) } });
   assert.equal(stale.isError, true);
 });
+
+test("conversation tokens expose chat tools without granting worker or reviewer user-control tools", async t => {
+  const { Conversations } = await import("../server/conversations");
+  const { CHAT_ACTOR } = await import("../shared/conversation");
+  const h = await harness();
+  const chats = new Conversations(h.store, h.engine, {
+    workspaceDirectory: async () => "/repo", createConversation: async () => "main", findConversation: async () => [],
+    conversationHistory: async () => [{ type: "user_message", messageId: "user", text: "请说明进度" }],
+    appendConversationLink: async () => {}, inspect: async () => ({ status: "idle", seen: true, output: "" }), send: async () => {},
+  });
+  h.store.saveConversation({ id: "chat", requestId: "chat", workspaceId: "workspace", cwd: "/repo", agentId: "main", settings: h.run().settings, createdAt: 1, state: "ready", notices: [], receipts: {} });
+  const mcp = new DirectorMcp(h.store, h.engine, chats), clients: Client[] = [];
+  t.after(async () => { await Promise.allSettled(clients.map(c => c.close())); await mcp.close(); await chats.close(); await h.cleanup(); });
+  await mcp.start();
+  async function connect(id: string, actor: string) {
+    const client = new Client({ name: "chat-tools", version: "1" }); clients.push(client);
+    await client.connect(new StreamableHTTPClientTransport(new URL(mcp.url()), { requestInit: { headers: { Authorization: `Bearer ${h.store.token(id, actor)}` } } })); return client;
+  }
+  const main = await connect("chat", CHAT_ACTOR);
+  assert.deepEqual((await main.listTools()).tools.map(t => t.name).sort(), ["control_task", "get_conversation_status", "start_task", "submit_operation"]);
+  const state = await main.callTool({ name: "get_conversation_status", arguments: {} }); assert.notEqual(state.isError, true);
+  const worker = await connect(h.id, "task-1"), reviewer = await connect(h.id, REVIEWER_ACTOR);
+  for (const client of [worker, reviewer]) {
+    assert.equal((await client.listTools()).tools.some(t => t.name === "control_task" || t.name === "start_task"), false);
+    assert.equal((await client.callTool({ name: "control_task", arguments: { sourceMessageId: "user", action: "accept_final" } })).isError, true);
+  }
+});

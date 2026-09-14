@@ -108,6 +108,9 @@ export type Run = {
   cwd: string; baseCommit: string; branch: string; settings: Settings;
   /** Absent on legacy runs, which use an isolated worktree. */
   workspaceId?: string;
+  chat?: { version: 1; conversationId: string; mainAgentId: string; legacyAgentId?: string; recovering?: boolean };
+  migrationConversationId?: string;
+  chatReceipts?: Record<string, string>;
   createdAt: number; updatedAt: number; directorAgentId?: string; reviewerAgentId?: string;
   phase: "planning" | "executing" | "reviewing" | "final_review" | "awaiting_acceptance" | "completed";
   control: "running" | "paused" | "waiting_permission" | "needs_attention" | "canceling" | "canceled";

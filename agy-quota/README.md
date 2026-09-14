@@ -100,9 +100,10 @@ paseo daemon restart
 
 ## 数据来源与边界
 
-- 从 Paseo 当前 `antigravity-acp.env.AGY_BIN` 读取 CLI 路径，其次 `PATH` 中的 `agy`，再是 `~/.local/bin/agy`、Homebrew、`/usr/local/bin/agy`。可用 `PASEO_ANTIGRAVITY_BIN` 指定绝对路径。配置目录沿用 `PASEO_HOME` 或 `~/.paseo`。
-- 仅复用同 UID、同一 `agy` 二进制的进程：Linux 用 `/proc` 匹配 inode 和它拥有的监听 socket，macOS 用 `lsof`/`ps` 做同等范围的查找；不会扫描不相关的本地服务。
-- 若复用失败，启动专用短生命周期 PTY，给 `agy` 设置随机 CSRF token。只调用本地 HTTPS API，不输入提示词；读取结束后仅清理自己创建的进程。
+- 从 Paseo 当前 `antigravity-acp.env.AGY_BIN`、`antigravity-hub.env.AGY_HUB_BIN`、`AGY_HUB_BIN` 读取路径，其次 `PATH` 中的 `agy`，再是 `~/.local/bin/agy`、Homebrew、`/usr/local/bin/agy`、`~/.gemini/bin/agy`。可用 `PASEO_ANTIGRAVITY_BIN` 指定绝对路径。配置目录沿用 `PASEO_HOME` 或 `~/.paseo`。
+- 仅复用同 UID、同一 `agy` 二进制的进程：Linux 用 `/proc` 匹配 inode 或 `/proc/pid/exe` 路径（含文件已被替换后的 `(deleted)`），并读取该进程拥有的监听 socket；macOS 用 `lsof`/`ps` 做同等范围的查找；不会扫描不相关的本地服务。
+- Hub 的 CSRF 来自该进程回环页面的 `window.__APP_CONFIG__`，不是命令行 `--csrf_token`。agy 1.2 CLI 不再在无参数启动时提供 LanguageServerService。
+- 若复用失败，启动专用短生命周期 Hub（`--hub`），只调用本地 HTTPS API，不输入提示词；读取结束后仅清理自己创建的进程。
 - 优先 `RetrieveUserQuotaSummary`；旧版回退到 `GetUserStatus` / `GetCommandModelConfigs` 中的显式 `quotaInfo`。缺失值、模型可用性和不明积分不推算成配额。
 - 本地自签名 TLS 例外仅限进程拥有的 `127.0.0.1` 端口，不修改全局 TLS 设置。读取有超时和 1 MiB 响应上限。
 - 凭证由 `agy` 管理，补丁不复制、不修改凭证文件，不上传账号数据。原始响应和 CLI 输出不写入 Paseo 日志。

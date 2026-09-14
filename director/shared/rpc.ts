@@ -13,3 +13,9 @@ export const listRunsRpc = defineRpc({ name: "director.run.list", input: z.objec
 export const getRunRpc = defineRpc({ name: "director.run.get", input: z.object({ id: z.string() }), output: z.custom<Run>() });
 export const getWorkspaceRunRpc = defineRpc({ name: "director.workspace.run", input: z.object({ workspaceId: z.string().min(1).max(200) }), output: z.object({ id: z.string().nullable() }) });
 export const controlRunRpc = defineRpc({ name: "director.run.control", input: z.object({ id: z.string(), action: z.enum(["pause", "resume", "cancel", "retry", "approve_plan", "revise", "accept_final", "reject_final", "request_changes"]), goal: z.string().trim().min(1).max(32000).optional(), feedback: z.string().trim().min(1).max(16000).optional(), artifactId: z.string().min(1).optional(), expectedRevision: z.number().int().nonnegative().optional() }), output: z.object({ ok: z.boolean() }) });
+
+export const openConversationRpc = defineRpc({ name: "director.conversation.open", input: z.object({ requestId: z.string().min(1).max(200), workspaceId: z.string().min(1), goal: z.string().trim().max(32000).optional(), fresh: z.boolean().optional(), conversationId: z.string().optional() }), output: z.custom<import("./conversation").ConversationSummary>() });
+export const getConversationRpc = defineRpc({ name: "director.conversation.get", input: z.object({ id: z.string() }), output: z.custom<import("./conversation").ConversationSummary>() });
+export const listConversationsRpc = defineRpc({ name: "director.conversation.list", input: z.object({ workspaceId: z.string().optional() }), output: z.array(z.custom<import("./conversation").ConversationListItem>()) });
+
+export const resyncConversationRpc = defineRpc({ name: "director.conversation.resync", input: z.object({ id: z.string() }), output: z.object({ ok: z.boolean() }) });

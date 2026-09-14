@@ -1,11 +1,12 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:https';
+import { createServer as createHttpServer } from 'node:http';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { listeningPorts, requestQuota, parseLsofListenPorts, parseLsofTxtPids, csrfFromCommand } from '../src/antigravity-local.js';
+import { listeningPorts, requestQuota, parseLsofListenPorts, parseLsofTxtPids, csrfFromCommand, parseAppConfigCsrf, csrfFromOwnedPorts, exeLinkPath } from '../src/antigravity-local.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'agy-local-api-test-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -50,4 +51,22 @@ test('macOS lsof/ps parsers stay process-scoped and recover csrf tokens', () => 
 
 test('quota probe accepts loopback IPv6 host argument without throwing', async () => {
   assert.equal(await requestQuota(1, 'GetUserStatus', undefined, 50, '::1'), null);
+});
+
+test('hub page csrf is read only from process-owned loopback ports', async () => {
+  assert.equal(parseAppConfigCsrf('<script>window.__APP_CONFIG__ = {"csrfToken":"abc"};</script>'), 'abc');
+  assert.equal(parseAppConfigCsrf('<html></html>'), undefined);
+  assert.equal(parseAppConfigCsrf('<script>window.__APP_CONFIG__ = {"csrfToken":""};</script>'), undefined);
+  assert.equal(exeLinkPath('/root/.gemini/bin/agy (deleted)'), '/root/.gemini/bin/agy');
+  assert.equal(exeLinkPath('/root/.gemini/bin/agy'), '/root/.gemini/bin/agy');
+  const server = createHttpServer((req, res) => {
+    res.end('<script>window.__APP_CONFIG__ = {"productName":"antigravity","csrfToken":"hub-csrf-token"};</script>');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    assert.equal(await csrfFromOwnedPorts([port], 500), 'hub-csrf-token');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
 });

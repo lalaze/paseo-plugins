@@ -9,7 +9,7 @@ function fixture() {
     saved: settings() as ReturnType<typeof settings> | null,
     opened: [] as string[],
     calls: [] as { name: string; input: Record<string, unknown> }[],
-    create: async (_input: Record<string, unknown>) => ({ id: "run-from-command" }),
+    create: async (_input: Record<string, unknown>) => ({ id: "conversation-from-command", agentId: "main-agent", runId: undefined }),
   };
   const context = {
     args: " 实现登录功能 ", workspace: { id: "workspace-a", directory: "/projects/current" },
@@ -17,23 +17,23 @@ function fixture() {
     rpc: async (contract: { name: string }, input: Record<string, unknown>) => {
       state.calls.push({ name: contract.name, input });
       if (contract.name === "director.settings.get") return { settings: state.saved, error: null };
-      if (contract.name === "director.run.create") return state.create(input);
+      if (contract.name === "director.conversation.open") return state.create(input);
       throw new Error("Unexpected RPC");
     },
   } as unknown as Context;
   return { state, context };
 }
 
-test("bare slash opens the panel; a task uses the current directory and saved host roles", async () => {
+test("bare slash restores native chat; a goal creates a fresh conversation with saved host roles", async () => {
   const command = createDirectorCommand(), { state, context } = fixture();
   await command.submit({ ...context, args: " " });
-  assert.deepEqual(state.opened, ["director"]); assert.equal(state.calls.length, 0);
+  assert.deepEqual(state.opened, ["director"]); assert.equal(state.calls.length, 2);
   await command.submit(context);
-  const call = state.calls.find(c => c.name === "director.run.create")!;
-  assert.equal(call.input.repository, "/projects/current"); assert.equal(call.input.goal, "实现登录功能");
+  const call = state.calls.filter(c => c.name === "director.conversation.open").at(-1)!;
+  assert.equal(call.input.fresh, true); assert.equal(call.input.goal, "实现登录功能");
   assert.equal(call.input.workspaceId, "workspace-a");
   assert.equal("settings" in call.input, false);
-  assert.equal(command.requests.get("workspace-a")?.runId, "run-from-command");
+  assert.equal(command.requests.get("workspace-a")?.conversationId, "conversation-from-command");
   assert.equal(command.requests.get("workspace-a")?.status, "created");
 });
 
@@ -53,18 +53,18 @@ test("concurrent submissions coalesce and retry after a lost response reuses the
   state.create = async input => {
     created.set(input.requestId, "one-run"); await wait;
     if (loseResponse) { loseResponse = false; throw new Error("连接中断"); }
-    return { id: created.get(input.requestId)! };
+    return { id: created.get(input.requestId)!, agentId: "main-agent", runId: undefined };
   };
   const first = command.submit(context), duplicate = command.submit(context);
   const outcomes = Promise.allSettled([first, duplicate]);
   await assert.rejects(command.submit({ ...context, args: "另一个目标" }), /仍在提交/);
   finish(); await outcomes;
-  assert.equal(state.calls.filter(c => c.name === "director.run.create").length, 1);
+  assert.equal(state.calls.filter(c => c.name === "director.conversation.open").length, 1);
   const failed = command.requests.get("workspace-a")!;
   assert.equal(failed.status, "failed"); assert.match(failed.message!, /连接中断/);
   await command.submit(context);
   assert.equal(command.requests.get("workspace-a")?.requestId, failed.requestId);
-  assert.equal(command.requests.get("workspace-a")?.runId, "one-run");
+  assert.equal(command.requests.get("workspace-a")?.conversationId, "one-run");
   assert.equal(created.size, 1);
 });
 

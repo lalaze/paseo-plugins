@@ -13,7 +13,7 @@ import { checkPresets, commandLine, makeCheck, makeAssignment, profileParts, sam
 import { InstructionsEditor } from "./instructions-editor";
 import { permissionChoices } from "./permission-model";
 
-const steps = ["选择设计 AI", "选择执行 AI", "选择审核 AI"];
+const steps = ["选择主 Agent", "选择执行 AI", "选择审核 AI"];
 const newId = () => `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 type EditorProps = { initial: Settings | null; cwd: string; hostId: string; theme: Theme; compact?: boolean; onSaved: (s: Settings) => void; onSavingChange?: (saving: boolean) => void };
@@ -152,7 +152,7 @@ function SettingsFormEditor({ initial, seed, cwd, hostId, theme, compact = false
     <View pointerEvents={locked ? "none" : "auto"} style={{ gap: 16, opacity: locked ? 0.65 : 1 }}>
     <View style={{ gap: 6 }}>
       <Text style={{ color: theme.colors.foreground, fontSize: 22, fontWeight: "700" }}>安排你的 AI 团队</Text>
-      <Label theme={theme} muted>随时切换角色编辑；保存后用于当前主机的新任务。</Label>
+      <Label theme={theme} muted>随时切换角色编辑；保存后用于当前主机新建的协作对话。</Label>
       {seed.draft && <Label theme={theme}>已恢复上次未保存的草稿。</Label>}
       {stale && <ErrorText theme={theme} error="已生效的设置有更新。请放弃旧草稿并重新读取设置。" />}
     </View>
@@ -173,8 +173,8 @@ function SettingsFormEditor({ initial, seed, cwd, hostId, theme, compact = false
     </View>
 
     {step === 0 && <Card title="谁负责设计总纲？" theme={theme}>
-      <Label theme={theme} muted>设计 AI 理解目标、制定方案并拆分任务。审核由第三步选择的 AI 负责。</Label>
-      <ProfileEditor profile={lead} catalog={catalog.data} theme={theme} onChange={patch => updateRole("director", patch)} />
+      <Label theme={theme} muted>主 Agent 使用原生对话理解需求、制定方案并管理子任务，需要接入支持 HTTP MCP 工具的模型。审核由第三步选择的 AI 负责。</Label>
+      <ProfileEditor mainChat profile={lead} catalog={catalog.data} theme={theme} onChange={patch => updateRole("director", patch)} />
       {rolePrompt("plan")}
       <SelectionCard theme={theme} title="先让我确认设计总纲" description={approval ? "总纲生成后暂停，等你确认再开始写代码。" : "当前为自动执行：总纲生成后，直接交给执行 AI。"} selected={approval} onPress={() => setApproval(!approval)} />
     </Card>}

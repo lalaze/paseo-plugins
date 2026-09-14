@@ -31,7 +31,7 @@ export function SelectionCard({ title, description, detail, selected, onPress, t
   </Pressable>;
 }
 
-export function ProfileEditor({ profile, catalog, onChange, theme }: { profile?: Profile; catalog?: Catalog; onChange: (patch: Partial<Profile>) => void; theme: Theme }) {
+export function ProfileEditor({ profile, catalog, onChange, theme, mainChat = false }: { mainChat?: boolean; profile?: Profile; catalog?: Catalog; onChange: (patch: Partial<Profile>) => void; theme: Theme }) {
   const parts = profileParts(profile);
   const entry = catalog?.entries.find(e => e.provider === parts.provider);
   const model = entry?.models?.find(m => m.id === parts.model);
@@ -54,7 +54,7 @@ export function ProfileEditor({ profile, catalog, onChange, theme }: { profile?:
       <Field theme={theme} label="AI 昵称" value={profile?.label ?? ""} onChange={label => onChange({ label })} placeholder="例如：前端执行者" />
       <InstructionsEditor theme={theme} label="这个 AI 的补充提示词" description="与当前角色的前置提示词一起使用，适用于所有分配给这个 AI 的任务。" value={profile?.instructions ?? ""} onChange={instructions => onChange({ instructions: instructions || undefined })} />
       <Choice theme={theme} label="推理强度" value={profile?.thinkingOptionId ?? ""} options={thinking} onChange={id => onChange({ thinkingOptionId: id || undefined })} />
-      <Choice theme={theme} label="AI 如何交接任务" value={profile?.transport ?? "structured"} options={[{ id: "structured", label: "兼容模式（默认）" }, { id: "mcp", label: "MCP 工具模式" }]} onChange={id => onChange({ transport: id as Profile["transport"] })} />
+      {mainChat ? <Label theme={theme} muted>主对话通过 MCP 工具管理任务；执行与审核角色仍可单独选择交接方式。</Label> : <Choice theme={theme} label="AI 如何交接任务" value={profile?.transport ?? "structured"} options={[{ id: "structured", label: "兼容模式（默认）" }, { id: "mcp", label: "MCP 工具模式" }]} onChange={id => onChange({ transport: id as Profile["transport"] })} />}
       <Label theme={theme} muted>MCP 模式需要所选 AI 支持 HTTP MCP；不确定时保留兼容模式即可。</Label>
     </Disclosure>
   </View>;

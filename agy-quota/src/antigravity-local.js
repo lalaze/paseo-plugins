@@ -3,6 +3,8 @@ import { homedir } from 'node:os';
 import { join, isAbsolute, delimiter } from 'node:path';
 import { createRequire } from 'node:module';
 import { execFile } from 'node:child_process';
+import { createServer } from 'node:net';
+import http from 'node:http';
 import https from 'node:https';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -48,25 +50,86 @@ export function csrfFromCommand(text) {
   return i >= 0 ? args[i + 1] : undefined;
 }
 
-export async function resolveBinary() {
-  const home = homedir();
-  let configured;
+/** `/proc/pid/exe` keeps the original path after the file is replaced. */
+export function exeLinkPath(link) {
+  return String(link).replace(/ \(deleted\)$/, '');
+}
+
+export function parseAppConfigCsrf(html) {
+  const match = String(html).match(/window\.__APP_CONFIG__ = (.*?);/);
+  if (!match) return;
   try {
-    const config = JSON.parse(await fs.readFile(join(process.env.PASEO_HOME || join(home, '.paseo'), 'config.json'), 'utf8'));
-    configured = config.agents?.providers?.['antigravity-acp']?.env?.AGY_BIN;
+    const token = JSON.parse(match[1]).csrfToken;
+    return typeof token === 'string' && token.length ? token : undefined;
+  } catch { /* Ignore malformed app config. */ }
+}
+
+function fetchHtml(port, timeoutMs, protocol) {
+  const lib = protocol === 'https' ? https : http;
+  return new Promise(resolve => {
+    let settled = false;
+    let timer;
+    const done = value => { if (!settled) { settled = true; clearTimeout(timer); resolve(value); } };
+    const req = lib.request({ hostname: '127.0.0.1', port, path: '/', method: 'GET', family: 4, rejectUnauthorized: false, agent: false }, res => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', chunk => {
+        size += chunk.length;
+        if (size > 256 * 1024) { req.destroy(); done(''); } else chunks.push(chunk);
+      });
+      res.on('error', () => done(''));
+      res.on('end', () => done(Buffer.concat(chunks).toString('utf8')));
+    });
+    req.on('error', () => done(''));
+    timer = setTimeout(() => { req.destroy(); done(''); }, Math.max(1, timeoutMs));
+    req.end();
+  });
+}
+
+/** Hub CSRF lives in the process-owned loopback page, not `--csrf_token`. */
+export async function csrfFromOwnedPorts(ports, timeoutMs = 800) {
+  for (const port of ports) {
+    for (const protocol of ['http', 'https']) {
+      if (timeoutMs <= 0) return;
+      const start = Date.now();
+      const token = parseAppConfigCsrf(await fetchHtml(port, timeoutMs, protocol));
+      if (token) return token;
+      timeoutMs -= Date.now() - start;
+    }
+  }
+}
+
+export async function resolveBinaries() {
+  const home = homedir();
+  let config = {};
+  try {
+    config = JSON.parse(await fs.readFile(join(process.env.PASEO_HOME || join(home, '.paseo'), 'config.json'), 'utf8'));
   } catch { /* Use standard installation below. */ }
-  const explicit = process.env.PASEO_ANTIGRAVITY_BIN || process.env.ANTIGRAVITY_CLI_PATH || configured;
+  const acp = config.agents?.providers?.['antigravity-acp']?.env?.AGY_BIN;
+  const hub = process.env.AGY_HUB_BIN || config.agents?.providers?.['antigravity-hub']?.env?.AGY_HUB_BIN;
+  const explicit = process.env.PASEO_ANTIGRAVITY_BIN || process.env.ANTIGRAVITY_CLI_PATH || acp;
   const fromPath = (process.env.PATH || '').split(delimiter).filter(Boolean).map(dir => join(dir, 'agy'));
-  const candidates = explicit ? [explicit] : [...fromPath, join(home, '.local/bin/agy'), '/opt/homebrew/bin/agy', '/usr/local/bin/agy', join(home, '.gemini/bin/agy')];
+  const candidates = [explicit, hub, ...fromPath, join(home, '.local/bin/agy'), '/opt/homebrew/bin/agy', '/usr/local/bin/agy', join(home, '.gemini/bin/agy')];
+  const seen = new Set();
+  const bins = [];
   let last;
   for (const bin of candidates) {
+    if (!bin) continue;
     if (!isAbsolute(bin)) throw new Error('Antigravity binary must be absolute');
     try {
       await fs.access(bin, 1);
-      return fs.realpath(bin);
+      const real = await fs.realpath(bin);
+      if (seen.has(real)) continue;
+      seen.add(real);
+      bins.push(real);
     } catch (error) { last = error; }
   }
-  throw last ?? new Error('Antigravity binary not found; set PASEO_ANTIGRAVITY_BIN');
+  if (bins.length) return bins;
+  throw last ?? new Error('Antigravity binary not found; set PASEO_ANTIGRAVITY_BIN or AGY_HUB_BIN');
+}
+
+export async function resolveBinary() {
+  return (await resolveBinaries())[0];
 }
 
 async function descendantPids(pid) {
@@ -135,6 +198,7 @@ export function requestQuota(port, method, csrf, timeoutMs, hostname = '127.0.0.
 async function probe(pid, csrf, parse, deadline, methods = METHODS) {
   let ports;
   try { ports = await listeningPorts(pid); } catch { return null; }
+  if (!csrf) csrf = await csrfFromOwnedPorts(ports, Math.min(800, Math.max(1, deadline - Date.now())));
   const tokens = csrf ? [csrf, undefined] : [undefined];
   for (const method of methods) {
     for (const port of ports) {
@@ -151,6 +215,21 @@ async function probe(pid, csrf, parse, deadline, methods = METHODS) {
   return null;
 }
 
+async function processExeMatches(pid, bin) {
+  const base = `/proc/${pid}`;
+  try {
+    const expected = await fs.stat(bin);
+    const actual = await fs.stat(`${base}/exe`);
+    if (actual.dev === expected.dev && actual.ino === expected.ino) return true;
+  } catch { /* Missing or unreadable. */ }
+  try {
+    const link = exeLinkPath(await fs.readlink(`${base}/exe`));
+    if (link === bin) return true;
+    try { if (await fs.realpath(link) === bin) return true; } catch { /* Replaced or deleted. */ }
+  } catch { /* Not a linux proc exe link. */ }
+  return false;
+}
+
 async function reuseBinary(bin, parse, deadline) {
   if (process.platform === 'darwin') {
     const pids = parseLsofTxtPids(await run('/usr/sbin/lsof', ['-nP', '-u', String(process.getuid()), '-Fpf', bin]));
@@ -162,15 +241,13 @@ async function reuseBinary(bin, parse, deadline) {
     }
     return null;
   }
-  const expected = await fs.stat(bin);
   for (const entry of await fs.readdir('/proc')) {
     if (!/^\d+$/.test(entry) || Date.now() >= deadline) continue;
     try {
       const base = `/proc/${entry}`;
       const owner = await fs.stat(base);
       if (owner.uid !== process.getuid()) continue;
-      const actual = await fs.stat(`${base}/exe`);
-      if (actual.dev !== expected.dev || actual.ino !== expected.ino) continue;
+      if (!await processExeMatches(Number(entry), bin)) continue;
       const args = (await fs.readFile(`${base}/cmdline`, 'utf8')).split('\0');
       const csrf = csrfFromCommand(args);
       const result = await probe(Number(entry), csrf, parse, deadline);
@@ -180,25 +257,40 @@ async function reuseBinary(bin, parse, deadline) {
   return null;
 }
 
-/** Reuse signed-in agy or own one short-lived PTY. Never send a prompt. */
+async function freeLoopbackPort() {
+  const server = createServer();
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  const port = server.address().port;
+  await new Promise(resolve => server.close(resolve));
+  return port;
+}
+
+/** Reuse signed-in agy/hub or own one short-lived Hub. Never send a prompt. */
 export async function readLocalQuota(parse, { trace = () => {} } = {}) {
   if (!supported()) return null;
-  const bin = await resolveBinary();
-  trace(`binary ${bin}`);
-  const reused = await reuseBinary(bin, parse, Date.now() + 2000);
-  if (reused) {
-    trace('reused existing agy');
-    return reused;
+  const bins = await resolveBinaries();
+  trace(`binary ${bins.join(' ')}`);
+  for (const bin of bins) {
+    const reused = await reuseBinary(bin, parse, Date.now() + 4000);
+    if (reused) {
+      trace(`reused existing agy ${bin}`);
+      return reused;
+    }
   }
+  const bin = bins[0];
   const pty = require('node-pty');
-  // CLI quota server is tokenless; --csrf_token is an IDE language-server flag and can exit agy immediately.
-  const proc = pty.spawn(bin, [], { name: 'xterm-256color', cols: 100, rows: 30, cwd: homedir(), env: { ...process.env, TERM: 'xterm-256color' } });
+  // agy 1.2 CLI no longer serves LanguageServerService without --hub; --csrf_token can still exit immediately.
+  const hubPort = await freeLoopbackPort();
+  const proc = pty.spawn(bin, ['--hub', `--hub-port=${hubPort}`, '--app_data_dir=antigravity'], {
+    name: 'xterm-256color', cols: 100, rows: 30, cwd: homedir(),
+    env: { ...process.env, TERM: 'xterm-256color', AGY_ENABLE_HUB: '1', ANTIGRAVITY_VSCODE_HOST: '1' },
+  });
   let exited = false;
   const exitEvent = proc.onExit(event => { exited = true; trace(`spawn exited code=${event?.exitCode ?? 'unknown'}`); });
   const dataEvent = proc.onData(() => {});
   const cleanup = () => { if (!exited) { try { proc.kill('SIGTERM'); } catch { /* Exited. */ } } };
   process.once('exit', cleanup);
-  trace(`spawned pid=${proc.pid}`);
+  trace(`spawned pid=${proc.pid} hub-port=${hubPort}`);
   try {
     const deadline = Date.now() + 15000;
     while (!exited && Date.now() < deadline) {

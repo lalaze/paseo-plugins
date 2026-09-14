@@ -1,3 +1,4 @@
+import type { Conversation } from "../shared/conversation";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -13,6 +14,7 @@ export class Store {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
     this.db.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, request_id TEXT UNIQUE NOT NULL, revision INTEGER NOT NULL, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS tokens (token TEXT PRIMARY KEY, run_id TEXT NOT NULL, actor TEXT NOT NULL, UNIQUE(run_id, actor));");
+    this.db.exec("CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, request_id TEXT UNIQUE NOT NULL, data TEXT NOT NULL)");
     if (lock) {
       this.db.exec("BEGIN IMMEDIATE");
       try {
@@ -46,6 +48,15 @@ export class Store {
       this.writeSettingsDraft({ revision: draftRevision, draft: null });
       this.saveSettings(settings); this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+  conversations(): Conversation[] { return this.db.prepare("SELECT data FROM conversations ORDER BY rowid DESC").all().map(row => JSON.parse(String(row.data))); }
+  conversation(id: string): Conversation {
+    const row = this.db.prepare("SELECT data FROM conversations WHERE id=?").get(id);
+    if (!row) throw new Error("协作会话不存在");
+    return JSON.parse(String(row.data));
+  }
+  saveConversation(value: Conversation) {
+    this.db.prepare("INSERT INTO conversations VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data").run(value.id, value.requestId, JSON.stringify(value));
   }
   findRequest(id: string): Run | undefined { return this.decode(this.db.prepare("SELECT data FROM runs WHERE request_id=?").get(id)); }
   get(id: string): Run { const r = this.decode(this.db.prepare("SELECT data FROM runs WHERE id=?").get(id)); if (!r) throw new Error("任务不存在"); return r; }
