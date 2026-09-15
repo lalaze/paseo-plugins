@@ -1,10 +1,13 @@
 {
   "name": "paseo-usage-glance",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Quota summaries in Paseo workspace headers and a native usage overview",
+  "description": "Quota and local token consumption summaries for Paseo",
   "scripts": {
+    "pretypecheck": "node scripts/prepare.mjs",
+    "prebuild": "node scripts/prepare.mjs",
+    "pretest": "node scripts/prepare.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
     "build": "node scripts/build.mjs",
@@ -21,5 +24,11 @@
     "tsx": "^4.20.0",
     "typescript": "^5.9.3",
     "zod": "^4.6.2"
+  },
+  "dependencies": {
+    "ccusage": "20.0.20"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   }
 }

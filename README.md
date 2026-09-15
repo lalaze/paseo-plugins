@@ -48,7 +48,7 @@ paseo plugin add lalaze/paseo-plugins --path director
 
 ## [额度速览](usage-glance)
 
-工作区右上角显示额度摘要，可固定供应商并展开明细。插件 ID：`paseo-usage-glance`。Antigravity 额度需要另外安装下面的 [`agy-quota`](agy-quota) 补丁。
+工作区右上角显示额度摘要，可固定供应商并展开明细。「消耗」页跟随本机 Providers 开关，汇总已启用的 Codex、Claude Code、Kimi、Grok、Antigravity 的 token，支持按 Provider/模型厂商及时间范围查看。插件 ID：`paseo-usage-glance`。Antigravity 额度需要另外安装下面的 [`agy-quota`](agy-quota) 补丁。
 
 ```bash
 paseo plugin add lalaze/paseo-plugins --path usage-glance

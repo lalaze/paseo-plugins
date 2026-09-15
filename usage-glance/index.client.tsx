@@ -1,6 +1,8 @@
 import type { PluginClientContext, PluginButtonRegistration, PluginButtonContentProps, PluginButtonIconProps } from '@getpaseo/plugin/client';
 import { QueryObserver } from '@tanstack/react-query';
-import { Overview, HeaderQuotaIcon } from './client/overview';
+import { HeaderQuotaIcon } from './client/overview';
+import { UsageDashboard } from './client/dashboard';
+import { createConsumptionQuery } from './client/consumption-query';
 import { createHeaderPreference } from './client/preference';
 import { createUsageQuery } from './client/query';
 import { followWorkspaces } from './client/workspaces';
@@ -8,13 +10,14 @@ import { headerSummary, isStale } from './shared/usage';
 
 export default function contribute(client: PluginClientContext) {
   const query = createUsageQuery(client.paseo);
+  const consumption = createConsumptionQuery(query.client, (contract, input) => client.rpc(contract, input), client.paseo.providers);
   query.client.mount();
   const observer = new QueryObserver(query.client, query.options);
   const preference = createHeaderPreference((contract, input) => client.rpc(contract, input));
   const headers = new Map<string, PluginButtonRegistration>();
   let workspaces = new Set<string>();
   const HeaderIcon = (props: PluginButtonIconProps) => <HeaderQuotaIcon {...props} query={query} preference={preference} />;
-  const HeaderContent = (props: PluginButtonContentProps) => <Overview {...props} query={query} preference={preference} popover />;
+  const HeaderContent = (props: PluginButtonContentProps) => <UsageDashboard {...props} query={query} consumption={consumption} preference={preference} />;
 
   function sync() {
     const result = observer.getCurrentResult();
@@ -39,6 +42,7 @@ export default function contribute(client: PluginClientContext) {
   const stopWorkspaces = followWorkspaces(client.paseo, latest => { workspaces = new Set(latest); sync(); });
   return () => {
     stopWorkspaces();
+    consumption.dispose();
     unsubscribePreference();
     unsubscribeQuery();
     observer.destroy();
