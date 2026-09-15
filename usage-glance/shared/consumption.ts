@@ -82,10 +82,11 @@ export function modelVendor(model: string, source: SourceId): string {
 }
 export type ModelTotal = Tokens & { model: string; source: SourceId; inferredModel: boolean; host?: HostIdentity };
 export type ConsumptionGroup = Tokens & { id: string; label: string; models: ModelTotal[] };
-export function groupConsumption(sources: SourceReport[], by: 'vendor' | 'source' | 'host'): ConsumptionGroup[] {
+export type ConsumptionGrouping = 'vendor' | 'source' | 'model' | 'host';
+export function groupConsumption(sources: SourceReport[], by: ConsumptionGrouping): ConsumptionGroup[] {
   const groups = new Map<string, ConsumptionGroup>();
   for (const report of sources) for (const row of report.rows) {
-    const label = by === 'host' ? report.host?.label ?? '本机' : by === 'source' ? sourceNames[report.source] : modelVendor(row.model, report.source);
+    const label = by === 'host' ? report.host?.label ?? '本机' : by === 'source' ? sourceNames[report.source] : by === 'model' ? row.model : modelVendor(row.model, report.source);
     const id = by === 'host' ? report.host?.id ?? 'local' : label;
     let group = groups.get(id);
     if (!group) { group = { ...emptyTokens(), id, label, models: [] }; groups.set(id, group); }

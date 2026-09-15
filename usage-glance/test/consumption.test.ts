@@ -50,6 +50,24 @@ test('supplier grouping follows model, keeping CLI origins and unknown models vi
   assert.equal(modelVendor('grok-4.6-build', 'grok'), 'xAI');
 });
 
+test('model grouping combines exact names across days, Providers and hosts without double-counting token subsets', () => {
+  const code = { id: 'code', label: 'code' }, mac = { id: 'mac', label: 'Mac' };
+  const sources = [
+    source({ host: code, rows: [row, { ...row, date: '2026-09-11', inferredModel: true }] }),
+    source({ host: mac }),
+    source({ source: 'antigravity', host: mac, rows: [row, { ...row, model: 'gpt-5.6-sol-fast' }, { ...row, model: '未记录模型', inferredModel: true }] }),
+  ];
+  const original = structuredClone(sources), groups = groupConsumption(sources, 'model');
+  assert.deepEqual(groups.map(group => [group.label, totalTokens(group)]), [['gpt-5.6-sol', 880], ['gpt-5.6-sol-fast', 220], ['未记录模型', 220]]);
+  const merged = groups[0];
+  assert.deepEqual(merged.models.map(model => [model.host?.id, model.source, totalTokens(model), model.inferredModel]), [['code', 'codex', 440, true], ['mac', 'codex', 220, false], ['mac', 'antigravity', 220, false]]);
+  assert.equal(merged.cacheRead, 280); assert.equal(merged.cacheWrite, 80); assert.equal(merged.reasoning, null);
+  for (const by of ['source', 'vendor', 'host', 'model'] as const) assert.equal(groupConsumption(sources, by).reduce((sum, group) => sum + totalTokens(group), 0), 1320);
+  assert.equal(groupConsumption(sources.filter(source => source.host?.id === 'mac'), 'model')[0].input, 380);
+  assert.deepEqual(groupConsumption([], 'model'), []);
+  assert.deepEqual(sources, original);
+});
+
 test('consumption follows Provider enabled switches, independent of readiness, and folds Antigravity aliases once', () => {
   assert.deepEqual(enabledConsumptionSources([
     { provider: 'claude', enabled: false, status: 'ready' },

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import type { PluginHostProps } from '@getpaseo/plugin/client';
-import { addTokens, compactTokens, emptyTokens, formatTokens, groupConsumption, presetRange, rangeSchema, sourceNames, totalTokens, type ConsumptionGroup, type ConsumptionRange } from '../shared/consumption';
+import { addTokens, compactTokens, emptyTokens, formatTokens, groupConsumption, presetRange, rangeSchema, sourceNames, totalTokens, type ConsumptionGroup, type ConsumptionGrouping, type ConsumptionRange } from '../shared/consumption';
 import { dataAge } from '../shared/usage';
 import { useConsumption, type ConsumptionQuery } from './consumption-query';
 import { Breakdown, ConsumptionSources } from './consumption-details';
@@ -10,11 +10,11 @@ import { Segments, SmallStat, TextAction, TotalCard } from './consumption-ui';
 import { consumptionTimezone, hasConsumptionReading } from '../shared/consumption-cache';
 
 type Theme = PluginHostProps['theme'];
-function GroupCard({ group, total, theme, compact }: { group: ConsumptionGroup; total: number; theme: Theme; compact: boolean }) {
+function GroupCard({ group, total, theme, compact, byModel }: { group: ConsumptionGroup; total: number; theme: Theme; compact: boolean; byModel: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const value = totalTokens(group), share = total > 0 ? value / total * 100 : 0;
   return <View>
-    <Pressable accessibilityRole="button" accessibilityLabel={`${expanded ? '收起' : '展开'}${group.label}模型明细`} aria-expanded={expanded} accessibilityState={{ expanded }} onPress={() => setExpanded(value => !value)} style={({ pressed }) => ({ paddingVertical: 12, paddingHorizontal: 2, gap: 8, minHeight: compact ? 64 : 60, opacity: pressed ? 0.65 : 1 })}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`${expanded ? '收起' : '展开'}${group.label}${byModel ? '来源' : '模型'}明细`} aria-expanded={expanded} accessibilityState={{ expanded }} onPress={() => setExpanded(value => !value)} style={({ pressed }) => ({ paddingVertical: 12, paddingHorizontal: 2, gap: 8, minHeight: compact ? 64 : 60, opacity: pressed ? 0.65 : 1 })}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
         <Text style={{ color: theme.colors.foreground, fontWeight: '600', fontSize: 14, flexShrink: 1 }}>{group.label}</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -30,11 +30,11 @@ function GroupCard({ group, total, theme, compact }: { group: ConsumptionGroup; 
       </View>
     </Pressable>
     {expanded ? <View style={{ padding: 12, marginBottom: 8, borderRadius: 12, backgroundColor: theme.colors.surface0, gap: 14 }}>
-      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{group.models.length} 项模型来源</Text>
+      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{group.models.length} 项{byModel ? '' : '模型'}来源</Text>
       <Breakdown tokens={group} theme={theme} />
       {group.models.map(model => <View key={`${model.host?.id ?? "local"}:${model.source}:${model.model}`} style={{ paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.border, gap: 5 }}>
-        <Text selectable style={{ color: theme.colors.foreground, fontWeight: '500', fontSize: 12, lineHeight: 18, flexShrink: 1 }}>{model.model}{model.inferredModel ? ' · 模型推定' : ''}</Text>
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{model.host ? `${model.host.label} · ` : ''}{sourceNames[model.source]} · 共 {formatTokens(totalTokens(model))} token</Text>
+        <Text selectable style={{ color: theme.colors.foreground, fontWeight: '500', fontSize: 12, lineHeight: 18, flexShrink: 1 }}>{byModel ? `${model.host ? `${model.host.label} · ` : ''}${sourceNames[model.source]}` : model.model}{model.inferredModel ? ' · 模型推定' : ''}</Text>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{byModel ? '' : `${model.host ? `${model.host.label} · ` : ''}${sourceNames[model.source]} · `}共 {formatTokens(totalTokens(model))} token</Text>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 18 }}>输入 {formatTokens(model.input)} · 输出 {formatTokens(model.output)}{model.cacheRead ? ` · 缓存读取 ${formatTokens(model.cacheRead)}` : ''}{model.cacheWrite ? ` · 缓存写入 ${formatTokens(model.cacheWrite)}` : ''}{model.reasoning !== null ? ` · 推理 ${formatTokens(model.reasoning)}` : ''}</Text>
       </View>)}
     </View> : null}
@@ -57,7 +57,7 @@ function ConsumptionSummary({ theme, layout, query, timezone, scopeLabel }: Cons
   const [preset, setPreset] = useState<'today' | 'week' | 'month' | 'custom'>('today');
   const [custom, setCustom] = useState(() => presetRange('month', timezone));
   const [draft, setDraft] = useState(custom);
-  const [by, setBy] = useState<'vendor' | 'source' | 'host'>('source');
+  const [by, setBy] = useState<ConsumptionGrouping>('source');
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(false);
   const range: ConsumptionRange = preset === 'custom' ? custom : presetRange(preset, timezone);
@@ -99,13 +99,15 @@ function ConsumptionSummary({ theme, layout, query, timezone, scopeLabel }: Cons
     </View>}
     <Text style={{ color: theme.colors.foregroundMuted, fontSize: 10, textAlign: 'center' }}>{range.since === range.until ? range.since : `${range.since} — ${range.until}`} · {timezone}</Text>
     {groups.length ? <View style={{ gap: 2 }}>
-      <Segments quiet theme={theme} options={[
+      <Segments quiet wrap={layout.compact} theme={theme} options={[
         { label: '按 Provider', active: by === 'source', onPress: () => setBy('source') },
+        { label: '按模型', active: by === 'model', onPress: () => setBy('model') },
         { label: '按模型厂商', active: by === 'vendor', onPress: () => setBy('vendor') },
         ...(report?.hosts ? [{ label: '按主机', active: by === 'host', onPress: () => setBy('host') }] : []),
       ]} />
       {by === 'vendor' ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 17, paddingTop: 8 }}>按模型识别厂商，实际调用渠道可能不同</Text> : null}
-      {groups.map(group => <GroupCard key={`${by}:${group.id}`} group={group} total={totalTokens(totals)} theme={theme} compact={layout.compact} />)}
+      {by === 'model' ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 17, paddingTop: 8 }}>同名模型合并统计，展开查看各主机和 Provider 的消耗</Text> : null}
+      {groups.map(group => <GroupCard key={`${by}:${group.id}`} group={group} total={totalTokens(totals)} theme={theme} compact={layout.compact} byModel={by === 'model'} />)}
     </View> : null}
     <ConsumptionSources report={report} theme={theme} />
   </View>;

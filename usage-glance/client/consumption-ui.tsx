@@ -5,9 +5,9 @@ import { compactTokens, formatTokens } from '../shared/consumption';
 
 export type Theme = PluginHostProps['theme'];
 
-export function Segments({ options, theme, quiet = false }: { options: { label: string; active: boolean; onPress: () => void }[]; theme: Theme; quiet?: boolean }) {
-  return <View style={{ flexDirection: 'row', padding: 3, gap: 2, borderRadius: 12, backgroundColor: quiet ? theme.colors.surface1 : theme.colors.surface0 }}>
-    {options.map(option => <Pressable key={option.label} accessibilityRole="button" accessibilityState={{ selected: option.active }} onPress={option.onPress} style={({ pressed }) => ({ flex: 1, minWidth: 0, minHeight: 44, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center', borderRadius: 9, backgroundColor: option.active ? quiet ? theme.colors.surface2 : theme.colors.surface1 : 'transparent', opacity: pressed ? 0.65 : 1 })}>
+export function Segments({ options, theme, quiet = false, wrap = false }: { options: { label: string; active: boolean; onPress: () => void }[]; theme: Theme; quiet?: boolean; wrap?: boolean }) {
+  return <View style={{ flexDirection: 'row', flexWrap: wrap ? 'wrap' : 'nowrap', padding: 3, gap: 2, borderRadius: 12, backgroundColor: quiet ? theme.colors.surface1 : theme.colors.surface0 }}>
+    {options.map(option => <Pressable key={option.label} accessibilityRole="button" accessibilityState={{ selected: option.active }} onPress={option.onPress} style={({ pressed }) => ({ flex: 1, minWidth: wrap ? '40%' : 0, minHeight: 44, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center', borderRadius: 9, backgroundColor: option.active ? quiet ? theme.colors.surface2 : theme.colors.surface1 : 'transparent', opacity: pressed ? 0.65 : 1 })}>
       <Text numberOfLines={1} style={{ color: option.active ? theme.colors.foreground : theme.colors.foregroundMuted, fontSize: 12, fontWeight: option.active ? '600' : '400' }}>{option.label}</Text>
     </Pressable>)}
   </View>;
