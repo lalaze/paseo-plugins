@@ -1,6 +1,6 @@
 import type { PluginHostProps, PluginButtonIconProps } from '@getpaseo/plugin/client';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { balancePercent, balanceRemaining, dataAge, findUsage, formatBalance, formatPercent, hasQuota, headerSummary, isStale, providerShortName, remaining, resetLabel, summary, tone, type Tone, type Usage } from '../shared/usage';
 import { useUsage, type UsageQuery } from './query';
 import type { HeaderPreference } from './preference';
@@ -51,7 +51,7 @@ function HeaderPicker({ providers, selected, onSelect, theme, compact }: { provi
   </View>;
 }
 
-export function ProviderCard({ usage, theme, current, pinned }: { usage: Usage; theme: Theme; current: boolean; pinned: boolean }) {
+function ProviderCard({ usage, theme, current, pinned }: { usage: Usage; theme: Theme; current: boolean; pinned: boolean }) {
   const brief = summary(usage);
   return <View style={{ borderWidth: 1, borderColor: current || pinned ? theme.colors.accent : theme.colors.border, borderRadius: 10, padding: 12, gap: 10, backgroundColor: theme.colors.surface1 }}>
     <View style={{ gap: 3 }}>
@@ -71,8 +71,9 @@ export function ProviderCard({ usage, theme, current, pinned }: { usage: Usage; 
   </View>;
 }
 
-export function Overview({ theme, layout, query, preference, currentProvider, popover = false }: PluginHostProps & { query: UsageQuery; preference: HeaderPreference; currentProvider?: string; popover?: boolean }) {
+export function Overview({ theme, host, layout, query, preference, currentProvider, popover = false }: PluginHostProps & { query: UsageQuery; preference: HeaderPreference; currentProvider?: string; popover?: boolean }) {
   const result = useUsage(query);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const selected = useSyncExternalStore(preference.subscribe, preference.get, preference.get);
   useEffect(() => { void preference.load(); }, [preference]);
   const providers = (result.data?.providers ?? []).filter(hasQuota);
@@ -83,8 +84,8 @@ export function Overview({ theme, layout, query, preference, currentProvider, po
   const body = <View style={{ gap: popover ? 10 : 16, width: '100%', maxWidth: 780, alignSelf: 'center' }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
       <View style={{ gap: 2, flexShrink: 1 }}>
-        <Text style={{ color: theme.colors.foreground, fontSize: popover ? 15 : 25, fontWeight: '700' }}>额度概览</Text>
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: popover ? 11 : 12 }}>{dataAge(result.data?.fetchedAt)} · 自动更新</Text>
+        <Text style={{ color: theme.colors.foreground, fontSize: popover ? 15 : 25, fontWeight: '700' }}>本机额度</Text>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: popover ? 11 : 12 }}>{host.label} · {dataAge(result.data?.fetchedAt)}</Text>
       </View>
       <Pressable accessibilityRole="button" accessibilityLabel="刷新额度" disabled={result.isFetching} onPress={() => { void result.refetch(); }} style={{ borderWidth: 1, borderColor: theme.colors.border, borderRadius: 7, minHeight: layout.compact ? 44 : 30, justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 5, opacity: result.isFetching ? 0.55 : 1 }}>
         <Text style={{ color: theme.colors.foreground, fontSize: 12 }}>{result.isFetching ? '更新中…' : '刷新'}</Text>
@@ -94,10 +95,15 @@ export function Overview({ theme, layout, query, preference, currentProvider, po
     {result.isPending ? <Text style={{ color: theme.colors.foregroundMuted, paddingVertical: 24 }}>正在读取额度…</Text> : null}
     {currentProvider && !current && result.data ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>当前会话的供应商尚无额度数据，可查看其他供应商。</Text> : null}
     {!result.isPending && !providers.length && !result.isError ? <Text style={{ color: theme.colors.foregroundMuted }}>尚未返回额度数据</Text> : null}
-    {providers.length ? <HeaderPicker providers={providers} selected={pinnedId} onSelect={id => { void preference.save(id); }} theme={theme} compact={layout.compact} /> : null}
     <View style={{ flexDirection: popover || layout.compact ? 'column' : 'row', flexWrap: 'wrap', gap: popover ? 8 : 12 }}>
       {visible.map(usage => <View key={usage.providerId} style={{ width: !popover && !layout.compact ? '48%' : '100%' }}><ProviderCard usage={usage} theme={theme} current={usage === current} pinned={usage.providerId === pinnedId} /></View>)}
     </View>
+    {providers.length ? <View style={{ gap: 6 }}>
+      <Pressable accessibilityRole="button" accessibilityLabel="顶栏显示设置" aria-expanded={settingsOpen} accessibilityState={{ expanded: settingsOpen }} onPress={() => setSettingsOpen(value => !value)} style={{ minHeight: 44, justifyContent: 'center' }}>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>顶栏显示设置 {settingsOpen ? '−' : '+'}</Text>
+      </Pressable>
+      {settingsOpen ? <HeaderPicker providers={providers} selected={pinnedId} onSelect={id => { void preference.save(id); }} theme={theme} compact={layout.compact} /> : null}
+    </View> : null}
   </View>;
   // Paseo owns scrolling and spacing inside popovers / mobile sheets.
   return popover ? body : <ScrollView style={{ flex: 1, backgroundColor: theme.colors.surface0 }} contentContainerStyle={{ padding: layout.compact ? 16 : 28 }}>{body}</ScrollView>;

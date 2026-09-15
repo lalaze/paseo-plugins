@@ -18,9 +18,9 @@ function fixture(registry: HostRegistry, id: string, rpc = async (_range: Consum
   const query = createUsageQuery({ providers: { async listUsage() { return { providers: [], fetchedAt: new Date().toISOString() }; } } } as never);
   let providerUpdate!: (snapshot: PaseoProviderSnapshotUpdate) => void, calls = 0;
   const consumption = createConsumptionQuery(query.client, (async (_contract, input: { range: ConsumptionRange }) => { calls++; return rpc(input.range); }) as never, { subscribe(listener) { providerUpdate = listener; return () => {}; } });
-  const runtime = { query, consumption, preference: { get: () => null, subscribe: () => () => {}, save: async () => {}, load: async () => {} } };
+  const runtime = { consumption };
   const registration = registry.register(runtime); registration.identify({ id, label: id });
-  return { ...runtime, registration, get calls() { return calls; }, providerUpdate: (snapshot: PaseoProviderSnapshotUpdate) => providerUpdate(snapshot),
+  return { query, ...runtime, registration, get calls() { return calls; }, providerUpdate: (snapshot: PaseoProviderSnapshotUpdate) => providerUpdate(snapshot),
     seed(report: ConsumptionReport) { query.client.setQueryData(['token-consumption', report.range], report); },
     dispose() { registration.dispose(); consumption.dispose(); query.client.clear(); },
   };
@@ -96,12 +96,15 @@ test('same daemon registers once; old cleanup cannot disconnect or rename its re
   } finally { current.dispose(); }
 });
 
-test('quota snapshots remain separate and survive disconnection without adding percentages', () => {
+test('local quota updates do not change the cross-host consumption snapshot', () => {
   const registry = new HostRegistry(), linux = fixture(registry, 'code'), mac = fixture(registry, 'Mac');
   const quota = (remainingPct: number) => ({ fetchedAt: '2026-09-15T12:00:00Z', providers: [{ providerId: 'codex', status: 'available', displayName: 'Codex', windows: [{ id: 'week', label: 'Week', remainingPct }] }] });
-  linux.query.client.setQueryData(linux.query.options.queryKey, quota(40)); mac.query.client.setQueryData(mac.query.options.queryKey, quota(70)); mac.dispose();
-  try { assert.deepEqual(registry.getSnapshot().map(host => host.quota!.providers[0].windows[0].remainingPct).sort(), [40, 70]); assert.equal(registry.get('Mac')?.online, false); }
-  finally { linux.dispose(); }
+  const snapshot = registry.getSnapshot();
+  try {
+    linux.query.client.setQueryData(linux.query.options.queryKey, quota(40)); mac.query.client.setQueryData(mac.query.options.queryKey, quota(70));
+    assert.equal(registry.getSnapshot(), snapshot);
+    assert.equal(linux.query.client.getQueryData<ReturnType<typeof quota>>(linux.query.options.queryKey)!.providers[0].windows[0].remainingPct, 40);
+  } finally { linux.dispose(); mac.dispose(); }
 });
 
 test('discarded local caches cannot leave disabled source data in the shared registry', () => {

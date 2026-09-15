@@ -1,0 +1,31 @@
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { ScrollView, Text, View } from 'react-native';
+import type { PluginSurfaceProps } from '@getpaseo/plugin/client';
+import type { HostRegistration, HostRegistry } from './hosts';
+import { HostPicker } from './host-picker';
+import { Consumption } from './consumption';
+import { createMultiHostConsumption } from './multi-host-consumption';
+
+type FleetContext = { registry: HostRegistry; registration: HostRegistration };
+export function ConsumptionPage({ theme, host, layout, fleet }: PluginSurfaceProps & { fleet: FleetContext }) {
+  const hosts = useSyncExternalStore(fleet.registry.subscribe, fleet.registry.getSnapshot, fleet.registry.getSnapshot);
+  const [selected, setSelected] = useState<string | null>(null);
+  const query = useMemo(() => createMultiHostConsumption(fleet.registry, selected), [fleet.registry, selected]);
+  useEffect(() => { fleet.registration.identify(host, true); }, [fleet.registration, host.id, host.label]);
+  useEffect(() => { query.mount(); return () => query.dispose(); }, [query]);
+  const visible = hosts.filter(host => selected === null || host.id === selected);
+  return <ScrollView style={{ flex: 1, backgroundColor: theme.colors.surface0 }} contentContainerStyle={{ padding: layout.compact ? 16 : 28 }}>
+    <View style={{ width: '100%', maxWidth: 880, alignSelf: 'center', gap: 24 }}>
+      <View style={{ flexDirection: layout.compact ? 'column' : 'row', alignItems: layout.compact ? 'stretch' : 'center', gap: 16 }}>
+        <View style={{ flex: 1, minWidth: 0, gap: 6 }}>
+          <Text accessibilityRole="header" style={{ color: theme.colors.foreground, fontSize: 26, fontWeight: '700' }}>Token 消耗</Text>
+          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>用量汇总与月度模型热力图</Text>
+        </View>
+        <View style={{ width: layout.compact ? '100%' : 280, maxWidth: '100%' }}><HostPicker hosts={hosts} selected={selected} onSelect={setSelected} theme={theme} /></View>
+      </View>
+      <View style={{ padding: layout.compact ? 14 : 24, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface1 }}>
+        {!visible.length ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18, padding: 12 }}>等待已连接主机加载统计插件…</Text> : <Consumption query={query} theme={theme} layout={layout} scopeLabel={selected === null ? '跨主机消耗' : visible[0].label} />}
+      </View>
+    </View>
+  </ScrollView>;
+}

@@ -77,7 +77,7 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
       <SmallStat label="有记录天数" value={`${heatmap.activeDays} 天`} theme={theme} />
       <SmallStat label="单日峰值" value={unknownTotal ? '—' : compactTokens(heatmap.peak)} theme={theme} />
     </TotalCard>
-    <View style={{ gap: 10 }}>
+    <View style={{ gap: 10, width: '100%', maxWidth: 560, alignSelf: 'center' }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 30 }}>
         <Text style={{ color: theme.colors.foreground, fontSize: 13, fontWeight: '600' }}>每日消耗</Text>
         {month !== currentMonth ? <TextAction label="回到本月" accessibilityLabel="回到本月" onPress={() => changeMonth(currentMonth)} theme={theme} /> : <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>点击日期查看</Text>}
@@ -91,7 +91,7 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
             const value = totalTokens(cell), level = heatLevel(value, heatmap.peak), selected = cell.date === activeDate;
             const unknown = !cell.future && value === 0 && (incomplete || !sources.length);
             const ink = level === 4 ? theme.colors.accentForeground : cell.future ? theme.colors.foregroundMuted : theme.colors.foreground;
-            return <View key={cell.date} style={{ flex: 1, minWidth: 0 }}><Pressable accessibilityRole="button" accessibilityLabel={`${cell.date} ${cell.future ? '未到来' : unknown ? '记录未完整' : `${formatTokens(value)} token`}`} accessibilityState={{ selected, disabled: cell.future }} disabled={cell.future} onPress={() => setSelectedDate(cell.date)} style={({ pressed }) => ({ width: '100%', height: layout.compact ? 44 : 38, borderRadius: 8, overflow: 'hidden', justifyContent: 'center', alignItems: 'center', backgroundColor: cell.future ? 'transparent' : level ? theme.colors.surface1 : theme.colors.surface0, opacity: pressed ? 0.7 : 1 })}>
+            return <View key={cell.date} style={{ flex: 1, minWidth: 0 }}><Pressable accessibilityRole="button" accessibilityLabel={`${cell.date} ${cell.future ? '未到来' : unknown ? '记录未完整' : `${formatTokens(value)} token`}`} accessibilityState={{ selected, disabled: cell.future }} disabled={cell.future} onPress={() => setSelectedDate(cell.date)} style={({ pressed }) => ({ width: '100%', height: layout.compact ? 44 : 56, borderRadius: 8, overflow: 'hidden', justifyContent: 'center', alignItems: 'center', backgroundColor: cell.future ? 'transparent' : level ? theme.colors.surface1 : theme.colors.surface0, opacity: pressed ? 0.7 : 1 })}>
               {level ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: theme.colors.accent, opacity: opacity[level] }} /> : null}
               <Text style={{ width: '100%', textAlign: 'center', color: ink, opacity: cell.future ? 0.4 : 1, fontSize: 12, lineHeight: 18, includeFontPadding: false, fontWeight: '500', fontVariant: ['tabular-nums'] }}>{cell.day}</Text>
               {unknown ? <Text style={{ position: 'absolute', bottom: 2, left: 0, right: 0, textAlign: 'center', color: theme.colors.foregroundMuted, fontSize: 8, lineHeight: 8, includeFontPadding: false }}>—</Text> : null}

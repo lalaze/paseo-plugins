@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
-import type { PluginClientContext, PluginButtonRegistration, PluginButtonContentProps, PluginButtonIconProps } from '@getpaseo/plugin/client';
+import type { PluginClientContext, PluginButtonRegistration, PluginButtonContentProps, PluginButtonIconProps, PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { QueryObserver } from '@tanstack/react-query';
-import { HeaderQuotaIcon } from './client/overview';
-import { UsageDashboard } from './client/dashboard';
+import { HeaderQuotaIcon, Overview } from './client/overview';
+import { ConsumptionPage } from './client/consumption-page';
 import { createConsumptionQuery } from './client/consumption-query';
 import { createHeaderPreference } from './client/preference';
 import { createUsageQuery } from './client/query';
@@ -18,7 +18,7 @@ export default function contribute(client: PluginClientContext) {
   const observer = new QueryObserver(query.client, query.options);
   const preference = createHeaderPreference((contract, input) => client.rpc(contract, input));
   const registry = getHostRegistry();
-  const registration = registry.register({ query, consumption, preference });
+  const registration = registry.register({ consumption });
   const fleet = { registry, registration };
   void client.rpc(readHostIdentity, {}).then(identity => registration.identify(identity)).catch(() => {});
   const headers = new Map<string, PluginButtonRegistration>();
@@ -27,7 +27,11 @@ export default function contribute(client: PluginClientContext) {
     useEffect(() => { registration.identify(props.host, true); }, [props.host.id, props.host.label]);
     return <HeaderQuotaIcon {...props} query={query} preference={preference} />;
   };
-  const HeaderContent = (props: PluginButtonContentProps) => <UsageDashboard {...props} query={query} consumption={consumption} preference={preference} fleet={fleet} />;
+  const HeaderContent = (props: PluginButtonContentProps) => <Overview {...props} query={query} preference={preference} popover />;
+  const ConsumptionSurface = (props: PluginSurfaceProps) => <ConsumptionPage {...props} fleet={fleet} />;
+  const removeSurface = client.addSurface('consumption', ConsumptionSurface);
+  const removeSidebar = client.addSidebarItem({ id: 'consumption', title: 'Token 消耗', icon: 'ChartColumn', surface: 'consumption' });
+  const removeCommand = client.addCommandCenterItem({ id: 'open-consumption', title: '查看 Token 消耗', icon: 'ChartColumn', context: 'global', keywords: ['token', 'usage', '消耗', '热力图'], onSelect: () => client.openSurface('consumption') });
 
   function sync() {
     const result = observer.getCurrentResult();
@@ -51,6 +55,9 @@ export default function contribute(client: PluginClientContext) {
   const unsubscribePreference = preference.subscribe(sync);
   const stopWorkspaces = followWorkspaces(client.paseo, latest => { workspaces = new Set(latest); sync(); });
   return () => {
+    removeCommand();
+    removeSidebar();
+    removeSurface();
     registration.dispose();
     stopWorkspaces();
     consumption.dispose();

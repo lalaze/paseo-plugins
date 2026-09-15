@@ -48,7 +48,7 @@ paseo plugin add lalaze/paseo-plugins --path director
 
 ## [额度速览](usage-glance)
 
-工作区右上角显示额度摘要，可固定供应商并展开明细。支持在同一客户端合计多台主机的 token、分别展示各主机剩余额度。消耗跟随各主机自己的 Providers 开关，支持 Codex、Claude Code、Kimi、Grok、Antigravity，可按 Provider、模型厂商、主机分组，并查看月度模型热力图。每台主机需分别安装或更新。插件 ID：`paseo-usage-glance`。Antigravity 额度需要另外安装下面的 [`agy-quota`](agy-quota) 补丁。
+工作区右上角展示当前主机的额度摘要与明细，可固定顶栏供应商。侧边栏「Token 消耗」打开独立统计页面，支持多主机合计、单机筛选和月度模型热力图。消耗跟随各主机自己的 Providers 开关，支持 Codex、Claude Code、Kimi、Grok、Antigravity，可按 Provider、模型厂商、主机分组。每台主机需分别安装或更新。插件 ID：`paseo-usage-glance`。Antigravity 额度需要另外安装下面的 [`agy-quota`](agy-quota) 补丁。
 
 ```bash
 paseo plugin add lalaze/paseo-plugins --path usage-glance
