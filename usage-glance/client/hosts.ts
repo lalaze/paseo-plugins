@@ -2,6 +2,7 @@ import { isCancelledError } from '@tanstack/react-query';
 import type { ConsumptionQuery } from './consumption-query';
 import type { ConsumptionRange, ConsumptionReport } from '../shared/consumption';
 import type { HostIdentity } from '../shared/hosts';
+import { coversConsumptionRange } from '../shared/consumption-cache';
 
 export const rangeKey = (range: ConsumptionRange) => JSON.stringify([range.since, range.until, range.timezone]);
 export type HostRuntime = { consumption: ConsumptionQuery };
@@ -12,6 +13,10 @@ export type HostEntry = HostIdentity & {
   pending: Map<string, Promise<void>>;
   runtime?: HostRuntime;
 };
+
+export function cachedHostConsumption(host: HostEntry, range: ConsumptionRange) {
+  return [...host.reports.values()].reverse().find(report => coversConsumptionRange(report.range, range));
+}
 
 /** Shared by this plugin's independently evaluated bundles in one Paseo client.
  * Only instances loaded by Paseo register their own, already-authorized RPCs.
@@ -36,12 +41,16 @@ export class HostRegistry {
       let changed = false;
       const present = new Set<string>();
       for (const query of runtime.consumption.client.getQueryCache().findAll({ queryKey: ['token-consumption'] })) {
-        const report = query.state.data as ConsumptionReport | undefined;
+        let report = query.state.data as ConsumptionReport | undefined;
+        const range = report?.range ?? query.queryKey[1] as ConsumptionRange | undefined;
+        if (!range) continue;
+        const key = rangeKey(range), failed = query.state.status === 'error' && !isCancelledError(query.state.error);
+        if (failed && entry.errors.get(key) !== query.state.errorUpdatedAt) { entry.errors.set(key, query.state.errorUpdatedAt); changed = true; }
+        if (!report && failed) report = entry.reports.get(key) ?? { range, scanning: true, sources: [] };
         if (!report) continue;
-        const key = rangeKey(report.range);
         present.add(key);
         if (entry.reports.get(key) !== report) {
-          entry.reports.delete(key); entry.reports.set(key, report); entry.errors.delete(key); changed = true;
+          entry.reports.delete(key); entry.reports.set(key, report); if (!failed) entry.errors.delete(key); changed = true;
         }
         // A late/retried response may be structurally identical to the cached data.
         if (entry.errors.has(key) && query.state.status === 'success' && query.state.dataUpdatedAt > entry.errors.get(key)!) {
@@ -83,14 +92,15 @@ export class HostRegistry {
   ensure(id: string, range: ConsumptionRange, force = false): Promise<void> {
     const entry = this.entries.get(id), runtime = entry?.runtime;
     if (!entry || !runtime || !entry.online) return Promise.resolve();
-    const key = rangeKey(range), pending = entry.pending.get(key);
+    const readRange = cachedHostConsumption(entry, range)?.range ?? range;
+    const key = rangeKey(readRange), pending = entry.pending.get(key);
     if (pending) return pending;
-    const options = runtime.consumption.options(range), state = runtime.consumption.client.getQueryState<ConsumptionReport>(options.queryKey);
+    const options = runtime.consumption.options(readRange), state = runtime.consumption.client.getQueryState<ConsumptionReport>(options.queryKey);
     if (!force && ((state?.data && !state.isInvalidated && !state.data.scanning && Date.now() - state.dataUpdatedAt < 60000) || Date.now() - (entry.errors.get(key) ?? 0) < 15000)) return Promise.resolve();
     let timer: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('主机响应超时')), 8000); });
     const request = Promise.resolve().then(async () => {
-      if (force) await runtime.consumption.refresh(range);
+      if (force) await runtime.consumption.refresh(readRange);
       else await runtime.consumption.client.fetchQuery({ ...options, staleTime: state?.data?.scanning ? 0 : 60000 });
     });
     const task = Promise.race([request, timeout]).then(() => {
@@ -107,7 +117,7 @@ export class HostRegistry {
   }
 }
 
-const registryKey = Symbol.for('lalaze.paseo-usage-glance.host-registry.v2');
+const registryKey = Symbol.for('lalaze.paseo-usage-glance.host-registry.v3');
 export function getHostRegistry(): HostRegistry {
   const shared = globalThis as typeof globalThis & { [registryKey]?: HostRegistry };
   return shared[registryKey] ??= new HostRegistry();

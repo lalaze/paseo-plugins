@@ -7,6 +7,7 @@ import { dataAge } from '../shared/usage';
 import { useConsumption, type ConsumptionQuery } from './consumption-query';
 import { Breakdown, ConsumptionSources } from './consumption-details';
 import { SmallStat, TextAction, TotalCard } from './consumption-ui';
+import { hasConsumptionReading } from '../shared/consumption-cache';
 
 const opacity = [0, 0.14, 0.28, 0.42, 1];
 const modelOrigin = (model: { source: keyof typeof sourceNames; host?: { label: string } }) => `${model.host ? `${model.host.label} · ` : ''}${sourceNames[model.source]}`;
@@ -26,7 +27,7 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
   const heatmap = selectedModel ? buildMonthHeatmap(sources, month, today, selectedModel.key) : all;
   const relevant = selectedModel ? sources.filter(source => source.source === selectedModel.source && source.host?.id === selectedModel.host?.id) : sources;
   const relevantHosts = report?.hosts?.filter(host => !selectedModel?.host || host.id === selectedModel.host.id);
-  const pending = result.isPending || (selectedModel && relevantHosts ? relevantHosts.some(host => host.status === 'loading') : report?.scanning === true);
+  const pending = result.isPending || (selectedModel && relevantHosts ? relevantHosts.some(host => host.status === 'loading') : report?.scanning === true && !hasConsumptionReading(report));
   const incomplete = pending || result.isError || refreshError || !!relevantHosts?.some(host => host.status !== 'ready') || relevant.some(source => source.status === 'error' || source.status === 'partial' || source.status === 'loading') || (!selectedModel && !!report?.unsupportedProviders?.length);
   const unknownTotal = heatmap.total === 0 && (incomplete || !sources.length);
   const latest = relevant.map(source => source.updatedAt).filter((date): date is string => date !== null).sort()[0];

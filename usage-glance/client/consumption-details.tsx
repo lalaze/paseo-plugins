@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import type { PluginHostProps } from '@getpaseo/plugin/client';
 import { compactTokens, formatTokens, sourceNames, type ConsumptionReport, type Tokens } from '../shared/consumption';
 import { dataAge } from '../shared/usage';
+import { hasConsumptionReading } from '../shared/consumption-cache';
 
 type Theme = PluginHostProps['theme'];
 function Metric({ label, value, theme }: { label: string; value: number | null; theme: Theme }) {
@@ -24,7 +25,7 @@ export function ConsumptionSources({ report, theme }: { report?: ConsumptionRepo
   const [expanded, setExpanded] = useState(false);
   const sources = report?.sources ?? [];
   const issues = sources.filter(source => source.status === 'error' || source.status === 'partial');
-  const loading = !report || report.scanning;
+  const loading = !report || report.scanning && !hasConsumptionReading(report);
   const hostIssues = report?.hosts?.filter(host => host.status === 'offline' || host.status === 'error') ?? [];
   return <View style={{ borderTopWidth: 1, borderTopColor: theme.colors.border, gap: 4 }}>
     {report?.hosts?.map(host => <View key={host.id} style={{ paddingTop: 10, gap: 4 }}>

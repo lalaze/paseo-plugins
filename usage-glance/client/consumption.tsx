@@ -7,6 +7,7 @@ import { useConsumption, type ConsumptionQuery } from './consumption-query';
 import { Breakdown, ConsumptionSources } from './consumption-details';
 import { MonthlyHeatmap } from './monthly-heatmap';
 import { Segments, SmallStat, TextAction, TotalCard } from './consumption-ui';
+import { consumptionTimezone, hasConsumptionReading } from '../shared/consumption-cache';
 
 type Theme = PluginHostProps['theme'];
 function GroupCard({ group, total, theme, compact }: { group: ConsumptionGroup; total: number; theme: Theme; compact: boolean }) {
@@ -39,11 +40,10 @@ function GroupCard({ group, total, theme, compact }: { group: ConsumptionGroup; 
     </View> : null}
   </View>;
 }
-function localTimezone() { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; } }
 
 type ConsumptionProps = Pick<PluginHostProps, 'theme' | 'layout'> & { query: ConsumptionQuery; scopeLabel?: string };
 export function Consumption(props: ConsumptionProps) {
-  const [timezone] = useState(localTimezone);
+  const [timezone] = useState(consumptionTimezone);
   const [view, setView] = useState<'summary' | 'heatmap'>('summary');
   return <View style={{ gap: 16, width: '100%' }}>
     <Segments theme={props.theme} options={[
@@ -66,7 +66,7 @@ function ConsumptionSummary({ theme, layout, query, timezone, scopeLabel }: Cons
   const report = result.data, sources = report?.sources ?? [];
   const groups = groupConsumption(sources, by), totals = emptyTokens();
   for (const group of groups) addTokens(totals, group);
-  const pending = result.isPending || report?.scanning === true;
+  const pending = result.isPending || (report?.scanning === true && !hasConsumptionReading(report));
   const incomplete = !!report?.unsupportedProviders?.length || report?.hosts?.some(host => host.status !== 'ready') || sources.some(source => ['partial', 'error', 'loading'].includes(source.status));
   const latest = sources.map(source => source.updatedAt).filter((date): date is string => date !== null).sort()[0];
   const refresh = async () => { setRefreshing(true); setRefreshError(false); try { await query.refresh(range); } catch { setRefreshError(true); } finally { setRefreshing(false); } };

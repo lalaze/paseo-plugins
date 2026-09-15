@@ -4,6 +4,7 @@ import { QueryObserver } from '@tanstack/react-query';
 import { HeaderQuotaIcon, Overview } from './client/overview';
 import { ConsumptionPage } from './client/consumption-page';
 import { createConsumptionQuery } from './client/consumption-query';
+import { startConsumptionSync } from './client/consumption-sync';
 import { createHeaderPreference } from './client/preference';
 import { createUsageQuery } from './client/query';
 import { followWorkspaces } from './client/workspaces';
@@ -19,6 +20,7 @@ export default function contribute(client: PluginClientContext) {
   const preference = createHeaderPreference((contract, input) => client.rpc(contract, input));
   const registry = getHostRegistry();
   const registration = registry.register({ consumption });
+  const stopConsumptionSync = startConsumptionSync(consumption);
   const fleet = { registry, registration };
   void client.rpc(readHostIdentity, {}).then(identity => registration.identify(identity)).catch(() => {});
   const headers = new Map<string, PluginButtonRegistration>();
@@ -55,6 +57,7 @@ export default function contribute(client: PluginClientContext) {
   const unsubscribePreference = preference.subscribe(sync);
   const stopWorkspaces = followWorkspaces(client.paseo, latest => { workspaces = new Set(latest); sync(); });
   return () => {
+    stopConsumptionSync();
     removeCommand();
     removeSidebar();
     removeSurface();

@@ -1,6 +1,7 @@
 import { rangeSchema, sourceIds, type ConsumptionRange, type ConsumptionReport, type SourceId, type SourceReport } from '../shared/consumption';
 import { runCcusage } from './ccusage';
 import { runAntigravity } from './antigravity';
+import { coversConsumptionRange, projectConsumptionReport } from '../shared/consumption-cache';
 
 type ReadSource = (source: SourceId, range: ConsumptionRange, signal: AbortSignal) => Promise<{ rows: SourceReport['rows']; message: string | null }>;
 type CacheEntry = { report: ConsumptionReport; startedAt: number; completedAt: number; controller: AbortController };
@@ -20,10 +21,16 @@ export class ConsumptionService {
       for (const value of this.cache.values()) value.controller.abort();
       this.cache.clear(); this.selection = selection;
     }
-    const range = rangeSchema.parse(input), key = JSON.stringify(range), now = this.now();
-    let entry = this.cache.get(key);
+    const range = rangeSchema.parse(input), now = this.now();
+    const covering = [...this.cache].reverse().find(([, value]) => coversConsumptionRange(value.report.range, range));
+    const key = covering?.[0] ?? JSON.stringify(range);
+    let entry = covering?.[1];
     if (entry) { this.cache.delete(key); this.cache.set(key, entry); }
     if (!entry) {
+      // A wider scan replaces smaller caches, avoiding repeated scans of the same logs.
+      for (const [existingKey, value] of this.cache) if (coversConsumptionRange(range, value.report.range)) {
+        value.controller.abort(); this.cache.delete(existingKey);
+      }
       if (this.cache.size >= 8) {
         const victim = [...this.cache].find(([, value]) => !value.report.scanning);
         if (!victim) throw new Error('正在读取其他时间范围，请稍后重试');
@@ -34,7 +41,7 @@ export class ConsumptionService {
     }
     if (sources.length && !entry.report.scanning && (!entry.completedAt || now - entry.completedAt >= 60000 || (refresh && now - entry.startedAt >= 5000))) void this.scan(entry);
     // Copy the envelope: background updates should only become visible on the next RPC.
-    return { ...entry.report, sources: [...entry.report.sources] };
+    return projectConsumptionReport({ ...entry.report, sources: [...entry.report.sources] }, range);
   }
   private async acquire(signal: AbortSignal): Promise<void> {
     if (this.active < 2) { this.active++; return; }

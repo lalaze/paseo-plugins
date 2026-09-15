@@ -128,10 +128,13 @@ test('scans are nonblocking, bounded, single-flight, replace totals, and retain 
   service.dispose(); assert.throws(() => service.get(range, sourceIds), /关闭/);
 });
 
-test('data from another range is never reused as if it belonged to the selected dates', async () => {
+test('covering caches are filtered to the exact dates and never reused across timezones', async () => {
   const service = new ConsumptionService(async (_source, input) => ({ rows: input.since === range.since ? [row] : [], message: null }));
   service.get(range, sourceIds); for (let i = 0; i < 10; i++) await setImmediate();
   const other = service.get({ ...range, since: '2026-09-15' }, sourceIds);
-  assert.equal(other.scanning, true); assert.ok(other.sources.every(source => source.rows.length === 0));
+  assert.equal(other.scanning, false); assert.ok(other.sources.every(source => source.rows.length === 0 && source.status === 'empty'));
+  assert.equal(other.range.since, '2026-09-15');
+  const differentZone = service.get({ ...range, timezone: 'Asia/Shanghai' }, sourceIds);
+  assert.equal(differentZone.scanning, true); assert.ok(differentZone.sources.every(source => source.rows.length === 0));
   service.dispose(); for (let i = 0; i < 10; i++) await setImmediate();
 });

@@ -4,14 +4,17 @@ import { readConsumption, enabledConsumptionSources, unsupportedConsumptionProvi
 import { ConsumptionService } from './server/consumption';
 import { readHostIdentity } from './shared/hosts';
 import { hostIdentity } from './server/host-identity';
+import { startConsumptionSync } from './server/consumption-sync';
 
 export default function contribute(server: PluginServerContext) {
   server.registerSettings(headerSettings);
   server.handle(readHostIdentity, () => hostIdentity());
   const consumption = new ConsumptionService();
+  const sync = startConsumptionSync(consumption);
   server.handle(readConsumption, async ({ range, refresh }, { paseo }) => {
     const snapshot = await paseo.providers.snapshot().catch(() => { throw new Error('无法读取本机 Providers，请稍后重试'); });
+    sync.watch(paseo, range.timezone);
     return { ...consumption.get(range, enabledConsumptionSources(snapshot.entries), refresh), unsupportedProviders: unsupportedConsumptionProviders(snapshot.entries) };
   });
-  return () => consumption.dispose();
+  return () => { sync.dispose(); consumption.dispose(); };
 }

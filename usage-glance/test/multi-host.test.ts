@@ -96,6 +96,23 @@ test('same daemon registers once; old cleanup cannot disconnect or rename its re
   } finally { current.dispose(); }
 });
 
+test('changing host scope keeps an open query subscribed to later cache and Provider updates', async () => {
+  const registry = new HostRegistry(), linux = fixture(registry, 'code'), mac = fixture(registry, 'Mac');
+  linux.seed(sample(100)); mac.seed(sample(200));
+  const query = createMultiHostConsumption(registry, null); query.mount();
+  const observer = new QueryObserver(query.client, query.options(range)), unsubscribe = observer.subscribe(() => {});
+  try {
+    query.select('Mac'); await settle();
+    assert.equal(observer.getCurrentResult().data?.hosts?.[0].total, 210);
+    mac.seed(sample(300)); await settle();
+    assert.equal(observer.getCurrentResult().data?.hosts?.[0].total, 310);
+    mac.providerUpdate({ entries: [{ provider: 'codex', enabled: false, status: 'ready' }], generatedAt: '2026-09-15T12:00:00Z' }); await settle();
+    assert.equal(observer.getCurrentResult().data?.hosts?.[0].total, 0);
+    query.select(null); await settle();
+    assert.equal(observer.getCurrentResult().data?.hosts?.find(host => host.id === 'code')?.total, 110);
+  } finally { unsubscribe(); observer.destroy(); query.dispose(); linux.dispose(); mac.dispose(); }
+});
+
 test('local quota updates do not change the cross-host consumption snapshot', () => {
   const registry = new HostRegistry(), linux = fixture(registry, 'code'), mac = fixture(registry, 'Mac');
   const quota = (remainingPct: number) => ({ fetchedAt: '2026-09-15T12:00:00Z', providers: [{ providerId: 'codex', status: 'available', displayName: 'Codex', windows: [{ id: 'week', label: 'Week', remainingPct }] }] });
