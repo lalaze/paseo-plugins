@@ -83,18 +83,20 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
         {month !== currentMonth ? <TextAction label="回到本月" accessibilityLabel="回到本月" onPress={() => changeMonth(currentMonth)} theme={theme} /> : <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>点击日期查看</Text>}
       </View>
       <View testID="monthly-heatmap" style={{ gap: 5 }}>
-        <View style={{ flexDirection: 'row', gap: 5 }}>{weekdays.map(day => <Text key={day} style={{ flex: 1, textAlign: 'center', color: theme.colors.foregroundMuted, fontSize: 11, paddingBottom: 5 }}>{day}</Text>)}</View>
+        <View style={{ flexDirection: 'row', gap: 5 }}>{weekdays.map(day => <View key={day} style={{ flex: 1, minWidth: 0, alignItems: 'center', paddingBottom: 5 }}><Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 16 }}>{day}</Text></View>)}</View>
         {heatmap.weeks.map((week, index) => <View key={index} style={{ flexDirection: 'row', gap: 5 }}>
           {week.map((cell, column) => {
-            if (!cell) return <View key={`blank-${column}`} style={{ flex: 1 }} />;
+            // Keep blank/date columns identical; borders must not affect flex widths.
+            if (!cell) return <View key={`blank-${column}`} style={{ flex: 1, minWidth: 0 }} />;
             const value = totalTokens(cell), level = heatLevel(value, heatmap.peak), selected = cell.date === activeDate;
             const unknown = !cell.future && value === 0 && (incomplete || !sources.length);
             const ink = level === 4 ? theme.colors.accentForeground : cell.future ? theme.colors.foregroundMuted : theme.colors.foreground;
-            return <Pressable key={cell.date} accessibilityRole="button" accessibilityLabel={`${cell.date} ${cell.future ? '未到来' : unknown ? '记录未完整' : `${formatTokens(value)} token`}`} accessibilityState={{ selected, disabled: cell.future }} disabled={cell.future} onPress={() => setSelectedDate(cell.date)} style={({ pressed }) => ({ flex: 1, minWidth: 0, minHeight: layout.compact ? 44 : 38, borderWidth: 2, borderColor: selected ? theme.colors.accent : 'transparent', borderRadius: 8, overflow: 'hidden', justifyContent: 'center', alignItems: 'center', backgroundColor: cell.future ? 'transparent' : level ? theme.colors.surface1 : theme.colors.surface0, opacity: pressed ? 0.7 : 1 })}>
+            return <View key={cell.date} style={{ flex: 1, minWidth: 0 }}><Pressable accessibilityRole="button" accessibilityLabel={`${cell.date} ${cell.future ? '未到来' : unknown ? '记录未完整' : `${formatTokens(value)} token`}`} accessibilityState={{ selected, disabled: cell.future }} disabled={cell.future} onPress={() => setSelectedDate(cell.date)} style={({ pressed }) => ({ width: '100%', height: layout.compact ? 44 : 38, borderRadius: 8, overflow: 'hidden', justifyContent: 'center', alignItems: 'center', backgroundColor: cell.future ? 'transparent' : level ? theme.colors.surface1 : theme.colors.surface0, opacity: pressed ? 0.7 : 1 })}>
               {level ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: theme.colors.accent, opacity: opacity[level] }} /> : null}
-              <Text style={{ color: ink, opacity: cell.future ? 0.4 : 1, fontSize: 12, fontWeight: selected || level === 4 ? '700' : '400', fontVariant: ['tabular-nums'] }}>{cell.day}</Text>
-              {unknown ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 9, lineHeight: 10 }}>—</Text> : null}
-            </Pressable>;
+              <Text style={{ width: '100%', textAlign: 'center', color: ink, opacity: cell.future ? 0.4 : 1, fontSize: 12, lineHeight: 18, includeFontPadding: false, fontWeight: '500', fontVariant: ['tabular-nums'] }}>{cell.day}</Text>
+              {unknown ? <Text style={{ position: 'absolute', bottom: 2, left: 0, right: 0, textAlign: 'center', color: theme.colors.foregroundMuted, fontSize: 8, lineHeight: 8, includeFontPadding: false }}>—</Text> : null}
+              {selected ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, borderWidth: 2, borderColor: level === 4 ? theme.colors.accentForeground : theme.colors.accent, borderRadius: 8 }} /> : null}
+            </Pressable></View>;
           })}
         </View>)}
       </View>
