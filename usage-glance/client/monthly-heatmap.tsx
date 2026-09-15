@@ -95,7 +95,7 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
               {level ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: theme.colors.accent, opacity: opacity[level] }} /> : null}
               <Text style={{ width: '100%', textAlign: 'center', color: ink, opacity: cell.future ? 0.4 : 1, fontSize: 12, lineHeight: 18, includeFontPadding: false, fontWeight: '500', fontVariant: ['tabular-nums'] }}>{cell.day}</Text>
               {unknown ? <Text style={{ position: 'absolute', bottom: 2, left: 0, right: 0, textAlign: 'center', color: theme.colors.foregroundMuted, fontSize: 8, lineHeight: 8, includeFontPadding: false }}>—</Text> : null}
-              {selected ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, borderWidth: 2, borderColor: level === 4 ? theme.colors.accentForeground : theme.colors.accent, borderRadius: 8 }} /> : null}
+              {selected ? <View pointerEvents="none" style={{ position: 'absolute', top: 5, right: 5, width: 4, height: 4, borderRadius: 2, backgroundColor: ink }} /> : null}
             </Pressable></View>;
           })}
         </View>)}
