@@ -2,9 +2,9 @@ import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
 import { hostIdentitySchema, type HostIdentity } from './hosts';
 
-export const sourceIds = ['codex', 'claude', 'kimi', 'grok', 'antigravity'] as const;
+export const sourceIds = ['codex', 'claude', 'kimi', 'grok', 'antigravity', 'pi'] as const;
 export type SourceId = typeof sourceIds[number];
-export const sourceNames: Record<SourceId, string> = { codex: 'Codex', claude: 'Claude Code', kimi: 'Kimi', grok: 'Grok', antigravity: 'Antigravity' };
+export const sourceNames: Record<SourceId, string> = { codex: 'Codex', claude: 'Claude Code', kimi: 'Kimi', grok: 'Grok', antigravity: 'Antigravity', pi: 'Pi' };
 const providerSources = new Map<string, SourceId>([
   ...sourceIds.map(source => [source, source] as const),
   ['antigravity-acp', 'antigravity'], ['antigravity-hub', 'antigravity'],

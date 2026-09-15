@@ -48,7 +48,7 @@ export function parseCcusage(raw: unknown, range: ConsumptionRange): Consumption
   return rows;
 }
 
-export async function runCcusage(source: Exclude<SourceId, 'antigravity'>, range: ConsumptionRange, signal: AbortSignal, env: NodeJS.ProcessEnv = process.env): Promise<{ rows: ConsumptionRow[]; message: string | null }> {
+export async function runCcusage(source: Exclude<SourceId, 'antigravity' | 'pi'>, range: ConsumptionRange, signal: AbortSignal, env: NodeJS.ProcessEnv = process.env): Promise<{ rows: ConsumptionRow[]; message: string | null }> {
   const args = [source, 'daily', '--json', '--offline', '--no-cost', '--no-color', '--config', backend.config, '--since', range.since, '--until', range.until, '--timezone', range.timezone];
   const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     execFile(backend.binary, args, { signal, timeout: 60000, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024, windowsHide: true, env: { ...env, NO_COLOR: '1', FORCE_COLOR: '0' } }, (error, stdout, stderr) => {

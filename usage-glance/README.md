@@ -22,7 +22,7 @@
 
 打开侧边栏 **「Token 消耗」** 页面。分别跟随所选各主机 **Providers** 的启用开关，统计已启用来源在各 daemon 主机上保留的用量记录，也包括在终端直接运行的 CLI 会话。
 
-- 支持 **Codex、Claude Code、Kimi、Grok、Antigravity**。只有本机 Providers 中已启用的来源才会采集、显示和计入合计。例如关闭 Claude Code 后，即使磁盘上仍有其历史记录，这些记录也不会进入 Provider 或模型厂商的合计。已启用但尚未适配的 Provider（如 Pi）显示「暂不支持消耗统计」，不按零处理，也不计入已读取合计。
+- 支持 **Codex、Claude Code、Kimi、Grok、Antigravity、Pi**。只有本机 Providers 中已启用的来源才会采集、显示和计入合计。例如关闭 Claude Code 后，即使磁盘上仍有其历史记录，这些记录也不会进入 Provider 或模型厂商的合计。已启用但尚未适配的 Provider（如 Copilot）显示「暂不支持消耗统计」，不按零处理，也不计入已读取合计。
 - 时间范围：今日、近 7 天、本月、自定义（最多 366 天），按查看页面的客户端时区归日，页面显示具体时区。
 - 默认「按 Provider」分组，可切换「按模型」「按模型厂商」或「按主机」。「按模型」按记录中的完整模型名称汇总，所选主机内的同名模型跨 Provider 合并，按消耗从高到低排列；展开可查看各主机、Provider 的精确用量。不同名称、版本或别名分别保留，缺少模型名的记录显示为「未记录模型」。手机端四个分类入口分成两行。
 - 在 Claude Code 已启用时，其 GLM 记录可按厂商归到智谱，模型明细仍保留 Claude Code 来源。自定义中转的实际调用渠道无法仅凭模型名确认；未识别的模型单独展示。
@@ -51,11 +51,14 @@
 | Claude Code | `~/.claude/projects`、`~/.config/claude/projects` | ccusage，读取消息 usage 并按消息去重 |
 | Kimi | `~/.kimi-code/sessions`、`~/.kimi/sessions` | ccusage，支持当前 `usage.record` 和旧版 wire 记录，区分 turn/session 范围 |
 | Grok | `~/.grok/sessions` | ccusage，读取 `updates.jsonl` 中已完成轮次的 usage；不再叠加 `usage.json` 会话总量 |
+| Pi | `~/.pi/agent/sessions` | 插件只读解析 v1–v3 JSONL 会话中的 assistant usage 和已记录的压缩/分支摘要用量，去重分支及副本历史 |
 | Antigravity | `~/.gemini/antigravity*/conversations` 中支持的目录 | 插件只读解析 SQLite 的生成/步骤用量元数据，按响应标识去重 |
 
-来源目录可通过 daemon 的环境变量 `CODEX_HOME`、`CLAUDE_CONFIG_DIR`、`KIMI_DATA_DIR`、`GROK_HOME`、`ANTIGRAVITY_DATA_DIR` 指定。Antigravity 默认检查 `.gemini` 下的 `antigravity`、`antigravity-cli`、`antigravity-ide`、`antigravity-backup` 和 `~/.config/antigravity`；其覆盖变量支持逗号分隔的数据根目录或 `conversations` 目录。
+来源目录可通过 daemon 的环境变量 `CODEX_HOME`、`CLAUDE_CONFIG_DIR`、`KIMI_DATA_DIR`、`GROK_HOME`、`ANTIGRAVITY_DATA_DIR`、`PI_CODING_AGENT_DIR` 指定。Antigravity 默认检查 `.gemini` 下的 `antigravity`、`antigravity-cli`、`antigravity-ide`、`antigravity-backup` 和 `~/.config/antigravity`；其覆盖变量支持逗号分隔的数据根目录或 `conversations` 目录。
 
-消耗读取使用 **ccusage 20.0.20** 的离线、无费用模式。该发布版本尚未提供 Antigravity 命令，因此 Antigravity 使用独立适配器，参考来源见 [第三方声明](THIRD-PARTY-NOTICES.md)。读取不调用模型，不需要新增 API key，不读取登录凭证，也不向客户端传送聊天正文。Antigravity 的消耗统计不依赖额度补丁。
+Pi 的 `PI_CODING_AGENT_DIR` 指向 agent 数据根目录（其下为 `sessions`），支持 `~` 展开；Pi CLI 用 `--session-dir` 保存到其他位置的记录需放在该扫描目录内才能统计。Pi 输入合计包含普通输入、缓存读取和缓存写入；推理属于输出子集，缺少细分时显示「未提供」。保留所有分支中实际发生的调用，分支复制的历史只计一次；日志中已记录的压缩与分支摘要 usage 也计入，缺少模型名时归到「未记录模型」。旧版未持久化的摘要调用无法补回。该接入提供 Token 消耗统计，账号剩余额度仍以 Paseo 返回的额度数据为准。格式参考 [Pi 会话源码](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/session-manager.ts)。
+
+Codex、Claude Code、Kimi、Grok 消耗读取使用 **ccusage 20.0.20** 的离线、无费用模式。该发布版本尚未提供 Antigravity 命令，因此 Antigravity 使用独立适配器，参考来源见 [第三方声明](THIRD-PARTY-NOTICES.md)。读取不调用模型，不需要新增 API key，不读取登录凭证，也不向客户端传送聊天正文。Antigravity 的消耗统计不依赖额度补丁。
 
 这是**当前保留记录的汇总**，不是账号账单：已删除、未记录、其他系统用户不可读的调用无法补回，复制到本机的历史也会进入统计。**同一份历史复制到两台不同主机后，跨主机合计暂不能去重，会分别计入。** Grok 的中断轮次可能没有完成记录；新的上游日志格式需要继续维护适配。Antigravity 缺少调用时间时优先采用会话日期并提示，完全缺少日期的记录不计入。
 

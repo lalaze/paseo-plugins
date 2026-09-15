@@ -77,10 +77,10 @@ test('consumption follows Provider enabled switches, independent of readiness, a
     { provider: 'antigravity-acp', enabled: false, status: 'unavailable' },
     { provider: 'antigravity-hub', enabled: true, status: 'ready' },
     { provider: 'pi', enabled: true, status: 'ready' },
-  ]), ['codex', 'grok', 'antigravity']);
+  ]), ['codex', 'grok', 'antigravity', 'pi']);
   assert.deepEqual(enabledConsumptionSources([{ provider: 'antigravity-acp', enabled: true }, { provider: 'antigravity-hub', enabled: true }]), ['antigravity']);
   assert.deepEqual(enabledConsumptionSources([{ provider: 'claude', enabled: false }]), []);
-  assert.deepEqual(unsupportedConsumptionProviders([{ provider: 'pi', label: 'Pi', enabled: true }, { provider: 'copilot', enabled: false }, { provider: 'claude', enabled: false }]), [{ id: 'pi', label: 'Pi' }]);
+  assert.deepEqual(unsupportedConsumptionProviders([{ provider: 'pi', label: 'Pi', enabled: true }, { provider: 'copilot', label: 'Copilot', enabled: true }, { provider: 'claude', enabled: false }]), [{ id: 'copilot', label: 'Copilot' }]);
 });
 
 test('disabled sources are never scanned or returned, including after cached results and enable/disable changes', async () => {
@@ -125,19 +125,19 @@ test('scans are nonblocking, bounded, single-flight, replace totals, and retain 
   }, () => clock);
   const first = service.get(range, sourceIds);
   assert.equal(first.scanning, true);
-  assert.equal(first.sources.length, 5);
+  assert.equal(first.sources.length, sourceIds.length);
   const wait = async () => { for (let i = 0; i < 50 && service.get(range, sourceIds).scanning; i++) await setImmediate(); return service.get(range, sourceIds); };
   const complete = await wait();
   assert.equal(complete.scanning, false);
-  assert.equal(calls, 5); assert.equal(maximum, 2);
+  assert.equal(calls, sourceIds.length); assert.equal(maximum, 2);
   assert.equal(complete.sources[0].rows.length, 1);
   assert.equal(complete.sources[1].status, 'empty');
   const oldTime = complete.sources[0].updatedAt;
   for (let i = 0; i < 5; i++) service.get(range, sourceIds, true);
-  assert.equal(calls, 5);
+  assert.equal(calls, sourceIds.length);
   clock += 61000; service.get(range, sourceIds); await wait();
   assert.equal(service.get(range, sourceIds).sources[0].rows.length, 1);
-  assert.equal(calls, 10);
+  assert.equal(calls, sourceIds.length * 2);
   fail = true; clock += 61000; service.get(range, sourceIds); const failed = await wait();
   assert.equal(failed.sources[0].status, 'error');
   assert.equal(failed.sources[0].rows[0].input, 190);
