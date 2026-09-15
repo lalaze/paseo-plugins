@@ -143,3 +143,22 @@ test("explicit WebSocket addresses override Unix socket listeners from environme
     }
   }
 });
+
+test("adoption only adds labels and a private bridge, keeping model, permissions, history and title", async t => {
+  const h = await harness(); t.after(() => h.cleanup());
+  const gateway = new PaseoGateway({ url: "ws://127.0.0.1:1/ws" }, () => "http://127.0.0.1:1/mcp", h.directory);
+  t.after(() => gateway.close()); t.mock.method(gateway, "connect", async () => {});
+  const original = { id: "original", workspaceId: "workspace", cwd: h.directory, model: "chosen", provider: "vendor", currentModeId: "auto-review", thinkingOptionId: "high", status: "idle", title: "我的对话", labels: { custom: "keep" } };
+  t.mock.method(gateway.api.agents, "ref", () => ({ refresh: async () => ({ agent: original }) }));
+  t.mock.method(gateway, "workspaceDirectory", async () => h.directory);
+  const updates: unknown[] = [];
+  t.mock.method((gateway as any).driver, "updateAgent", async (id: string, changes: unknown) => { assert.equal(id, "original"); updates.push(changes); });
+  const profile = await gateway.takeoverProfile("original", "workspace");
+  assert.deepEqual(profile, { provider: "vendor/chosen", modeId: "auto-review", thinkingOptionId: "high" });
+  const instruction = await gateway.adoptConversation({ id: "chat", agentId: "original", workspaceId: "workspace" } as any, "private-test-token");
+  assert.ok(instruction.includes("get_conversation_status")); assert.ok(!instruction.includes("private-test-token"));
+  assert.deepEqual(updates, [{ labels: { custom: "keep", "director-conversation": "chat", "director-role": "chat", "director-transport": "bridge" } }]);
+  await assert.rejects(gateway.takeoverProfile("original", "other"), /工作区/);
+  (original.labels as Record<string, string>)["director-role"] = "worker";
+  await assert.rejects(gateway.takeoverProfile("original", "workspace"), /子会话/);
+});

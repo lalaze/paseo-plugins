@@ -113,3 +113,21 @@ test("saving setup retries the original request without opening a workspace pane
   await command.resumeSetup();
   assert.equal(state.calls.filter(c => c.name === "director.conversation.open").length, 1);
 });
+
+test("takeover keeps the selected agent through setup and forwards it to the server", async () => {
+  const command = createDirectorCommand(), { state, context } = fixture();
+  state.saved = null;
+  await command.submit({ ...context, agent: { id: "original" } });
+  state.saved = settings(); await command.resumeSetup();
+  const call = state.calls.find(c => c.name === "director.conversation.open")!;
+  assert.equal(call.input.agentId, "original"); assert.equal(call.input.fresh, false);
+});
+
+test("two tabs never coalesce takeover requests in the same workspace", async () => {
+  const command = createDirectorCommand(), { state, context } = fixture();
+  let finish!: () => void;
+  state.create = async () => { await new Promise<void>(resolve => { finish = resolve; }); return { id: "c", agentId: "a", runId: undefined }; };
+  const first = command.submit({ ...context, agent: { id: "a" } });
+  await assert.rejects(command.submit({ ...context, agent: { id: "b" } }), /仍在提交/);
+  await new Promise(resolve => setImmediate(resolve)); finish(); await first;
+});

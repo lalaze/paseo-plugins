@@ -48,6 +48,10 @@ if [ "$ensure_usage" = true ]; then
   kimi_patch="${PASEO_USAGE_GUARD_KIMI_PATCH_SCRIPT:-$root/kimi-patch.mjs}"
   node "$google_patch" apply --cli "$cli_dir"
   node "$kimi_patch" apply --cli "$cli_dir"
+  director_notifications="${PASEO_USAGE_GUARD_DIRECTOR_PATCH_SCRIPT:-$root/../director/scripts/notification-patch.mjs}"
+  if [ -f "$director_notifications" ]; then
+    node "$director_notifications" apply --cli "$cli_dir"
+  fi
 fi
 
 exec "$real_paseo" "$@"

@@ -7,6 +7,7 @@ export type Conversation = {
   state: "creating" | "ready" | "migration_pending";
   generation?: number; previousAgentIds?: string[];
   linksReady?: boolean;
+  takeover?: { instruction?: string; messages: { id: string; text: string; automatic?: boolean; state: "pending" | "sending" | "sent" }[] };
   toolsConnectedAt?: number;
   error?: string; initialGoal?: string; initialDelivered?: boolean;
   legacyAgentId?: string; noticeKey?: string; confirmation?: Confirmation;

@@ -45,8 +45,9 @@ export class Store {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       if (documentKey(this.settings() ?? null) !== documentKey(base)) throw new Error("已生效的设置在另一窗口有更新。请先重新读取设置，再应用你的修改。");
-      this.writeSettingsDraft({ revision: draftRevision, draft: null });
+      const draft = this.writeSettingsDraft({ revision: draftRevision, draft: null });
       this.saveSettings(settings); this.db.exec("COMMIT");
+      return draft;
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
   conversations(): Conversation[] { return this.db.prepare("SELECT data FROM conversations ORDER BY rowid DESC").all().map(row => JSON.parse(String(row.data))); }

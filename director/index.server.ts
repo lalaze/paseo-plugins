@@ -14,10 +14,10 @@ export default function contribute(server: PluginServerContext) {
   const root = process.env.PASEO_DIRECTOR_DATA_DIR ?? join(connection.home, "director");
   const store = new Store(join(root, "director.sqlite"));
   let mcp: DirectorMcp;
-  const gateway = new PaseoGateway(connection, () => mcp.url());
+  const gateway = new PaseoGateway(connection, () => mcp.url(), root);
   const engine = new Engine(store, gateway, new GitRepository(root));
   const conversations = new Conversations(store, engine, gateway);
-  mcp = new DirectorMcp(store, engine, conversations);
+  mcp = new DirectorMcp(store, engine, conversations, root);
   let startupError: string | null = null, stopped = false;
   let timer: ReturnType<typeof setInterval> | undefined, pumping = false;
   const pump = async () => {
@@ -39,7 +39,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(saveSettingsRpc, settings => { store.saveSettings(settings); return { saved: true }; });
   server.handle(getSettingsDraftRpc, () => store.settingsDraft());
   server.handle(writeSettingsDraftRpc, input => store.writeSettingsDraft(input));
-  server.handle(commitSettingsRpc, ({ settings, base, draftRevision }) => { store.commitSettings(settings, base, draftRevision); return { saved: true }; });
+  server.handle(commitSettingsRpc, ({ settings, base, draftRevision }) => { const draft = store.commitSettings(settings, base, draftRevision); return { saved: true, draft }; });
   server.handle(createRunRpc, async input => { await ready; if (startupError) throw new Error(startupError); return { id: await engine.create(input) }; });
   server.handle(listRunsRpc, ({ offset, limit }) => { const page = store.page(offset, limit); return { runs: page.runs.map(summarize), hasMore: page.hasMore, error: startupError }; });
   server.handle(getRunRpc, ({ id }) => store.get(id));

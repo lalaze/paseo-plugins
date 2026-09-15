@@ -26,8 +26,8 @@ export class LaunchRequests {
   clear() { this.states.clear(); this.listeners.clear(); }
 }
 
-type SubmitContext = Pick<PluginWorkspaceCommandContext, "workspace" | "rpc" | "openSettings"> & { args: string; fresh?: boolean };
-type Attempt = { directory: string; goal: string; requestId: string; pending?: Promise<void> };
+type SubmitContext = Pick<PluginWorkspaceCommandContext, "workspace" | "rpc" | "openSettings"> & { args: string; fresh?: boolean; agent?: { id: string } };
+type Attempt = { agentId?: string; fresh?: boolean; directory: string; goal: string; requestId: string; pending?: Promise<void> };
 
 export function createDirectorCommand() {
   const requests = new LaunchRequests();
@@ -42,17 +42,19 @@ export function createDirectorCommand() {
     if (!directory.trim()) throw new Error("请先打开一个项目工作区，再使用 /director 下发任务。");
     if (disposed) throw new Error("AI 协作已重新加载，请重新提交命令。");
     const previous = attempts.get(workspaceId);
+    const agentId = context.agent?.id;
+    const same = previous?.goal === goal && previous.directory === directory && previous.agentId === agentId && previous.fresh === context.fresh;
     // Each workspace has one creation in flight. Keep the request ID on failure
     // so a retry reconciles a committed run if its RPC response was lost.
     if (previous?.pending) {
-      if (previous.goal === goal && previous.directory === directory) return previous.pending;
+      if (same) return previous.pending;
       throw new Error("上一条协作任务仍在提交，请稍后再下发新任务。");
     }
-    const attempt = previous?.goal === goal && previous.directory === directory ? previous
-      : { directory, goal, requestId: `composer-${Date.now()}-${Math.random().toString(36).slice(2)}` };
+    const attempt = same ? previous!
+      : { directory, goal, agentId, fresh: context.fresh, requestId: `composer-${Date.now()}-${Math.random().toString(36).slice(2)}` };
     attempts.set(workspaceId, attempt);
     const publish = (value: Omit<LaunchRequest, "goal" | "requestId">) => {
-      if (!disposed) requests.set(workspaceId, { ...value, goal, fresh: context.fresh || !!goal, requestId: attempt.requestId });
+      if (!disposed) requests.set(workspaceId, { ...value, goal, fresh: agentId ? false : context.fresh || !!goal, requestId: attempt.requestId });
     };
     const pending = Promise.resolve().then(async () => {
       publish({ status: "submitting" });
@@ -61,14 +63,14 @@ export function createDirectorCommand() {
         const saved = await context.rpc(getSettingsRpc, {});
         if (saved.error) throw new Error(saved.error);
         if (!saved.settings) {
-          publish({ status: "setup", message: "请先保存设计、执行和审核 AI 的安排。任务描述已保留，保存后创建主对话标签。" });
+          publish({ status: "setup", message: "请先保存设计、执行和审核 AI 的安排。任务描述已保留，保存后继续启用协作。" });
           setup.set(workspaceId, context);
           context.openSettings("director-settings");
           return;
         }
         if (disposed) throw new Error("AI 协作已重新加载，请重新提交命令。");
         // The server loads the saved host configuration, just like a new task.
-        const result = await context.rpc(openConversationRpc, { requestId: attempt.requestId, goal: goal || undefined, workspaceId, fresh: context.fresh || !!goal });
+        const result = await context.rpc(openConversationRpc, { requestId: attempt.requestId, goal: goal || undefined, workspaceId, agentId, fresh: agentId ? false : context.fresh || !!goal });
         publish({ status: "created", conversationId: result.id, agentId: result.agentId, runId: result.runId });
         attempts.delete(workspaceId);
         setup.delete(workspaceId);

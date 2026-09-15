@@ -17,6 +17,11 @@ class ChatAgents extends FakeAgents implements ConversationGateway {
   failCreate = false;
   override async workspaceDirectory() { return this.directory; }
   async workspaceForDirectory() { return "workspace"; }
+  async takeoverProfile(agentId: string, workspaceId: string) {
+    if (workspaceId !== "workspace" || !this.histories.has(agentId)) throw new Error("当前对话不属于此工作区");
+    return { provider: "current/model", modeId: "auto-review", thinkingOptionId: "high" };
+  }
+  async adoptConversation(c: Conversation) { await this.takeoverProfile(c.agentId!, c.workspaceId); return "bridge instructions"; }
   async createConversation(c: Conversation) {
     if (this.failCreate) throw new Error("MCP 接入不可用");
     const id = `main-${c.id}-${c.generation ?? 0}`; this.mains.set(`${c.id}:${c.generation ?? 0}`, id); this.histories.set(id, []);
@@ -237,4 +242,90 @@ test("revision keeps retrying an asynchronous worker stop and discards its late 
   const after=h.chats.summary(c.id).run!; assert.equal(after.goal,"实现功能并增加登录");
   assert.equal(after.phase,"planning");
   await assert.rejects(h.engine.submit(after.id,op.taskId!,op.id,result),/已经结束/);
+});
+
+test("takeover preserves history and agent identity, leaves worker bindings intact and ignores old instructions", async t => {
+  const h = await fixture(t);
+  h.gateway.histories.set("existing", [{ type: "user_message", messageId: "old", text: "实现旧任务" }]); h.gateway.idle("existing");
+  const original = h.store.settings()!; original.workerProfileId = original.directorProfileId; h.store.saveSettings(original);
+  const c = await h.chats.open({ requestId: "take", workspaceId: "workspace", agentId: "existing" });
+  assert.equal(c.agentId, "existing"); assert.equal(h.gateway.mains.size, 0); assert.equal(h.store.all().length, 0);
+  assert.equal(h.gateway.histories.get("existing")![0].type, "user_message");
+  const snapshot = h.store.conversation(c.id).settings;
+  assert.equal(snapshot.profiles.find(p => p.id === snapshot.directorProfileId)!.provider, "current/model");
+  assert.equal(snapshot.workerProfileId, original.workerProfileId);
+  assert.equal(snapshot.profiles.find(p => p.id === snapshot.workerProfileId)!.provider, "vendor-a/model-a");
+  assert.deepEqual(h.store.settings(), original);
+  assert.equal((await h.chats.status(c.id)).latestUserMessage, undefined);
+  await assert.rejects(h.chats.start(c.id, { sourceMessageId: "old", goal: "实现旧任务" }), /真实用户/);
+  await h.chats.open({ requestId: "again", workspaceId: "workspace", agentId: "existing" });
+  assert.equal(h.gateway.sent.length, 1); assert.equal(h.store.conversations().length, 1);
+  h.gateway.idle("existing"); h.gateway.user("existing", "new", "实现新任务");
+  await h.chats.start(c.id, { sourceMessageId: "new", goal: "实现新任务" });
+  assert.equal(h.store.all()[0].chat!.mainAgentId, "existing");
+});
+
+test("takeover waits for the current turn, survives reload and delivers each command once", async t => {
+  const h = await fixture(t);
+  h.gateway.histories.set("existing", []);
+  h.gateway.states.set("existing", { status: "running", seen: false, output: "" });
+  const input = { requestId: "take", workspaceId: "workspace", agentId: "existing", goal: "实现功能" };
+  const c = await h.chats.open(input);
+  assert.equal(h.gateway.sent.length, 0); assert.equal(h.gateway.stopped.length, 0);
+  await h.chats.close();
+  const restarted = new Conversations(h.store, h.engine, h.gateway); t.after(() => restarted.close());
+  h.gateway.idle("existing"); await restarted.tick();
+  assert.equal(h.gateway.sent.length, 1); assert.match(h.gateway.sent[0].prompt, /^实现功能/);
+  await restarted.open(input); assert.equal(h.gateway.sent.length, 1);
+  assert.equal((await restarted.status(c.id)).latestUserMessage!.id, h.gateway.sent[0].opId);
+  h.gateway.idle("existing");
+  await restarted.open({ ...input, requestId: "second", goal: "增加搜索" });
+  assert.equal(h.gateway.sent.length, 2); assert.equal(h.store.conversations().length, 1);
+  h.gateway.histories.delete("existing"); h.gateway.states.delete("existing");
+  await assert.rejects(restarted.resync(c.id), /原对话已不可用/);
+  assert.equal(h.gateway.mains.size, 0);
+});
+
+test("takeover validates ownership before persisting anything", async t => {
+  const h = await fixture(t);
+  await assert.rejects(h.chats.open({ requestId: "invalid", workspaceId: "other", agentId: "unknown" }), /工作区/);
+  assert.equal(h.store.conversations().length, 0);
+});
+
+test("ambiguous takeover delivery requires resync and never creates a replacement agent", async t => {
+  const h = await fixture(t);
+  h.gateway.histories.set("existing", []); h.gateway.idle("existing");
+  const send = h.gateway.send.bind(h.gateway); let fail = true;
+  t.mock.method(h.gateway, "send", async (...args: Parameters<typeof send>) => { if (fail) throw new Error("lost connection"); await send(...args); });
+  await assert.rejects(h.chats.open({ requestId: "take", workspaceId: "workspace", agentId: "existing" }), /lost connection/);
+  const c = h.store.conversations()[0];
+  await h.chats.tick(); assert.match(h.chats.summary(c.id).error!, /无法确认/);
+  assert.equal(h.gateway.sent.length, 0); assert.equal(h.gateway.mains.size, 0);
+  fail = false; await h.chats.resync(c.id);
+  assert.equal(h.gateway.sent.length, 1); assert.equal(h.gateway.sent[0].opId, c.takeover!.messages[0].id);
+  h.gateway.idle("existing"); await h.chats.tick();
+  assert.match(h.chats.summary(c.id).error!, /协作工具/);
+  await h.chats.status(c.id); assert.equal(h.chats.summary(c.id).error, undefined);
+});
+
+test("workers receive the persisted approval made in an adopted main conversation", async t => {
+  const { buildPrompt } = await import("../server/prompts");
+  const h = await fixture(t), saved = settings(); saved.requirePlanApproval = true; h.store.saveSettings(saved);
+  h.gateway.histories.set("existing", []); h.gateway.idle("existing");
+  const c = await h.chats.open({ requestId: "take", workspaceId: "workspace", agentId: "existing", goal: "实现功能" });
+  const status = await h.chats.status(c.id);
+  await h.chats.start(c.id, { sourceMessageId: status.latestUserMessage!.id, goal: "实现功能" });
+  const runId = h.chats.summary(c.id).runId!;
+  await h.engine.tick();
+  const op = h.store.get(runId).operations.find(o => o.kind === "plan")!;
+  await h.chats.submit(c.id, op.id, plan); h.gateway.idle("existing"); await h.engine.tick(); await h.chats.tick();
+  const approval = h.chats.summary(c.id).confirmation!;
+  h.gateway.user("existing", "approval", "批准方案");
+  await h.chats.control(c.id, { action: "approve_plan", sourceMessageId: "approval", confirmationKey: approval.key });
+  const run = h.store.get(runId);
+  const prompt = buildPrompt(run, "execute", "test-operation", run.tasks[0].spec.id);
+  const start = prompt.indexOf("\n\n") + 2, end = prompt.indexOf("\n\n本轮 operationId=");
+  const evidence = JSON.parse(prompt.slice(start, end)).workflowEvidence;
+  assert.equal(evidence.planApproval.approved, true); assert.equal(evidence.planApproval.required, true);
+  assert.equal(evidence.planApproval.userApprovedAt, new Date(run.planApprovedAt!).toISOString());
 });

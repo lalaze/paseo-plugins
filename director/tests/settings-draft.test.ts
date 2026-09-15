@@ -78,3 +78,27 @@ test("step navigation is not an unsaved edit and document comparison ignores key
   assert.equal(formChanged(draft().form, settings()), true);
   assert.equal(documentKey({ a: 1, b: { x: 2, y: 3 } }), documentKey({ b: { y: 3, x: 2 }, a: 1 }));
 });
+
+test("save, switch tabs, edit and save again use the committed revision and baseline", async t => {
+  const h = await harness(); t.after(() => h.cleanup()); h.store.saveSettings(settings());
+  const writer = new DraftWriter(0, async input => h.store.writeSettingsDraft(input));
+  let base = settings();
+  writer.enqueue(draft("first save"));
+  const first = { ...base, rolePrompts: { execute: "first save" } };
+  await writer.commit(async revision => ({ draft: h.store.commitSettings(first, base, revision) }));
+  base = first;
+  assert.equal(writer.revision, h.store.settingsDraft().revision);
+  assert.equal(h.store.settingsDraft().draft, null);
+  const nextTab = { ...settingsForm(base), step: 2 };
+  assert.equal(formChanged(nextTab, base), false);
+  const nextForm = { ...nextTab, rolePrompts: { ...nextTab.rolePrompts, review: "second save" } };
+  writer.enqueue({ version: 1, base, form: nextForm });
+  const second = { ...base, rolePrompts: nextForm.rolePrompts };
+  await writer.commit(async revision => ({ draft: h.store.commitSettings(second, base, revision) }));
+  assert.deepEqual(h.store.settings(), second);
+  assert.equal(h.store.settingsDraft().draft, null);
+  assert.equal(writer.revision, 4);
+  h.store.writeSettingsDraft({ revision: writer.revision, draft: { version: 1, base: second, form: nextForm } });
+  await assert.rejects(writer.commit(async revision => ({ draft: h.store.commitSettings(second, second, revision) })), /另一窗口/);
+  assert.equal(writer.revision, 4);
+});

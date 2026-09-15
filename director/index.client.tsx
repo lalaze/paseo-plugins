@@ -20,6 +20,13 @@ export default function contribute(client: PluginClientContext) {
     return id?.startsWith("chat-notice:") && item.text.startsWith(`[paseo-director-chat:${id}]`)
       ? { items: [{ type: "plugin", kind: "director-chat-notice", version: 1, data: { raw: item.text } }] } : undefined;
   } });
+  client.addTimelineTransformer({ id: "director-takeover-messages", query: { itemType: "user_message" }, transform: ({ item }) => {
+    const id = item.clientMessageId ?? item.messageId;
+    const boundary = item.text.indexOf("\n\n[paseo-director-takeover]\n");
+    if (!id?.startsWith("chat-command:") || boundary < 0) return;
+    const text = item.text.slice(0, boundary);
+    return { items: [{ type: "plugin", kind: "director-chat-notice", version: 1, data: { raw: item.text, title: "协作请求", summary: text.startsWith("用户已在当前对话启用协作。") ? "在当前对话启用协作" : text } }] };
+  } });
   client.addCommandCenterItem({ id: "director-settings", title: "协作设置", icon: "Settings", context: "global", onSelect: () => client.openSettings("director-settings") });
   client.addTimelineTransformer({ id: "director-prompts", query: { itemType: "user_message" }, transform: ({ item }) => {
     const data = readDirectorPrompt(item.text);
@@ -33,6 +40,7 @@ export default function contribute(client: PluginClientContext) {
   client.addTimelineRenderer({ kind: "director-reply", version: 1, schema: ReplyCardSchema, Component: DirectorReplyCard });
   client.addSurface("director", Settings);
   client.addCommandCenterItem({ id: "open-director", title: "新建协作对话", icon: "Workflow", context: "workspace", onSelect: context => command.submit({ ...context, args: "", fresh: true }) });
-  client.addSlashCommand({ name: "director", description: "用原生主对话协作；留空恢复当前协作会话", argumentHint: "任务描述", context: "workspace", onSubmit: command.submit });
+  client.addCommandCenterItem({ id: "takeover-director", title: "在当前对话启用协作", icon: "Workflow", context: "agent", onSelect: context => command.submit({ ...context, args: "" }) });
+  client.addSlashCommand({ name: "director", description: "在当前对话启用协作，保留模型和聊天记录", argumentHint: "任务描述（可选）", context: "agent", onSubmit: command.submit });
   return () => { cleanupControls(); command.dispose(); };
 }

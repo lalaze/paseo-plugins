@@ -24,5 +24,12 @@ export class DraftWriter {
     }).finally(() => { this.running = undefined; this.notify(); });
     return this.running;
   }
+  async commit<T extends { draft: DraftState }>(save: (revision: number) => Promise<T>): Promise<T> {
+    await this.flush();
+    const result = await save(this.revision);
+    this.revision = result.draft.revision;
+    this.notify();
+    return result;
+  }
   async flush() { this.error = null; this.notify(); await this.start(); }
 }

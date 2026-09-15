@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 // 0.8.0 has no public handle.cancel(). Keep this single low-level dependency here.
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -12,6 +12,7 @@ import type { Run, Operation, Profile } from "../shared/schema";
 import { CHAT_PROMPT, ROLE_PROMPT } from "./prompts";
 import { operationRole, operationLabel } from "../shared/schema";
 import { realpath } from "node:fs/promises";
+import { bridgeInstructions, writeConversationBridge } from "./bridge";
 
 export function connectionConfig(env: NodeJS.ProcessEnv = process.env) {
   const home = env.PASEO_HOME ?? join(homedir(), ".paseo");
@@ -53,7 +54,7 @@ export class PaseoGateway implements AgentGateway {
   private driver: DaemonClient;
   private connectPromise?: Promise<void>;
   private isClosed = false;
-  constructor(config: { url: string; password?: string }, private mcpUrl: () => string) {
+  constructor(config: { url: string; password?: string }, private mcpUrl: () => string, private bridgeRoot = join(homedir(), ".paseo", "director")) {
     this.driver = new DaemonClient({ ...config, clientId: `director-${randomUUID()}`, clientType: "cli", appVersion: "0.8.0", connectTimeoutMs: 8000, reconnect: { enabled: true }, logger: { debug() {}, info() {}, warn() {}, error() {} } });
     this.api = createPaseoApi(this.driver);
   }
@@ -136,7 +137,30 @@ export class PaseoGateway implements AgentGateway {
     if (snapshot?.agent.labels?.["director-conversation"] && prompt.startsWith("[paseo-director:")) {
       prompt += "\n这是主对话中的后台操作。通过 submit_operation 提交（operationId 和 payload），不要在聊天中输出 JSON。可先调用 get_conversation_status 核对最新状态。";
     }
+    if (snapshot?.agent.labels?.["director-transport"] === "bridge") {
+      const id = snapshot.agent.labels["director-conversation"];
+      prompt += "\n" + bridgeInstructions(join(this.bridgeRoot, "bridges", `${createHash("sha256").update(id).digest("hex")}.mjs`));
+    }
     await agent.send(prompt, { messageId: operationId });
+  }
+  async takeoverProfile(agentId: string, workspaceId: string) {
+    await this.connect();
+    const result = await this.api.agents.ref(agentId).refresh();
+    const agent = result?.agent;
+    if (!agent || agent.archivedAt || agent.status === "closed") throw new Error("当前对话已不可用，无法原地接管");
+    if (agent.workspaceId !== workspaceId || await realpath(agent.cwd) !== await realpath(await this.workspaceDirectory(workspaceId))) throw new Error("当前对话不属于此工作区");
+    if (agent.labels["director-run"] || (agent.labels["director-role"] && agent.labels["director-role"] !== "chat")) throw new Error("执行或审核子会话不能接管为主对话");
+    if (!agent.model) throw new Error("请先在当前对话选择模型，再启用协作");
+    return { provider: `${agent.provider}/${agent.model}`, modeId: agent.currentModeId ?? undefined, thinkingOptionId: agent.thinkingOptionId ?? undefined };
+  }
+  async adoptConversation(c: Conversation, token: string) {
+    await this.takeoverProfile(c.agentId!, c.workspaceId);
+    const snapshot = (await this.api.agents.ref(c.agentId!).refresh())!.agent;
+    const owner = snapshot.labels["director-conversation"];
+    if (owner && owner !== c.id) throw new Error("当前对话已绑定另一协作会话");
+    const path = await writeConversationBridge(this.bridgeRoot, c.id, token);
+    await this.driver.updateAgent(c.agentId!, { labels: { ...snapshot.labels, "director-conversation": c.id, "director-role": "chat", "director-transport": "bridge" } });
+    return bridgeInstructions(path) + "\n" + CHAT_PROMPT.replace("检查 MCP 接入", "检查协作插件与命令执行权限");
   }
   async createConversation(conversation: Conversation, token: string) {
     await this.connect();

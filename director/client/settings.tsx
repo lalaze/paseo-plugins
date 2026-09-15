@@ -30,9 +30,11 @@ export function SettingsEditor(props: EditorProps) {
   return <SettingsFormEditor key={query.dataUpdatedAt} {...props} {...query.data} onReload={async () => { await query.refetch(); }} />;
 }
 
-function SettingsFormEditor({ initial, seed, cwd, hostId, theme, compact = false, onSaved, onSavingChange, onReload }: EditorProps & { seed: DraftState; onReload: () => Promise<void> }) {
+function SettingsFormEditor({ initial: loadedInitial, seed, cwd, hostId, theme, compact = false, onSaved, onSavingChange, onReload }: EditorProps & { seed: DraftState; onReload: () => Promise<void> }) {
   const paseo = usePaseo();
-  const [base] = useState(seed.draft ? seed.draft.base : initial);
+  const [initial, setInitial] = useState(loadedInitial);
+  const [base, setBase] = useState(seed.draft ? seed.draft.base : initial);
+  const [restoredDraft, setRestoredDraft] = useState(!!seed.draft);
   const [form, setForm] = useState(() => seed.draft?.form ?? settingsForm(initial));
   const lockedRef = useRef(false);
   function field<K extends keyof SettingsForm>(key: K): [SettingsForm[K], Dispatch<SetStateAction<SettingsForm[K]>>] {
@@ -70,8 +72,16 @@ function SettingsFormEditor({ initial, seed, cwd, hostId, theme, compact = false
   const catalog = useQuery({ queryKey: ["director", hostId, "providers", cwd], queryFn: () => paseo.providers.waitForReady({ cwd: cwd || undefined, timeoutMs: 12000 }), staleTime: 30000 });
   const save = useRpc(commitSettingsRpc);
   const mutation = useMutation({ mutationFn: async (settings: Settings) => {
-    await writer.flush(); return save({ settings, base, draftRevision: writer.revision });
-  }, onSuccess: (_, value) => onSaved(value) });
+    return writer.commit(draftRevision => save({ settings, base, draftRevision }));
+  }, onSuccess: (_, value) => {
+    // The commit clears the draft and advances its revision. Start a clean editing
+    // baseline while retaining the tab the user saved from.
+    const nextForm = { ...settingsForm(value), step: form.step };
+    previousForm.current = documentKey(nextForm);
+    edited.current = false;
+    setInitial(value); setBase(value); setForm(nextForm); setRestoredDraft(false);
+    onSaved(value);
+  } });
   const locked = mutation.isPending || resetting;
   lockedRef.current = locked;
   useEffect(() => { onSavingChange?.(locked); return () => onSavingChange?.(false); }, [locked, onSavingChange]);
@@ -153,7 +163,7 @@ function SettingsFormEditor({ initial, seed, cwd, hostId, theme, compact = false
     <View style={{ gap: 6 }}>
       <Text style={{ color: theme.colors.foreground, fontSize: 22, fontWeight: "700" }}>安排你的 AI 团队</Text>
       <Label theme={theme} muted>随时切换角色编辑；保存后用于当前主机新建的协作对话。</Label>
-      {seed.draft && <Label theme={theme}>已恢复上次未保存的草稿。</Label>}
+      {restoredDraft && <Label theme={theme}>已恢复上次未保存的草稿。</Label>}
       {stale && <ErrorText theme={theme} error="已生效的设置有更新。请放弃旧草稿并重新读取设置。" />}
     </View>
     <View accessibilityRole="tablist" style={{ flexDirection: "row", gap: 8 }}>
@@ -317,7 +327,7 @@ function SettingsFormEditor({ initial, seed, cwd, hostId, theme, compact = false
         <Button theme={theme} label={mutation.isPending ? "保存中…" : "保存设置"} disabled={locked || stale} onPress={saveAll} />
         {step < 2 && <Button theme={theme} secondary label="下一步" disabled={locked} onPress={next} />}
         {step > 0 && <Button theme={theme} secondary label="上一步" disabled={locked} onPress={() => move(step - 1)} />}
-        {(dirty || seed.draft) && <Button theme={theme} secondary label="放弃草稿" disabled={locked} onPress={() => setConfirmReset(true)} />}
+        {(dirty || restoredDraft) && <Button theme={theme} secondary label="放弃草稿" disabled={locked} onPress={() => setConfirmReset(true)} />}
         {!!writer.error && <Button theme={theme} secondary label="重试保留草稿" disabled={locked} onPress={() => { void writer.flush().catch(() => {}); }} />}
         {(writer.error || mutation.error) && <Button theme={theme} secondary label="放弃本页修改，读取最新草稿" disabled={locked} onPress={() => { setResetting(true); void onReload().finally(() => setResetting(false)); }} />}
       </View>}
