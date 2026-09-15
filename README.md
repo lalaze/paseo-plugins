@@ -103,3 +103,15 @@ paseo reload
 - `paseo-sub-agnet` → [Director](director/README.md)
 - `paseo-agy-quote` → [额度速览](usage-glance/README.md)、[额度补丁](agy-quota/README.md)、[Hub ACP](antigravity-hub/README.md)
 - `paseo-file-upload` → [文件传输](file-upload/README.md)
+
+## 手机端运行时回归检查
+
+Director 和 Usage Glance 的客户端状态使用工厂函数。Hermes 动态执行 esbuild 产物时，匿名类的实例化可能报 `Cannot read property 'prototype' of undefined`，因此 Node 测试通过后还需要验证动态加载。
+
+安装两个插件的开发依赖，并准备 [官方 Hermes CLI](https://github.com/facebook/hermes/releases/tag/v0.13.0) 后，在仓库根目录运行：
+
+```bash
+HERMES_BIN=/path/to/hermes node scripts/check-mobile-runtime.mjs
+```
+
+该检查通过 `eval` 加载编译产物，验证协作请求、草稿写入和多主机注册状态的创建与清理。RPC、Schema 和查询取消检测使用桩实现；手机 UI 仍需真机验证。

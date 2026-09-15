@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DraftWriter } from "../client/draft-writer";
+import { createDraftWriter } from "../client/draft-writer";
 import { documentKey, formChanged, settingsForm, type SettingsDraft } from "../shared/settings-draft";
 import { harness, settings } from "./helpers";
 
@@ -56,7 +56,7 @@ test("draft writer serializes and coalesces edits before a settings commit", asy
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const calls: { revision: number; draft: SettingsDraft | null }[] = [];
-  const writer = new DraftWriter(3, async input => { calls.push(input); if (calls.length === 1) await gate; return { ...input, revision: input.revision + 1 }; });
+  const writer = createDraftWriter(3, async input => { calls.push(input); if (calls.length === 1) await gate; return { ...input, revision: input.revision + 1 }; });
   writer.enqueue(draft("first")); await Promise.resolve();
   writer.enqueue(draft("middle")); writer.enqueue(draft("latest"));
   const flushed = writer.flush(); release(); await flushed;
@@ -67,7 +67,7 @@ test("draft writer serializes and coalesces edits before a settings commit", asy
 
 test("failed draft writes retain the most recent edit for an explicit retry", async () => {
   let attempts = 0;
-  const writer = new DraftWriter(0, async input => { if (++attempts === 1) throw new Error("offline"); return { ...input, revision: input.revision + 1 }; });
+  const writer = createDraftWriter(0, async input => { if (++attempts === 1) throw new Error("offline"); return { ...input, revision: input.revision + 1 }; });
   writer.enqueue(draft("first")); await assert.rejects(writer.flush(), /offline/);
   writer.enqueue(draft("latest")); assert.equal(attempts, 1);
   await writer.flush(); assert.equal(writer.revision, 1); assert.equal(writer.error, null); assert.equal(writer.busy, false);
@@ -81,7 +81,7 @@ test("step navigation is not an unsaved edit and document comparison ignores key
 
 test("save, switch tabs, edit and save again use the committed revision and baseline", async t => {
   const h = await harness(); t.after(() => h.cleanup()); h.store.saveSettings(settings());
-  const writer = new DraftWriter(0, async input => h.store.writeSettingsDraft(input));
+  const writer = createDraftWriter(0, async input => h.store.writeSettingsDraft(input));
   let base = settings();
   writer.enqueue(draft("first save"));
   const first = { ...base, rolePrompts: { execute: "first save" } };

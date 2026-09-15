@@ -5,7 +5,7 @@ import { QueryObserver } from '@tanstack/react-query';
 import type { PaseoProviderSnapshotUpdate } from '@getpaseo/client';
 import { createConsumptionQuery } from '../client/consumption-query.ts';
 import { createUsageQuery } from '../client/query.ts';
-import { HostRegistry } from '../client/hosts.ts';
+import { createHostRegistry, type HostRegistry } from '../client/hosts.ts';
 import { combineHostConsumption, createMultiHostConsumption } from '../client/multi-host-consumption.ts';
 import { emptyTokens, groupConsumption, totalTokens, type ConsumptionReport, type ConsumptionRange } from '../shared/consumption.ts';
 import { buildMonthHeatmap } from '../shared/heatmap.ts';
@@ -27,7 +27,7 @@ function fixture(registry: HostRegistry, id: string, rpc = async (_range: Consum
 }
 
 test('combined totals preserve host/model identities and match the monthly heatmap', () => {
-  const registry = new HostRegistry(), linux = fixture(registry, 'code'), mac = fixture(registry, 'Mac');
+  const registry = createHostRegistry(), linux = fixture(registry, 'code'), mac = fixture(registry, 'Mac');
   try {
     linux.seed(sample(100)); mac.seed(sample(200));
     const report = combineHostConsumption(registry.getSnapshot(), range), groups = groupConsumption(report.sources, 'source');
@@ -42,7 +42,7 @@ test('combined totals preserve host/model identities and match the monthly heatm
 });
 
 test('slow hosts do not block fast results; subsequent reads reuse each host cache', async () => {
-  const registry = new HostRegistry(); let finish!: (report: ConsumptionReport) => void;
+  const registry = createHostRegistry(); let finish!: (report: ConsumptionReport) => void;
   const linux = fixture(registry, 'code'), mac = fixture(registry, 'Mac', () => new Promise(resolve => { finish = resolve; }));
   const query = createMultiHostConsumption(registry, null); query.mount();
   try {
@@ -57,7 +57,7 @@ test('slow hosts do not block fast results; subsequent reads reuse each host cac
 });
 
 test('disconnection retains only matching cached ranges and ignores late refreshes', async () => {
-  const registry = new HostRegistry(); let finish!: (report: ConsumptionReport) => void;
+  const registry = createHostRegistry(); let finish!: (report: ConsumptionReport) => void;
   const mac = fixture(registry, 'Mac', () => new Promise(resolve => { finish = resolve; })); mac.seed(sample(200));
   const pending = registry.ensure('Mac', range, true); await settle(); mac.dispose(); finish(sample(999)); await pending;
   const report = combineHostConsumption(registry.getSnapshot(), range);
@@ -66,7 +66,7 @@ test('disconnection retains only matching cached ranges and ignores late refresh
 });
 
 test('Provider changes prune every cached range on one host without hiding another host', async () => {
-  const registry = new HostRegistry(), linux = fixture(registry, 'code'), mac = fixture(registry, 'Mac');
+  const registry = createHostRegistry(), linux = fixture(registry, 'code'), mac = fixture(registry, 'Mac');
   try {
     for (const dateRange of [range, other]) { linux.seed(sample(100, dateRange, 'claude')); mac.seed(sample(200, dateRange, 'claude')); }
     linux.providerUpdate({ entries: [{ provider: 'claude', enabled: false, status: 'ready' }], generatedAt: '2026-09-15T12:00:00Z' }); await settle();
@@ -78,7 +78,7 @@ test('Provider changes prune every cached range on one host without hiding anoth
 });
 
 test('newly loaded hosts join an open aggregate without waiting for its polling interval', async () => {
-  const registry = new HostRegistry(), linux = fixture(registry, 'code'), query = createMultiHostConsumption(registry, null); query.mount();
+  const registry = createHostRegistry(), linux = fixture(registry, 'code'), query = createMultiHostConsumption(registry, null); query.mount();
   const observer = new QueryObserver(query.client, query.options(range)), unsubscribe = observer.subscribe(() => {}); let mac: ReturnType<typeof fixture> | undefined;
   try {
     await settle(); mac = fixture(registry, 'Mac', async () => sample(200)); await settle();
@@ -88,7 +88,7 @@ test('newly loaded hosts join an open aggregate without waiting for its polling 
 });
 
 test('same daemon registers once; old cleanup cannot disconnect or rename its replacement', () => {
-  const registry = new HostRegistry(), old = fixture(registry, 'Mac'); old.seed(sample(100)); const current = fixture(registry, 'Mac');
+  const registry = createHostRegistry(), old = fixture(registry, 'Mac'); old.seed(sample(100)); const current = fixture(registry, 'Mac');
   try {
     current.registration.identify({ id: 'Mac', label: '用户命名的 Mac' }, true); current.registration.identify({ id: 'Mac', label: 'machine.local' });
     old.dispose(); current.seed(sample(300)); assert.equal(registry.getSnapshot().length, 1); assert.equal(registry.getSnapshot()[0].online, true);
@@ -97,7 +97,7 @@ test('same daemon registers once; old cleanup cannot disconnect or rename its re
 });
 
 test('changing host scope keeps an open query subscribed to later cache and Provider updates', async () => {
-  const registry = new HostRegistry(), linux = fixture(registry, 'code'), mac = fixture(registry, 'Mac');
+  const registry = createHostRegistry(), linux = fixture(registry, 'code'), mac = fixture(registry, 'Mac');
   linux.seed(sample(100)); mac.seed(sample(200));
   const query = createMultiHostConsumption(registry, null); query.mount();
   const observer = new QueryObserver(query.client, query.options(range)), unsubscribe = observer.subscribe(() => {});
@@ -114,7 +114,7 @@ test('changing host scope keeps an open query subscribed to later cache and Prov
 });
 
 test('local quota updates do not change the cross-host consumption snapshot', () => {
-  const registry = new HostRegistry(), linux = fixture(registry, 'code'), mac = fixture(registry, 'Mac');
+  const registry = createHostRegistry(), linux = fixture(registry, 'code'), mac = fixture(registry, 'Mac');
   const quota = (remainingPct: number) => ({ fetchedAt: '2026-09-15T12:00:00Z', providers: [{ providerId: 'codex', status: 'available', displayName: 'Codex', windows: [{ id: 'week', label: 'Week', remainingPct }] }] });
   const snapshot = registry.getSnapshot();
   try {
@@ -125,13 +125,13 @@ test('local quota updates do not change the cross-host consumption snapshot', ()
 });
 
 test('discarded local caches cannot leave disabled source data in the shared registry', () => {
-  const registry = new HostRegistry(), linux = fixture(registry, 'code');
+  const registry = createHostRegistry(), linux = fixture(registry, 'code');
   try { linux.seed(sample(100)); linux.query.client.removeQueries({ queryKey: ['token-consumption'] }); assert.equal(registry.get('code')!.reports.size, 0); }
   finally { linux.dispose(); }
 });
 
 test('an initial scan or failed host stays unknown until a source returns a reading', () => {
-  const registry = new HostRegistry(), mac = fixture(registry, 'Mac');
+  const registry = createHostRegistry(), mac = fixture(registry, 'Mac');
   try {
     const initial = sample(0); initial.scanning = true; initial.sources[0] = { ...initial.sources[0], status: 'loading', updatedAt: null, rows: [] };
     mac.seed(initial);
@@ -146,7 +146,7 @@ test('an initial scan or failed host stays unknown until a source returns a read
 });
 
 test('a successful retry clears the host error even when consumption has not changed', async () => {
-  const registry = new HostRegistry(); let fails = true;
+  const registry = createHostRegistry(); let fails = true;
   const mac = fixture(registry, 'Mac', async () => { if (fails) throw new Error('offline'); return sample(100); });
   try {
     mac.seed(sample(100)); await registry.ensure('Mac', range, true);

@@ -14,23 +14,25 @@ export type LaunchRequest = {
 
 // A separate store per plugin contribution keeps different Paseo hosts apart.
 // Keep pending setup and retry state isolated to this host.
-export class LaunchRequests {
-  private states = new Map<string, LaunchRequest>();
-  private listeners = new Set<() => void>();
-  get = (workspaceId: string) => this.states.get(workspaceId) ?? null;
-  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
-  set(workspaceId: string, value: LaunchRequest) {
-    this.states.set(workspaceId, value);
-    this.listeners.forEach(listener => listener());
+// Use a closure: bundled anonymous classes fail when instantiated by Hermes eval.
+export function createLaunchRequests() {
+  const states = new Map<string, LaunchRequest>();
+  const listeners = new Set<() => void>();
+  const get = (workspaceId: string) => states.get(workspaceId) ?? null;
+  const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
+  function set(workspaceId: string, value: LaunchRequest) {
+    states.set(workspaceId, value);
+    listeners.forEach(listener => listener());
   }
-  clear() { this.states.clear(); this.listeners.clear(); }
+  function clear() { states.clear(); listeners.clear(); }
+  return { get, subscribe, set, clear };
 }
 
 type SubmitContext = Pick<PluginWorkspaceCommandContext, "workspace" | "rpc" | "openSettings"> & { args: string; fresh?: boolean; agent?: { id: string } };
 type Attempt = { agentId?: string; fresh?: boolean; directory: string; goal: string; requestId: string; pending?: Promise<void> };
 
 export function createDirectorCommand() {
-  const requests = new LaunchRequests();
+  const requests = createLaunchRequests();
   const attempts = new Map<string, Attempt>();
   const setup = new Map<string, SubmitContext>();
   let disposed = false;

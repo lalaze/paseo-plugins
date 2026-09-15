@@ -9,7 +9,7 @@ import { ConsumptionService } from '../server/consumption.ts';
 import { startConsumptionSync as startServerSync } from '../server/consumption-sync.ts';
 import { startConsumptionSync as startClientSync } from '../client/consumption-sync.ts';
 import { createConsumptionQuery } from '../client/consumption-query.ts';
-import { HostRegistry } from '../client/hosts.ts';
+import { createHostRegistry } from '../client/hosts.ts';
 import { combineHostConsumption, createMultiHostConsumption } from '../client/multi-host-consumption.ts';
 
 const settle = async () => { for (let i = 0; i < 15; i++) await setImmediate(); };
@@ -72,7 +72,7 @@ test('daemon limits warming to two recent client timezones', async t => {
 
 test('client warms usage without a page, reuses it immediately, rolls months and cleans up', async t => {
   t.mock.timers.enable({ apis: ['setInterval', 'Date'], now });
-  const client = new QueryClient(), calls: ConsumptionRange[] = [], registry = new HostRegistry();
+  const client = new QueryClient(), calls: ConsumptionRange[] = [], registry = createHostRegistry();
   const query = createConsumptionQuery(client, (async (_contract, input: { range: ConsumptionRange }) => { calls.push(input.range); return sample(input.range); }) as never, { subscribe() { return () => {}; } });
   const registration = registry.register({ consumption: query }); registration.identify({ id: 'code', label: 'code' });
   let clock = now;
@@ -94,7 +94,7 @@ test('client warms usage without a page, reuses it immediately, rolls months and
 });
 
 test('background refresh retains ready totals, while a background error remains visible', async () => {
-  const client = new QueryClient(), registry = new HostRegistry();
+  const client = new QueryClient(), registry = createHostRegistry();
   const query = createConsumptionQuery(client, (async () => { throw new Error('offline'); }) as never, { subscribe() { return () => {}; } });
   const registration = registry.register({ consumption: query }); registration.identify({ id: 'code', label: 'code' });
   try {

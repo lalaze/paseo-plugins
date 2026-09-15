@@ -6,7 +6,7 @@ import { ProfileSchema, type Profile, type Settings } from "../shared/schema";
 import { instructionRoles, type InstructionRole } from "../shared/instructions";
 import { commitSettingsRpc, getSettingsRpc, getSettingsDraftRpc, writeSettingsDraftRpc } from "../shared/rpc";
 import { documentKey, formChanged, settingsForm, type DraftState, type SettingsForm } from "../shared/settings-draft";
-import { DraftWriter } from "./draft-writer";
+import { createDraftWriter } from "./draft-writer";
 import { Button, Card, Choice, ErrorText, Field, Label, outline, type Theme } from "./ui";
 import { Disclosure, ProfileEditor, SelectionCard } from "./settings-controls";
 import { checkPresets, commandLine, makeCheck, makeAssignment, profileParts, sameCommand, savedRolePrompts, taskCategories, validateSettings } from "./settings-model";
@@ -58,7 +58,7 @@ function SettingsFormEditor({ initial: loadedInitial, seed, cwd, hostId, theme, 
   const mounted = useRef(true), edited = useRef(!!seed.draft);
   const [, redraw] = useState(0);
   const writeDraft = useRpc(writeSettingsDraftRpc);
-  const [writer] = useState(() => new DraftWriter(seed.revision, writeDraft, () => { if (mounted.current) redraw(n => n + 1); }));
+  const [writer] = useState(() => createDraftWriter(seed.revision, writeDraft, () => { if (mounted.current) redraw(n => n + 1); }));
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const dirty = formChanged(form, base), stale = documentKey(base) !== documentKey(initial);
   const formKey = documentKey(form);

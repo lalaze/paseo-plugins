@@ -1,35 +1,34 @@
 import type { DraftState, SettingsDraft } from "../shared/settings-draft";
 
 /** Keep the latest edit while serializing writes; a failed write never discards it. */
-export class DraftWriter {
-  revision: number;
-  error: unknown = null;
-  private pending: { draft: SettingsDraft | null } | undefined;
-  private running: Promise<void> | undefined;
-  constructor(revision: number, private write: (input: DraftState) => Promise<DraftState>, private notify: () => void = () => {}) { this.revision = revision; }
-  get busy() { return !!this.pending || !!this.running; }
-  enqueue(draft: SettingsDraft | null) {
-    this.pending = { draft };
-    if (!this.error) void this.start().catch(() => {});
-    this.notify();
+// Keep this a factory so the client bundle works through Hermes eval.
+export function createDraftWriter(revision: number, write: (input: DraftState) => Promise<DraftState>, notify: () => void = () => {}) {
+  let error: unknown = null;
+  let pending: { draft: SettingsDraft | null } | undefined;
+  let running: Promise<void> | undefined;
+  function enqueue(draft: SettingsDraft | null) {
+    pending = { draft };
+    if (!error) void start().catch(() => {});
+    notify();
   }
-  private start(): Promise<void> {
-    if (this.running) return this.running;
-    this.running = Promise.resolve().then(async () => {
-      while (this.pending) {
-        const job = this.pending; this.pending = undefined;
-        try { const result = await this.write({ revision: this.revision, draft: job.draft }); this.revision = result.revision; }
-        catch (error) { this.pending ??= job; this.error = error; throw error; }
+  function start(): Promise<void> {
+    if (running) return running;
+    running = Promise.resolve().then(async () => {
+      while (pending) {
+        const job = pending; pending = undefined;
+        try { const result = await write({ revision, draft: job.draft }); revision = result.revision; }
+        catch (failure) { pending ??= job; error = failure; throw failure; }
       }
-    }).finally(() => { this.running = undefined; this.notify(); });
-    return this.running;
+    }).finally(() => { running = undefined; notify(); });
+    return running;
   }
-  async commit<T extends { draft: DraftState }>(save: (revision: number) => Promise<T>): Promise<T> {
-    await this.flush();
-    const result = await save(this.revision);
-    this.revision = result.draft.revision;
-    this.notify();
+  async function commit<T extends { draft: DraftState }>(save: (revision: number) => Promise<T>): Promise<T> {
+    await flush();
+    const result = await save(revision);
+    revision = result.draft.revision;
+    notify();
     return result;
   }
-  async flush() { this.error = null; this.notify(); await this.start(); }
+  async function flush() { error = null; notify(); await start(); }
+  return { enqueue, commit, flush, get revision() { return revision; }, get error() { return error; }, get busy() { return !!pending || !!running; } };
 }
