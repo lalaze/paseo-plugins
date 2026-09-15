@@ -117,14 +117,14 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>当日消耗</Text>
       </View>
       {totalTokens(day) > 0 ? <>
-        <Text accessibilityLabel={`热力图当日合计 ${formatTokens(totalTokens(day))} token`} selectable style={{ color: theme.colors.foreground, fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] }}>{formatTokens(totalTokens(day))}<Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontWeight: '400' }}> token{incomplete ? ' · 已读取' : ''}</Text></Text>
+        <Text accessibilityLabel={`热力图当日合计 ${formatTokens(totalTokens(day))} token`} selectable style={{ color: theme.colors.foreground, fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] }}>{compactTokens(totalTokens(day))}<Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontWeight: '400' }}> token{incomplete ? ' · 已读取' : ''}</Text></Text>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <SmallStat label="输入 · 含缓存" value={compactTokens(day.input)} theme={theme} />
           <SmallStat label="输出 · 含推理" value={compactTokens(day.output)} theme={theme} />
         </View>
         {!selectedModel ? day.models.map(model => <View key={model.key} style={{ gap: 4, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 10 }}>
           <Text selectable style={{ color: theme.colors.foreground, fontSize: 12, lineHeight: 18 }}>{model.model}{model.inferredModel ? ' · 模型推定' : ''}</Text>
-          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{modelOrigin(model)} · {formatTokens(totalTokens(model))} token</Text>
+          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{modelOrigin(model)} · {compactTokens(totalTokens(model))} token</Text>
         </View>) : null}
         <Pressable accessibilityRole="button" accessibilityLabel="当日 token 明细" aria-expanded={detail} accessibilityState={{ expanded: detail }} onPress={() => setDetail(value => !value)} style={{ minHeight: 44, justifyContent: 'center', borderTopWidth: 1, borderTopColor: theme.colors.border }}><Text style={{ color: theme.colors.accent, fontSize: 12 }}>{detail ? '收起' : '查看'} token 明细 {detail ? '−' : '+'}</Text></Pressable>
         {detail ? <Breakdown tokens={day} theme={theme} /> : null}
