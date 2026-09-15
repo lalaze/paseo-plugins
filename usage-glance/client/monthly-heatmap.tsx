@@ -78,7 +78,7 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
       <SmallStat label="有记录天数" value={`${heatmap.activeDays} 天`} theme={theme} />
       <SmallStat label="单日峰值" value={unknownTotal ? '—' : compactTokens(heatmap.peak)} theme={theme} />
     </TotalCard>
-    <View style={{ gap: 10, width: '100%', maxWidth: 560, alignSelf: 'center' }}>
+    <View style={{ gap: 10, width: '100%' }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 30 }}>
         <Text style={{ color: theme.colors.foreground, fontSize: 13, fontWeight: '600' }}>每日消耗</Text>
         {month !== currentMonth ? <TextAction label="回到本月" accessibilityLabel="回到本月" onPress={() => changeMonth(currentMonth)} theme={theme} /> : <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>点击日期查看</Text>}
