@@ -2,7 +2,7 @@ import { View } from "react-native";
 import { useRpc, type PluginClientContext, type PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { z } from "zod";
-import { resyncConversationRpc, getConversationRpc, listConversationsRpc } from "../shared/rpc";
+import { resyncConversationRpc, getConversationRpc } from "../shared/rpc";
 import { Button, ErrorText, Label } from "./ui";
 
 export const ConversationLinkSchema = z.object({ conversationId: z.string() });
@@ -31,15 +31,22 @@ export function installConversationControls(client: PluginClientContext) {
   const poll = async () => {
     if (disposed || polling) return; polling = true;
     try {
-      const chats = await client.rpc(listConversationsRpc, {});
-      if (disposed) return;
       const live = new Set<string>();
-      for (const c of chats) {
-        if (!c.agentId) continue;
-        live.add(c.workspaceId);
-        if (!headers.has(c.workspaceId)) headers.set(c.workspaceId, client.addHeaderButton({ id: "director-settings", workspaceId: c.workspaceId,
+      const cursors = new Set<string>();
+      let cursor: string | undefined;
+      // The host scopes header buttons to workspaces. Include every workspace,
+      // even when it has never had a Director conversation or an agent.
+      do {
+        const page = await client.paseo.workspaces.list({ page: { limit: 200, ...(cursor ? { cursor } : {}) } });
+        if (disposed) return;
+        for (const workspace of page.entries) if (!workspace.archivingAt) live.add(workspace.id);
+        cursor = page.pageInfo.hasMore ? page.pageInfo.nextCursor ?? undefined : undefined;
+        if (page.pageInfo.hasMore && (!cursor || cursors.has(cursor))) throw new Error("工作区列表读取不完整");
+        if (cursor) cursors.add(cursor);
+      } while (cursor);
+      for (const workspaceId of live) {
+        if (!headers.has(workspaceId)) headers.set(workspaceId, client.addHeaderButton({ id: "director-settings", workspaceId,
           button: { title: "协作设置", icon: "Settings", behavior: { kind: "action", onPress: () => client.openSettings("director-settings") } } }));
-
       }
       for (const [id, registration] of headers) if (!live.has(id)) { registration.remove(); headers.delete(id); }
     } catch (error) { console.warn("Director controls:", error instanceof Error ? error.message : String(error)); }
