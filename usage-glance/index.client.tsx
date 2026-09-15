@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { PluginClientContext, PluginButtonRegistration, PluginButtonContentProps, PluginButtonIconProps } from '@getpaseo/plugin/client';
 import { QueryObserver } from '@tanstack/react-query';
 import { HeaderQuotaIcon } from './client/overview';
@@ -6,6 +7,8 @@ import { createConsumptionQuery } from './client/consumption-query';
 import { createHeaderPreference } from './client/preference';
 import { createUsageQuery } from './client/query';
 import { followWorkspaces } from './client/workspaces';
+import { getHostRegistry } from './client/hosts';
+import { readHostIdentity } from './shared/hosts';
 import { headerSummary, isStale } from './shared/usage';
 
 export default function contribute(client: PluginClientContext) {
@@ -14,10 +17,17 @@ export default function contribute(client: PluginClientContext) {
   query.client.mount();
   const observer = new QueryObserver(query.client, query.options);
   const preference = createHeaderPreference((contract, input) => client.rpc(contract, input));
+  const registry = getHostRegistry();
+  const registration = registry.register({ query, consumption, preference });
+  const fleet = { registry, registration };
+  void client.rpc(readHostIdentity, {}).then(identity => registration.identify(identity)).catch(() => {});
   const headers = new Map<string, PluginButtonRegistration>();
   let workspaces = new Set<string>();
-  const HeaderIcon = (props: PluginButtonIconProps) => <HeaderQuotaIcon {...props} query={query} preference={preference} />;
-  const HeaderContent = (props: PluginButtonContentProps) => <UsageDashboard {...props} query={query} consumption={consumption} preference={preference} />;
+  const HeaderIcon = (props: PluginButtonIconProps) => {
+    useEffect(() => { registration.identify(props.host, true); }, [props.host.id, props.host.label]);
+    return <HeaderQuotaIcon {...props} query={query} preference={preference} />;
+  };
+  const HeaderContent = (props: PluginButtonContentProps) => <UsageDashboard {...props} query={query} consumption={consumption} preference={preference} fleet={fleet} />;
 
   function sync() {
     const result = observer.getCurrentResult();
@@ -41,6 +51,7 @@ export default function contribute(client: PluginClientContext) {
   const unsubscribePreference = preference.subscribe(sync);
   const stopWorkspaces = followWorkspaces(client.paseo, latest => { workspaces = new Set(latest); sync(); });
   return () => {
+    registration.dispose();
     stopWorkspaces();
     consumption.dispose();
     unsubscribePreference();

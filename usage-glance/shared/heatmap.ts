@@ -14,7 +14,7 @@ export function shiftMonth(month: string, delta: number): string {
   monthRange(next, 'UTC');
   return next;
 }
-export const heatmapModelKey = (source: SourceId, model: string) => JSON.stringify([source, model]);
+export const heatmapModelKey = (source: SourceId, model: string, hostId?: string) => JSON.stringify(hostId ? [hostId, source, model] : [source, model]);
 export type HeatmapModel = ModelTotal & { key: string };
 export type HeatmapDay = Tokens & { date: string; day: number; future: boolean; models: HeatmapModel[] };
 export type MonthHeatmap = { models: HeatmapModel[]; days: HeatmapDay[]; weeks: (HeatmapDay | null)[][]; total: number; peak: number; activeDays: number };
@@ -29,8 +29,8 @@ export function buildMonthHeatmap(sources: SourceReport[], month: string, today:
   const models = new Map<string, HeatmapModel>();
   for (const source of sources) for (const row of source.rows) {
     if (row.date < range.since || row.date > range.until || row.date > today) continue;
-    const key = heatmapModelKey(source.source, row.model);
-    const makeModel = (): HeatmapModel => ({ ...emptyTokens(), key, source: source.source, model: row.model, inferredModel: row.inferredModel });
+    const key = heatmapModelKey(source.source, row.model, source.host?.id);
+    const makeModel = (): HeatmapModel => ({ ...emptyTokens(), key, source: source.source, model: row.model, inferredModel: row.inferredModel, ...(source.host ? { host: source.host } : {}) });
     let model = models.get(key);
     if (!model) { model = makeModel(); models.set(key, model); }
     addTokens(model, row); model.inferredModel ||= row.inferredModel;

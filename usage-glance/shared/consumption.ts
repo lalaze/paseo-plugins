@@ -1,5 +1,6 @@
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
+import { hostIdentitySchema, type HostIdentity } from './hosts';
 
 export const sourceIds = ['codex', 'claude', 'kimi', 'grok', 'antigravity'] as const;
 export type SourceId = typeof sourceIds[number];
@@ -44,11 +45,13 @@ export type ConsumptionRow = z.infer<typeof consumptionRowSchema>;
 export const sourceReportSchema = z.object({
   source: z.enum(sourceIds), status: z.enum(['loading', 'ready', 'empty', 'partial', 'error']),
   updatedAt: z.string().nullable(), rows: z.array(consumptionRowSchema), message: z.string().nullable(),
+  host: hostIdentitySchema.optional(),
 });
 export type SourceReport = z.infer<typeof sourceReportSchema>;
 export const consumptionReportSchema = z.object({
   range: rangeSchema, scanning: z.boolean(), sources: z.array(sourceReportSchema),
-  unsupportedProviders: z.array(z.object({ id: z.string(), label: z.string() })).optional(),
+  unsupportedProviders: z.array(z.object({ id: z.string(), label: z.string(), host: hostIdentitySchema.optional() })).optional(),
+  hosts: z.array(hostIdentitySchema.extend({ status: z.enum(['ready', 'loading', 'offline', 'error']), updatedAt: z.string().nullable(), total: count.nullable() })).optional(),
 });
 export type ConsumptionReport = z.infer<typeof consumptionReportSchema>;
 export const readConsumption = defineRpc({ name: 'read-consumption', input: z.object({ range: rangeSchema, refresh: z.boolean().default(false) }), output: consumptionReportSchema });
@@ -77,17 +80,18 @@ export function modelVendor(model: string, source: SourceId): string {
   if (/^minimax[ -]/.test(name)) return 'MiniMax';
   return '未识别供应商';
 }
-export type ModelTotal = Tokens & { model: string; source: SourceId; inferredModel: boolean };
+export type ModelTotal = Tokens & { model: string; source: SourceId; inferredModel: boolean; host?: HostIdentity };
 export type ConsumptionGroup = Tokens & { id: string; label: string; models: ModelTotal[] };
-export function groupConsumption(sources: SourceReport[], by: 'vendor' | 'source'): ConsumptionGroup[] {
+export function groupConsumption(sources: SourceReport[], by: 'vendor' | 'source' | 'host'): ConsumptionGroup[] {
   const groups = new Map<string, ConsumptionGroup>();
   for (const report of sources) for (const row of report.rows) {
-    const label = by === 'source' ? sourceNames[report.source] : modelVendor(row.model, report.source);
-    let group = groups.get(label);
-    if (!group) { group = { ...emptyTokens(), id: label, label, models: [] }; groups.set(label, group); }
+    const label = by === 'host' ? report.host?.label ?? '本机' : by === 'source' ? sourceNames[report.source] : modelVendor(row.model, report.source);
+    const id = by === 'host' ? report.host?.id ?? 'local' : label;
+    let group = groups.get(id);
+    if (!group) { group = { ...emptyTokens(), id, label, models: [] }; groups.set(id, group); }
     addTokens(group, row);
-    let model = group.models.find(value => value.source === report.source && value.model === row.model);
-    if (!model) { model = { ...emptyTokens(), source: report.source, model: row.model, inferredModel: false }; group.models.push(model); }
+    let model = group.models.find(value => value.source === report.source && value.model === row.model && value.host?.id === report.host?.id);
+    if (!model) { model = { ...emptyTokens(), source: report.source, model: row.model, inferredModel: false, ...(report.host ? { host: report.host } : {}) }; group.models.push(model); }
     addTokens(model, row); model.inferredModel ||= row.inferredModel;
   }
   for (const group of groups.values()) group.models.sort((a, b) => totalTokens(b) - totalTokens(a));

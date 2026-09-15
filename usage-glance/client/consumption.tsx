@@ -31,9 +31,9 @@ function GroupCard({ group, total, theme, compact }: { group: ConsumptionGroup; 
     {expanded ? <View style={{ padding: 12, marginBottom: 8, borderRadius: 12, backgroundColor: theme.colors.surface0, gap: 14 }}>
       <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{group.models.length} 项模型来源</Text>
       <Breakdown tokens={group} theme={theme} />
-      {group.models.map(model => <View key={`${model.source}:${model.model}`} style={{ paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.border, gap: 5 }}>
+      {group.models.map(model => <View key={`${model.host?.id ?? "local"}:${model.source}:${model.model}`} style={{ paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.border, gap: 5 }}>
         <Text selectable style={{ color: theme.colors.foreground, fontWeight: '500', fontSize: 12, lineHeight: 18, flexShrink: 1 }}>{model.model}{model.inferredModel ? ' · 模型推定' : ''}</Text>
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{sourceNames[model.source]} · 共 {formatTokens(totalTokens(model))} token</Text>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{model.host ? `${model.host.label} · ` : ''}{sourceNames[model.source]} · 共 {formatTokens(totalTokens(model))} token</Text>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 18 }}>输入 {formatTokens(model.input)} · 输出 {formatTokens(model.output)}{model.cacheRead ? ` · 缓存读取 ${formatTokens(model.cacheRead)}` : ''}{model.cacheWrite ? ` · 缓存写入 ${formatTokens(model.cacheWrite)}` : ''}{model.reasoning !== null ? ` · 推理 ${formatTokens(model.reasoning)}` : ''}</Text>
       </View>)}
     </View> : null}
@@ -41,7 +41,7 @@ function GroupCard({ group, total, theme, compact }: { group: ConsumptionGroup; 
 }
 function localTimezone() { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; } }
 
-type ConsumptionProps = Pick<PluginHostProps, 'theme' | 'layout'> & { query: ConsumptionQuery };
+type ConsumptionProps = Pick<PluginHostProps, 'theme' | 'layout'> & { query: ConsumptionQuery; scopeLabel?: string };
 export function Consumption(props: ConsumptionProps) {
   const [timezone] = useState(localTimezone);
   const [view, setView] = useState<'summary' | 'heatmap'>('summary');
@@ -53,11 +53,11 @@ export function Consumption(props: ConsumptionProps) {
     {view === 'summary' ? <ConsumptionSummary {...props} timezone={timezone} /> : <MonthlyHeatmap {...props} timezone={timezone} />}
   </View>;
 }
-function ConsumptionSummary({ theme, layout, query, timezone }: ConsumptionProps & { timezone: string }) {
+function ConsumptionSummary({ theme, layout, query, timezone, scopeLabel }: ConsumptionProps & { timezone: string }) {
   const [preset, setPreset] = useState<'today' | 'week' | 'month' | 'custom'>('today');
   const [custom, setCustom] = useState(() => presetRange('month', timezone));
   const [draft, setDraft] = useState(custom);
-  const [by, setBy] = useState<'vendor' | 'source'>('source');
+  const [by, setBy] = useState<'vendor' | 'source' | 'host'>('source');
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(false);
   const range: ConsumptionRange = preset === 'custom' ? custom : presetRange(preset, timezone);
@@ -67,14 +67,14 @@ function ConsumptionSummary({ theme, layout, query, timezone }: ConsumptionProps
   const groups = groupConsumption(sources, by), totals = emptyTokens();
   for (const group of groups) addTokens(totals, group);
   const pending = result.isPending || report?.scanning === true;
-  const incomplete = !!report?.unsupportedProviders?.length || sources.some(source => ['partial', 'error', 'loading'].includes(source.status));
+  const incomplete = !!report?.unsupportedProviders?.length || report?.hosts?.some(host => host.status !== 'ready') || sources.some(source => ['partial', 'error', 'loading'].includes(source.status));
   const latest = sources.map(source => source.updatedAt).filter((date): date is string => date !== null).sort()[0];
   const refresh = async () => { setRefreshing(true); setRefreshError(false); try { await query.refresh(range); } catch { setRefreshError(true); } finally { setRefreshing(false); } };
   return <View style={{ gap: 14, width: '100%' }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
       <View style={{ gap: 4, flexShrink: 1 }}>
-        <Text style={{ color: theme.colors.foreground, fontSize: 18, fontWeight: '700' }}>本机消耗</Text>
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{pending ? '正在读取本机记录…' : `${dataAge(latest)} · 自动更新`}</Text>
+        <Text style={{ color: theme.colors.foreground, fontSize: 18, fontWeight: '700' }}>{scopeLabel ?? '本机消耗'}</Text>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{pending ? '正在读取用量记录…' : `${dataAge(latest)} · 自动更新`}</Text>
       </View>
       <TextAction label={pending || refreshing ? '更新中' : '刷新'} accessibilityLabel="刷新消耗" disabled={pending || refreshing} onPress={() => { void refresh(); }} theme={theme} />
     </View>
@@ -95,13 +95,14 @@ function ConsumptionSummary({ theme, layout, query, timezone }: ConsumptionProps
       <SmallStat label="输出 · 含推理" value={compactTokens(totals.output)} theme={theme} />
     </TotalCard> : <View style={{ padding: 16, borderRadius: 16, backgroundColor: theme.colors.surface0, gap: 6 }}>
       <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: '600' }}>{pending ? '正在读取消耗' : '暂无消耗记录'}</Text>
-      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 19 }}>{pending ? '正在整理本机已启用来源的记录…' : report ? !sources.length ? '当前未启用支持消耗统计的 Provider。' : incomplete ? '尚无可显示的消耗，请查看下方数据来源状态。' : '该时间范围没有已记录的消耗。' : '暂时无法读取，请稍后刷新。'}</Text>
+      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 19 }}>{pending ? '正在整理已启用来源的记录…' : report ? report.hosts?.some(host => host.status !== 'ready') ? '所选主机暂未返回记录，请查看下方主机状态。' : !sources.length ? '当前未启用支持消耗统计的 Provider。' : incomplete ? '尚无可显示的消耗，请查看下方数据来源状态。' : '该时间范围没有已记录的消耗。' : '暂时无法读取，请稍后刷新。'}</Text>
     </View>}
     <Text style={{ color: theme.colors.foregroundMuted, fontSize: 10, textAlign: 'center' }}>{range.since === range.until ? range.since : `${range.since} — ${range.until}`} · {timezone}</Text>
     {groups.length ? <View style={{ gap: 2 }}>
       <Segments quiet theme={theme} options={[
         { label: '按 Provider', active: by === 'source', onPress: () => setBy('source') },
         { label: '按模型厂商', active: by === 'vendor', onPress: () => setBy('vendor') },
+        ...(report?.hosts ? [{ label: '按主机', active: by === 'host', onPress: () => setBy('host') }] : []),
       ]} />
       {by === 'vendor' ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 17, paddingTop: 8 }}>按模型识别厂商，实际调用渠道可能不同</Text> : null}
       {groups.map(group => <GroupCard key={`${by}:${group.id}`} group={group} total={totalTokens(totals)} theme={theme} compact={layout.compact} />)}

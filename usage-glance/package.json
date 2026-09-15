@@ -1,9 +1,9 @@
 {
   "name": "paseo-usage-glance",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Quota and local token consumption summaries for Paseo",
+  "description": "Per-host quotas and multi-host token consumption summaries for Paseo",
   "scripts": {
     "pretypecheck": "node scripts/prepare.mjs",
     "prebuild": "node scripts/prepare.mjs",

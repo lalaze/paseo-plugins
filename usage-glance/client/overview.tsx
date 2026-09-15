@@ -51,7 +51,7 @@ function HeaderPicker({ providers, selected, onSelect, theme, compact }: { provi
   </View>;
 }
 
-function ProviderCard({ usage, theme, current, pinned }: { usage: Usage; theme: Theme; current: boolean; pinned: boolean }) {
+export function ProviderCard({ usage, theme, current, pinned }: { usage: Usage; theme: Theme; current: boolean; pinned: boolean }) {
   const brief = summary(usage);
   return <View style={{ borderWidth: 1, borderColor: current || pinned ? theme.colors.accent : theme.colors.border, borderRadius: 10, padding: 12, gap: 10, backgroundColor: theme.colors.surface1 }}>
     <View style={{ gap: 3 }}>

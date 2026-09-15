@@ -26,7 +26,7 @@ export function createConsumptionQuery(client: QueryClient, rpc: PluginClientCon
   return {
     client,
     dispose() { closed = true; unsubscribe(); },
-    options: (range: ConsumptionRange) => queryOptions({
+    options: (range: ConsumptionRange) => queryOptions<ConsumptionReport>({
       queryKey: ['token-consumption', range] as const,
       queryFn: async ({ signal }) => {
         const report = await rpc(readConsumption, { range, refresh: false });

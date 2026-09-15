@@ -9,6 +9,7 @@ import { Breakdown, ConsumptionSources } from './consumption-details';
 import { SmallStat, TextAction, TotalCard } from './consumption-ui';
 
 const opacity = [0, 0.14, 0.28, 0.42, 1];
+const modelOrigin = (model: { source: keyof typeof sourceNames; host?: { label: string } }) => `${model.host ? `${model.host.label} · ` : ''}${sourceNames[model.source]}`;
 const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
 export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHostProps, 'theme' | 'layout'> & { query: ConsumptionQuery; timezone: string }) {
   const today = dateInZone(new Date(), timezone), currentMonth = today.slice(0, 7);
@@ -23,14 +24,15 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
   const all = buildMonthHeatmap(sources, month, today);
   const selectedModel = all.models.find(model => model.key === requestedModel);
   const heatmap = selectedModel ? buildMonthHeatmap(sources, month, today, selectedModel.key) : all;
-  const relevant = selectedModel ? sources.filter(source => source.source === selectedModel.source) : sources;
-  const pending = result.isPending || report?.scanning === true;
-  const incomplete = pending || result.isError || refreshError || relevant.some(source => source.status === 'error' || source.status === 'partial' || source.status === 'loading') || (!selectedModel && !!report?.unsupportedProviders?.length);
+  const relevant = selectedModel ? sources.filter(source => source.source === selectedModel.source && source.host?.id === selectedModel.host?.id) : sources;
+  const relevantHosts = report?.hosts?.filter(host => !selectedModel?.host || host.id === selectedModel.host.id);
+  const pending = result.isPending || (selectedModel && relevantHosts ? relevantHosts.some(host => host.status === 'loading') : report?.scanning === true);
+  const incomplete = pending || result.isError || refreshError || !!relevantHosts?.some(host => host.status !== 'ready') || relevant.some(source => source.status === 'error' || source.status === 'partial' || source.status === 'loading') || (!selectedModel && !!report?.unsupportedProviders?.length);
   const unknownTotal = heatmap.total === 0 && (incomplete || !sources.length);
   const latest = relevant.map(source => source.updatedAt).filter((date): date is string => date !== null).sort()[0];
   const activeDate = selectedDate?.startsWith(`${month}-`) ? selectedDate : month === currentMonth ? today : range.until;
   const day = heatmap.days.find(day => day.date === activeDate)!;
-  const matches = all.models.filter(model => `${model.model} ${sourceNames[model.source]}`.toLowerCase().includes(search.toLowerCase()));
+  const matches = all.models.filter(model => `${model.model} ${modelOrigin(model)}`.toLowerCase().includes(search.toLowerCase()));
   useEffect(() => {
     if (report && !report.scanning && requestedModel && !selectedModel) setRequestedModel(null);
   }, [report, requestedModel, selectedModel]);
@@ -54,17 +56,17 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
       <Pressable accessibilityRole="button" accessibilityLabel="选择热力图模型" aria-expanded={picker} accessibilityState={{ expanded: picker }} onPress={() => setPicker(value => !value)} style={({ pressed }) => ({ ...button, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', justifyContent: 'space-between', gap: 8, backgroundColor: theme.colors.surface0, opacity: pressed ? 0.65 : 1 })}>
         <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
           <Text numberOfLines={2} style={{ color: theme.colors.foreground, fontSize: 13, fontWeight: '500' }}>{selectedModel?.model ?? '全部模型'}</Text>
-          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{selectedModel ? sourceNames[selectedModel.source] : `${all.models.length} 项模型来源 · 已启用的 Providers`}</Text>
+          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{selectedModel ? modelOrigin(selectedModel) : `${all.models.length} 项模型来源 · 已启用的 Providers`}</Text>
         </View>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{picker ? '收起' : '切换'}</Text>
       </Pressable>
       {picker ? <View style={{ borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 8, gap: 6 }}>
-        <TextInput accessibilityLabel="筛选热力图模型" value={search} onChangeText={setSearch} placeholder="搜索模型或 Provider" placeholderTextColor={theme.colors.foregroundMuted} autoCapitalize="none" style={{ minHeight: 44, padding: 10, color: theme.colors.foreground, fontSize: 12, backgroundColor: theme.colors.surface0, borderRadius: 8 }} />
+        <TextInput accessibilityLabel="筛选热力图模型" value={search} onChangeText={setSearch} placeholder="搜索模型、Provider 或主机" placeholderTextColor={theme.colors.foregroundMuted} autoCapitalize="none" style={{ minHeight: 44, padding: 10, color: theme.colors.foreground, fontSize: 12, backgroundColor: theme.colors.surface0, borderRadius: 8 }} />
         <ScrollView style={{ maxHeight: 220 }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
           <Pressable accessibilityRole="button" accessibilityLabel="热力图选择全部模型" accessibilityState={{ selected: !selectedModel }} onPress={() => selectModel(null)} style={{ padding: 10, minHeight: 44, justifyContent: 'center', backgroundColor: !selectedModel ? theme.colors.surface2 : 'transparent', borderRadius: 8 }}><Text style={{ color: theme.colors.accent, fontSize: 12 }}>全部模型</Text></Pressable>
-          {matches.map(model => <Pressable key={model.key} accessibilityRole="button" accessibilityLabel={`热力图选择 ${model.model} ${sourceNames[model.source]}`} accessibilityState={{ selected: selectedModel?.key === model.key }} onPress={() => selectModel(model.key)} style={{ padding: 10, minHeight: 44, justifyContent: 'center', gap: 4, backgroundColor: selectedModel?.key === model.key ? theme.colors.surface2 : 'transparent', borderRadius: 8 }}>
+          {matches.map(model => <Pressable key={model.key} accessibilityRole="button" accessibilityLabel={`热力图选择 ${model.model} ${modelOrigin(model)}`} accessibilityState={{ selected: selectedModel?.key === model.key }} onPress={() => selectModel(model.key)} style={{ padding: 10, minHeight: 44, justifyContent: 'center', gap: 4, backgroundColor: selectedModel?.key === model.key ? theme.colors.surface2 : 'transparent', borderRadius: 8 }}>
             <Text style={{ color: theme.colors.foreground, fontSize: 12, lineHeight: 18 }}>{model.model}</Text>
-            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{sourceNames[model.source]} · {compactTokens(totalTokens(model))} token</Text>
+            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{modelOrigin(model)} · {compactTokens(totalTokens(model))} token</Text>
           </Pressable>)}
           {!matches.length ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, padding: 10 }}>{pending ? '正在读取模型…' : search ? '没有匹配的模型' : '本月尚无已记录的模型消耗'}</Text> : null}
         </ScrollView>
@@ -119,11 +121,11 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
         </View>
         {!selectedModel ? day.models.map(model => <View key={model.key} style={{ gap: 4, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 10 }}>
           <Text selectable style={{ color: theme.colors.foreground, fontSize: 12, lineHeight: 18 }}>{model.model}{model.inferredModel ? ' · 模型推定' : ''}</Text>
-          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{sourceNames[model.source]} · {formatTokens(totalTokens(model))} token</Text>
+          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{modelOrigin(model)} · {formatTokens(totalTokens(model))} token</Text>
         </View>) : null}
         <Pressable accessibilityRole="button" accessibilityLabel="当日 token 明细" aria-expanded={detail} accessibilityState={{ expanded: detail }} onPress={() => setDetail(value => !value)} style={{ minHeight: 44, justifyContent: 'center', borderTopWidth: 1, borderTopColor: theme.colors.border }}><Text style={{ color: theme.colors.accent, fontSize: 12 }}>{detail ? '收起' : '查看'} token 明细 {detail ? '−' : '+'}</Text></Pressable>
         {detail ? <Breakdown tokens={day} theme={theme} /> : null}
-      </> : <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 19 }}>{pending ? '正在读取记录…' : !sources.length ? '当前未启用支持消耗统计的 Provider。' : incomplete ? '记录不完整，暂不能确认当天消耗。' : '当天没有已记录的消耗。'}</Text>}
+      </> : <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 19 }}>{pending ? '正在读取记录…' : relevantHosts?.some(host => host.status !== 'ready') ? '主机记录尚不完整，暂不能确认当天消耗。' : !sources.length ? '当前未启用支持消耗统计的 Provider。' : incomplete ? '记录不完整，暂不能确认当天消耗。' : '当天没有已记录的消耗。'}</Text>}
     </View>
     <ConsumptionSources report={report} theme={theme} />
   </View>;
