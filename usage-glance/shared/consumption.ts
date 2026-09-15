@@ -97,7 +97,7 @@ export function formatTokens(value: number): string {
   return value.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
 }
 export function compactTokens(value: number): string {
-  if (value < 10000) return formatTokens(value);
-  const divisor = value < 100000000 ? 10000 : 100000000;
-  return `${Number((value / divisor).toFixed(2))}${divisor === 10000 ? '万' : '亿'}`;
+  if (value > 0 && value < 10000) return '<0.01M';
+  const divisor = value < 100000000 ? 1000000 : 100000000;
+  return `${Number((value / divisor).toFixed(2))}${divisor === 1000000 ? 'M' : '亿'}`;
 }
