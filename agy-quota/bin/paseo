@@ -52,6 +52,10 @@ if [ "$ensure_usage" = true ]; then
   if [ -f "$director_notifications" ]; then
     node "$director_notifications" apply --cli "$cli_dir"
   fi
+  director_header_order="$root/../director/scripts/header-order-patch.mjs"
+  if [ -f "$director_header_order" ]; then
+    node "$director_header_order" apply --cli "$cli_dir"
+  fi
 fi
 
 exec "$real_paseo" "$@"

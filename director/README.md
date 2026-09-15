@@ -165,3 +165,14 @@ node director/scripts/notification-patch.mjs apply
 命令从本仓库根目录执行。补丁需重启 daemon 后生效；有正在执行的任务时，等其结束再重启。使用本仓库的 `agy-quota/bin/paseo` 入口启动或重启时，会自动检查并补上规则。仅重载 Director 插件不会重载宿主通知代码。
 
 撤销：`node director/scripts/notification-patch.mjs rollback`，随后重启 daemon。补丁限定 Paseo 0.8，遇到上游代码变化会拒绝改写。静默规则只作用于 Director 标记的会话，并且仅抑制通知投递，保留原有未读状态和事件。
+
+### 顶栏按钮顺序
+
+此补丁兼容仍显示「协作设置」齿轮的旧版插件，让本机网页顶栏的「额度速览」排在齿轮前，不受两个插件加载先后影响。当前版本已隐藏齿轮。使用本仓库的 `agy-quota/bin/paseo` 启动或重启 daemon 时会自动应用；手动应用后刷新网页：
+
+```bash
+node director/scripts/header-order-patch.mjs check
+node director/scripts/header-order-patch.mjs apply
+```
+
+撤销：`node director/scripts/header-order-patch.mjs rollback`，随后刷新网页；守卫下次启动会重新应用。补丁限定 Paseo 0.8 的网页资源，发现宿主代码不匹配时拒绝改写；原生客户端不受影响。
