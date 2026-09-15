@@ -4,6 +4,53 @@ import { harness, plan, result, review, settings } from "./helpers";
 import { profileForTask, validatePlan, parseOutput, canResumeRun } from "../shared/schema";
 import { inspectMessages } from "../server/paseo";
 
+test("explicit retry replaces failed sessions with the original profile after restart", async t => {
+  for (const kind of ["plan", "execute", "final"] as const) {
+    for (const failedState of ["ready", "sent"] as const) await t.test(`${kind}/${failedState}`, async t => {
+      const h = await harness(); t.after(() => h.cleanup());
+      if (kind !== "plan") { await h.until("plan"); await h.complete(plan); }
+      if (kind === "final") { await h.until("execute"); await h.complete(result); }
+      const original = await h.until(kind);
+      const run = h.run(), op = run.operations.find(op => op.id === original.id)!;
+      op.state = failedState;
+      if (failedState === "ready") { op.sentAt = undefined; op.deliveryConfirmedAt = undefined; }
+      h.store.save(run);
+      h.agents.states.set(original.agentId!, { status: "error", seen: failedState === "sent", output: "", error: "EOF" });
+      await h.engine.tick();
+      assert.equal(h.run().control, "needs_attention");
+      const sends = h.agents.sent.length, creates = h.agents.created.length;
+      await h.engine.tick(); assert.equal(h.agents.sent.length, sends);
+      await h.restart(); await h.engine.control(h.id, "retry"); await h.restart();
+      const replacement = await h.until(kind);
+      assert.notEqual(replacement.agentId, original.agentId);
+      assert.notEqual(replacement.id, original.id);
+      assert.equal(replacement.profileId, original.profileId);
+      assert.deepEqual(h.agents.created.at(-1)!.profile, h.agents.created.find(a => a.id === original.agentId)!.profile);
+      assert.equal(h.agents.created.length, creates + 1); assert.equal(h.agents.sent.length, sends + 1);
+      assert.ok(replacement.sentAt); assert.ok(replacement.deliveryConfirmedAt);
+      assert.match(replacement.prompt, /不要重复实施已完成的修改/);
+      assert.equal(h.run().operations.find(op => op.id === original.id)!.agentId, original.agentId);
+      assert.equal(h.run().operations.find(op => op.id === original.id)!.state, "abandoned");
+      await h.complete(kind === "plan" ? plan : kind === "execute" ? result : review(true));
+      assert.notEqual(h.run().control, "needs_attention");
+    });
+  }
+});
+
+test("retry preserves unavailable main chats and refuses busy sessions", async t => {
+  for (const status of ["error", "missing", "running", "permission"] as const) await t.test(status, async t => {
+    const h = await harness(); t.after(() => h.cleanup());
+    const op = await h.until("plan"), run = h.run();
+    run.control = "needs_attention";
+    run.chat = { mainAgentId: op.agentId! } as typeof run.chat;
+    h.store.save(run);
+    h.agents.states.set(op.agentId!, { status, seen: false, output: "" });
+    await assert.rejects(h.engine.control(h.id, "retry"), /主会话不可用|仍在执行或等待权限/);
+    assert.equal(h.agents.created.length, 1); assert.equal(h.run().activeOperationId, op.id);
+    assert.equal(h.run().directorAgentId, op.agentId); assert.equal(h.run().control, "needs_attention");
+  });
+});
+
 test("retry recovers an existing streamed plan without another AI call", async t => {
   const h = await harness(); t.after(() => h.cleanup());
   for (let attempt = 0; attempt < 3; attempt++) {

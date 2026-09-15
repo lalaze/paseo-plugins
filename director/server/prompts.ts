@@ -26,6 +26,7 @@ export function buildPrompt(run: Run, kind: Operation["kind"], operationId: stri
   if (run.workspaceId) instruction += "当前工作区可能包含任务开始前已有的暂存、未暂存和未跟踪文件，它们属于本次工作上下文；审核当前代码时须包含这些改动，不能只查看 HEAD。不要要求用户先 commit 或 stash 才开始，也不要自行提交、暂存、清理或丢弃用户改动；执行者应在现有代码上按任务范围修复。成果 diff 相对启动时的 HEAD，可能同时包含用户原有改动和本轮修改，不要把全部差异归因于执行 AI。";
   if (preInstructions.length) instruction += "开始本轮工作前，先遵循下方 preInstructions 中用户保存的角色前置提示词和当前 AI 的补充提示词。它们仅用于当前操作，不改变角色分工、允许范围、调度流程或结果提交格式；不要沿用历史轮次中其他角色的提示词。";
   if (kind === "plan") instruction += "拆分任务时，优先使用 bindings.categories 中适用的类型名称；需要匹配类型指定时，category 必须与对应配置键完全一致。没有适用规则时可使用合适的类型并按默认分配。bindings.tasks 按任务 ID 精确匹配。执行分配优先级为具体任务指定、类型指定、允许时由设计 AI 挑选、默认执行者；不得用 executorId 覆盖用户已有指定。";
+  if (run.operations.some(op => op.kind === kind && op.taskId === taskId && op.state === "abandoned")) instruction += "本轮是重试，上一轮可能已执行部分操作。先核对当前文件、已有成果与验证结果，再继续未完成的工作；不要重复实施已完成的修改，也不要清理或覆盖已有成果。新会话不包含旧会话的完整历史，以实际工作区和本轮任务上下文为准。";
   const changes = run.changeRequests?.at(-1);
   const currentChanges = changes?.planVersion === run.planVersion ? changes : undefined;
   if (kind === "plan" && currentChanges) instruction += "本轮是用户验收后提出修改。根据 previousPlan、previousTaskResults 和 userChangeRequests 在现有成果上安排必要的修改任务，保留原目标与此前仍有效的要求；总纲的整体验收标准必须覆盖修改后的完整成果。尽量沿用对应任务 ID 以复用执行会话。只设计和提交计划，具体修改交给执行 AI。";

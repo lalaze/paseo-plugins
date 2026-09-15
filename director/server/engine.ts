@@ -455,7 +455,10 @@ export class Engine {
               return { ok: true };
             }
           }
-          if (state.status === "missing") {
+          if (state.status === "missing" || state.status === "error") {
+            if (op.agentId === run.chat?.mainAgentId) throw new Error("主会话不可用，请先在 Paseo 中恢复原主对话，再重试当前步骤");
+            // Retain the failed operation, but create the retry session from
+            // the saved profile instead of reusing an unusable agent.
             this.setSession(run, op);
           }
         }
