@@ -35,6 +35,8 @@ test('identity bridges collapse generation, retry, step, and backup copies witho
   const make = (identities: string[], timeRank: number, time?: number): AgyEvent => ({ fresh: 100, cacheRead: 70, cacheWrite: 20, output: 30, reasoning: 10, model: 'gemini-3.8-flash', identities, timeRank, time });
   const result = dedupeAgy([make(['response:one'], 0), make(['message:one'], 1, 100), make(['response:one', 'message:one'], 2, 200), make(['response:two'], 2, 300)]);
   assert.equal(result.length, 2); assert.equal(result[0].time, 200); assert.equal(result[0].fresh, 100);
+  const conflict = dedupeAgy([{ ...make(['response:shared'], 2, 200), workspace: { id: 'one', label: 'One', directory: '/one' } }, { ...make(['response:shared'], 2, 200), workspace: { id: 'two', label: 'Two', directory: '/two' } }]);
+  assert.equal(conflict.length, 1); assert.equal(conflict[0].workspace, undefined);
 });
 
 test('real SQLite reads deduplicate backups, include retry usage, and obey timezone and date boundaries', async () => {
@@ -52,6 +54,9 @@ test('real SQLite reads deduplicate backups, include retry usage, and obey timez
     assert.equal(first.rows[0].model, 'gemini-3.8-flash');
     assert.equal(first.rows[0].input, 330); assert.equal(first.rows[0].output, 60);
     assert.deepEqual(await run(), first);
+    const workspace = { id: 'workspace', label: 'Workspace', directory: '/project' };
+    const attributed = await runAntigravity(range, new AbortController().signal, [join(root, 'one'), join(root, 'backup')], id => id === 'session' ? workspace : undefined);
+    assert.deepEqual(attributed.rows, first.rows.map(row => ({ ...row, workspace })));
     assert.equal((await run({ ...range, timezone: 'Asia/Shanghai' })).rows[0].date, '2026-09-11');
     assert.deepEqual((await run({ ...range, until: '2026-09-09' })).rows, []);
     await writeFile(join(directory, 'bad.db'), 'invalid database');

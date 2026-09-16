@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import type { PluginClientContext, PluginButtonRegistration, PluginButtonContentProps, PluginButtonIconProps, PluginSurfaceProps } from '@getpaseo/plugin/client';
-import { QueryObserver } from '@tanstack/react-query';
+import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { HeaderQuotaIcon, Overview } from './client/overview';
 import { ConsumptionPage } from './client/consumption-page';
 import { createConsumptionQuery } from './client/consumption-query';
@@ -10,23 +10,29 @@ import { createUsageQuery } from './client/query';
 import { followWorkspaces } from './client/workspaces';
 import { getHostRegistry } from './client/hosts';
 import { readHostIdentity } from './shared/hosts';
+import { readWorkspaceConsumption } from './shared/consumption';
 import { headerSummary, isStale } from './shared/usage';
 
 export default function contribute(client: PluginClientContext) {
   const query = createUsageQuery(client.paseo);
   const consumption = createConsumptionQuery(query.client, (contract, input) => client.rpc(contract, input), client.paseo.providers);
+  const workspaceClient = new QueryClient();
+  workspaceClient.mount();
+  const workspaceConsumption = createConsumptionQuery(workspaceClient, (contract, input) => client.rpc(contract, input), client.paseo.providers, readWorkspaceConsumption);
   query.client.mount();
   const observer = new QueryObserver(query.client, query.options);
   const preference = createHeaderPreference((contract, input) => client.rpc(contract, input));
   const registry = getHostRegistry();
   const registration = registry.register({ consumption });
+  const workspaceRegistry = getHostRegistry(true);
+  const workspaceRegistration = workspaceRegistry.register({ consumption: workspaceConsumption });
   const stopConsumptionSync = startConsumptionSync(consumption);
-  const fleet = { registry, registration };
-  void client.rpc(readHostIdentity, {}).then(identity => registration.identify(identity)).catch(() => {});
+  const fleet = { registry, registration, workspaceRegistry, workspaceRegistration };
+  void client.rpc(readHostIdentity, {}).then(identity => { registration.identify(identity); workspaceRegistration.identify(identity); }).catch(() => {});
   const headers = new Map<string, PluginButtonRegistration>();
   let workspaces = new Set<string>();
   const HeaderIcon = (props: PluginButtonIconProps) => {
-    useEffect(() => { registration.identify(props.host, true); }, [props.host.id, props.host.label]);
+    useEffect(() => { registration.identify(props.host, true); workspaceRegistration.identify(props.host, true); }, [props.host.id, props.host.label]);
     return <HeaderQuotaIcon {...props} query={query} preference={preference} />;
   };
   const HeaderContent = (props: PluginButtonContentProps) => <Overview {...props} query={query} preference={preference} popover />;
@@ -62,6 +68,10 @@ export default function contribute(client: PluginClientContext) {
     removeSidebar();
     removeSurface();
     registration.dispose();
+    workspaceRegistration.dispose();
+    workspaceConsumption.dispose();
+    workspaceClient.unmount();
+    workspaceClient.clear();
     stopWorkspaces();
     consumption.dispose();
     unsubscribePreference();

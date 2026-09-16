@@ -4,7 +4,7 @@ import { runAntigravity } from './antigravity';
 import { runPi } from './pi';
 import { coversConsumptionRange, projectConsumptionReport } from '../shared/consumption-cache';
 
-type ReadSource = (source: SourceId, range: ConsumptionRange, signal: AbortSignal) => Promise<{ rows: SourceReport['rows']; message: string | null }>;
+type ReadSource = (source: SourceId, range: ConsumptionRange, signal: AbortSignal) => Promise<{ rows: SourceReport['rows']; workspaceRows?: SourceReport['workspaceRows']; message: string | null }>;
 type CacheEntry = { report: ConsumptionReport; startedAt: number; completedAt: number; controller: AbortController };
 export class ConsumptionService {
   private cache = new Map<string, CacheEntry>();
@@ -12,7 +12,7 @@ export class ConsumptionService {
   private waiters: (() => void)[] = [];
   private closed = false;
   private selection = '';
-  constructor(private read: ReadSource = (source, range, signal) => source === 'antigravity' ? runAntigravity(range, signal) : source === 'pi' ? runPi(range, signal) : runCcusage(source, range, signal), private now = Date.now) {}
+  constructor(private read: ReadSource = (source, range, signal) => source === 'antigravity' ? runAntigravity(range, signal) : source === 'pi' ? runPi(range, signal) : runCcusage(source, range, signal), private now = Date.now, private exactRanges = false) {}
 
   get(input: ConsumptionRange, selected: readonly SourceId[], refresh = false): ConsumptionReport {
     if (this.closed) throw new Error('用量服务已关闭');
@@ -23,13 +23,13 @@ export class ConsumptionService {
       this.cache.clear(); this.selection = selection;
     }
     const range = rangeSchema.parse(input), now = this.now();
-    const covering = [...this.cache].reverse().find(([, value]) => coversConsumptionRange(value.report.range, range));
+    const covering = [...this.cache].reverse().find(([, value]) => coversConsumptionRange(value.report.range, range) && (!this.exactRanges || (value.report.range.since === range.since && value.report.range.until === range.until)));
     const key = covering?.[0] ?? JSON.stringify(range);
     let entry = covering?.[1];
     if (entry) { this.cache.delete(key); this.cache.set(key, entry); }
     if (!entry) {
       // A wider scan replaces smaller caches, avoiding repeated scans of the same logs.
-      for (const [existingKey, value] of this.cache) if (coversConsumptionRange(range, value.report.range)) {
+      for (const [existingKey, value] of this.cache) if (!this.exactRanges && coversConsumptionRange(range, value.report.range)) {
         value.controller.abort(); this.cache.delete(existingKey);
       }
       if (this.cache.size >= 8) {
@@ -59,7 +59,7 @@ export class ConsumptionService {
         await this.acquire(signal); acquired = true; if (signal.aborted) throw new Error('读取已取消');
         const result = await this.read(source, entry.report.range, signal);
         if (signal.aborted) return;
-        entry.report.sources[index] = { source, rows: result.rows, updatedAt: new Date(this.now()).toISOString(), status: result.message ? 'partial' : result.rows.length ? 'ready' : 'empty', message: result.message };
+        entry.report.sources[index] = { source, ...result, updatedAt: new Date(this.now()).toISOString(), status: result.message ? 'partial' : result.rows.length ? 'ready' : 'empty' };
       } catch (error) {
         if (!signal.aborted) entry.report.sources[index] = { ...old, source, status: 'error', message: error instanceof Error && /^(用量记录|采集器|模型|本机|读取超时|Antigravity)/.test(error.message) ? error.message : '本机记录暂时无法读取，请稍后重试' };
       } finally { if (acquired) this.release(); }

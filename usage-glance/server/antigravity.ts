@@ -4,7 +4,7 @@ import { basename, join } from 'node:path';
 import { homedir } from 'node:os';
 import { setImmediate } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
-import { addTokens, dateInZone, emptyTokens, type ConsumptionRange, type ConsumptionRow } from '../shared/consumption';
+import { addTokens, dateInZone, emptyTokens, type ConsumptionRange, type ConsumptionRow, type WorkspaceIdentity } from '../shared/consumption';
 import { dedupeAgy, generationMetadata, stepMetadata, trajectoryTimestamp, type AgyEvent, type AgyMetadata } from './antigravity-proto';
 
 export function antigravityRoots(home = homedir(), env: NodeJS.ProcessEnv = process.env): string[] {
@@ -51,7 +51,7 @@ function readDatabase(path: string): { events: AgyEvent[]; warnings: number } {
   } finally { db.close(); }
 }
 
-export async function runAntigravity(range: ConsumptionRange, signal: AbortSignal, roots = antigravityRoots()): Promise<{ rows: ConsumptionRow[]; message: string | null }> {
+export async function runAntigravity(range: ConsumptionRange, signal: AbortSignal, roots = antigravityRoots(), resolveWorkspace?: (id: string) => WorkspaceIdentity | undefined): Promise<{ rows: ConsumptionRow[]; message: string | null }> {
   const paths = new Set<string>(); let warnings = 0, readable = 0;
   for (const root of roots) {
     if (signal.aborted) throw new Error('读取已取消');
@@ -64,7 +64,10 @@ export async function runAntigravity(range: ConsumptionRange, signal: AbortSigna
   const events: AgyEvent[] = [];
   for (const path of paths) {
     if (signal.aborted) throw new Error('读取已取消');
-    try { const result = readDatabase(path); events.push(...result.events); warnings += result.warnings; readable++; } catch { warnings++; }
+    try {
+      const result = readDatabase(path), workspace = resolveWorkspace?.(basename(path, '.db'));
+      events.push(...result.events.map(event => workspace ? { ...event, workspace } : event)); warnings += result.warnings; readable++;
+    } catch { warnings++; }
     // Let the plugin answer RPCs and cancellation between databases.
     await setImmediate();
   }
@@ -75,9 +78,9 @@ export async function runAntigravity(range: ConsumptionRange, signal: AbortSigna
     const date = dateInZone(new Date(event.time), range.timezone);
     if (date < range.since || date > range.until) continue;
     if (event.timeRank < 2) estimatedDates++;
-    const key = `${date}\0${event.model}`;
+    const key = JSON.stringify([date, event.model, event.workspace?.id]);
     let row = rows.get(key);
-    if (!row) { row = { ...emptyTokens(), date, model: event.model, inferredModel: event.model === '未记录模型' || /^antigravity-model-/.test(event.model) }; rows.set(key, row); }
+    if (!row) { row = { ...emptyTokens(), date, model: event.model, inferredModel: event.model === '未记录模型' || /^antigravity-model-/.test(event.model), ...(event.workspace ? { workspace: event.workspace } : {}) }; rows.set(key, row); }
     addTokens(row, { input: event.fresh + event.cacheRead + event.cacheWrite, output: event.output, cacheRead: event.cacheRead, cacheWrite: event.cacheWrite, reasoning: event.reasoning });
   }
   const messages = [warnings ? `${warnings} 个文件或记录未能读取` : '', missingDates ? `${missingDates} 条记录缺少日期，未计入` : '', estimatedDates ? `${estimatedDates} 条记录按会话日期归类` : ''].filter(Boolean);

@@ -14,8 +14,8 @@ export type HostEntry = HostIdentity & {
   runtime?: HostRuntime;
 };
 
-export function cachedHostConsumption(host: HostEntry, range: ConsumptionRange) {
-  return [...host.reports.values()].reverse().find(report => coversConsumptionRange(report.range, range));
+export function cachedHostConsumption(host: HostEntry, range: ConsumptionRange, exactRanges = false) {
+  return [...host.reports.values()].reverse().find(report => coversConsumptionRange(report.range, range) && (!exactRanges || (report.range.since === range.since && report.range.until === range.until)));
 }
 
 /** Shared by this plugin's independently evaluated bundles in one Paseo client.
@@ -23,7 +23,7 @@ export function cachedHostConsumption(host: HostEntry, range: ConsumptionRange) 
  * No private app stores, addresses or credentials are discovered here.
  */
 // Hermes eval cannot reliably instantiate bundled anonymous classes.
-export function createHostRegistry() {
+export function createHostRegistry(exactRanges = false) {
   const entries = new Map<string, HostEntry>();
   const listeners = new Set<() => void>();
   let snapshot: readonly HostEntry[] = [];
@@ -93,7 +93,7 @@ export function createHostRegistry() {
   function ensure(id: string, range: ConsumptionRange, force = false): Promise<void> {
     const entry = entries.get(id), runtime = entry?.runtime;
     if (!entry || !runtime || !entry.online) return Promise.resolve();
-    const readRange = cachedHostConsumption(entry, range)?.range ?? range;
+    const readRange = cachedHostConsumption(entry, range, exactRanges)?.range ?? range;
     const key = rangeKey(readRange), pending = entry.pending.get(key);
     if (pending) return pending;
     const options = runtime.consumption.options(readRange), state = runtime.consumption.client.getQueryState<ConsumptionReport>(options.queryKey);
@@ -116,13 +116,13 @@ export function createHostRegistry() {
     entry.pending.set(key, task); emit();
     return task;
   }
-  return { getSnapshot, subscribe, get, register, ensure };
+  return { getSnapshot, subscribe, get, register, ensure, exactRanges };
 }
 export type HostRegistry = ReturnType<typeof createHostRegistry>;
 
-const registryKey = Symbol.for('lalaze.paseo-usage-glance.host-registry.v3');
-export function getHostRegistry(): HostRegistry {
+export function getHostRegistry(workspace = false): HostRegistry {
+  const registryKey = Symbol.for(`lalaze.paseo-usage-glance.host-registry.v4${workspace ? '.workspace' : ''}`);
   const shared = globalThis as typeof globalThis & { [registryKey]?: HostRegistry };
-  return shared[registryKey] ??= createHostRegistry();
+  return shared[registryKey] ??= createHostRegistry(workspace);
 }
 export type HostRegistration = ReturnType<HostRegistry['register']>;

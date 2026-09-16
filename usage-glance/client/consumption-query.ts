@@ -3,7 +3,7 @@ import type { PluginClientContext } from '@getpaseo/plugin/client';
 import type { PaseoApi } from '@getpaseo/client';
 import { enabledConsumptionSources, unsupportedConsumptionProviders, readConsumption, type ConsumptionRange, type ConsumptionReport } from '../shared/consumption';
 
-export function createConsumptionQuery(client: QueryClient, rpc: PluginClientContext['rpc'], providers: Pick<PaseoApi['providers'], 'subscribe'>) {
+export function createConsumptionQuery(client: QueryClient, rpc: PluginClientContext['rpc'], providers: Pick<PaseoApi['providers'], 'subscribe'>, contract = readConsumption) {
   let revision = 0, previous: string | undefined, closed = false;
   const unsubscribe = providers.subscribe(snapshot => {
     if (closed) return;
@@ -29,7 +29,7 @@ export function createConsumptionQuery(client: QueryClient, rpc: PluginClientCon
     options: (range: ConsumptionRange) => queryOptions<ConsumptionReport>({
       queryKey: ['token-consumption', range] as const,
       queryFn: async ({ signal }) => {
-        const report = await rpc(readConsumption, { range, refresh: false });
+        const report = await rpc(contract, { range, refresh: false });
         if (signal.aborted) throw new Error('读取已取消');
         return report;
       },
@@ -40,7 +40,7 @@ export function createConsumptionQuery(client: QueryClient, rpc: PluginClientCon
     }),
     async refresh(range: ConsumptionRange) {
       const started = revision;
-      const report = await rpc(readConsumption, { range, refresh: true });
+      const report = await rpc(contract, { range, refresh: true });
       if (!closed && started === revision) client.setQueryData(['token-consumption', range], report);
     },
   };

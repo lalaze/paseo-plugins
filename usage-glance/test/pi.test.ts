@@ -47,6 +47,10 @@ test('Pi counts all branches once, deduplicates copies and forks, and preserves 
     assert.equal(result.rows.find(row => row.model === 'glm-5')?.reasoning, 30);
     result.rows.forEach(row => consumptionRowSchema.parse(row));
     assert.deepEqual(await read(root), result);
+    const workspace = { id: 'project', label: 'Project', directory: '/project' };
+    const attributed = await runPi(range, new AbortController().signal, root, (_id, cwd) => cwd === workspace.directory ? workspace : undefined);
+    assert.equal(attributed.rows.reduce((sum, row) => sum + totalTokens(row), 0), 880);
+    assert.ok(attributed.rows.every(row => row.workspace?.id === workspace.id));
     assert.equal(JSON.stringify(result).includes('PRIVATE'), false);
     assert.equal((await read(root, { ...range, timezone: 'Asia/Shanghai' })).rows.length, 0);
     assert.equal((await read(root, { ...range, since: '2026-09-11', until: '2026-09-11', timezone: 'Asia/Shanghai' })).rows.length, 2);
@@ -66,6 +70,16 @@ test('Pi includes recorded summary usage without counting context size or inferr
     const result = await read(root);
     assert.equal(result.message, null);
     assert.deepEqual(result.rows, [{ date: range.since, model: '未记录模型', inferredModel: true, input: 570, output: 90, cacheRead: 210, cacheWrite: 60, reasoning: null }]);
+  });
+});
+
+test('Pi copied history with conflicting workspace ownership remains unattributed once', async () => {
+  const workspaces = [{ id: 'one', label: 'One', directory: '/one' }, { id: 'two', label: 'Two', directory: '/two' }];
+  await fixture({ 'one.jsonl': [{ ...header(), cwd: '/one' }, message('shared'), message('only-one')], 'two.jsonl': [{ ...header('fork'), cwd: '/two' }, message('shared')] }, async root => {
+    const result = await runPi(range, new AbortController().signal, root, (_id, cwd) => workspaces.find(item => item.directory === cwd));
+    assert.equal(result.rows.reduce((sum, row) => sum + totalTokens(row), 0), 440);
+    assert.equal(totalTokens(result.rows.find(row => !row.workspace)!), 220);
+    assert.equal(totalTokens(result.rows.find(row => row.workspace?.id === 'one')!), 220);
   });
 });
 

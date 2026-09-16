@@ -40,12 +40,17 @@ export const rangeSchema = z.object({
 }).refine(value => value.since <= value.until, '开始日期不能晚于结束日期')
   .refine(value => Date.parse(value.until) - Date.parse(value.since) < 366 * 86400000, '一次最多查看 366 天');
 export type ConsumptionRange = z.infer<typeof rangeSchema>;
-export const consumptionRowSchema = tokensSchema.extend({ date: dateSchema, model: z.string().max(256), inferredModel: z.boolean() });
+export const workspaceIdentitySchema = z.object({ id: z.string(), label: z.string(), directory: z.string() });
+export type WorkspaceIdentity = z.infer<typeof workspaceIdentitySchema>;
+export const consumptionRowSchema = tokensSchema.extend({ date: dateSchema, model: z.string().max(256), inferredModel: z.boolean(), workspace: workspaceIdentitySchema.optional() });
 export type ConsumptionRow = z.infer<typeof consumptionRowSchema>;
+export const workspaceConsumptionRowSchema = consumptionRowSchema.omit({ date: true });
+export type WorkspaceConsumptionRow = z.infer<typeof workspaceConsumptionRowSchema>;
 export const sourceReportSchema = z.object({
   source: z.enum(sourceIds), status: z.enum(['loading', 'ready', 'empty', 'partial', 'error']),
   updatedAt: z.string().nullable(), rows: z.array(consumptionRowSchema), message: z.string().nullable(),
   host: hostIdentitySchema.optional(),
+  workspaceRows: z.array(workspaceConsumptionRowSchema).optional(),
 });
 export type SourceReport = z.infer<typeof sourceReportSchema>;
 export const consumptionReportSchema = z.object({
@@ -55,6 +60,7 @@ export const consumptionReportSchema = z.object({
 });
 export type ConsumptionReport = z.infer<typeof consumptionReportSchema>;
 export const readConsumption = defineRpc({ name: 'read-consumption', input: z.object({ range: rangeSchema, refresh: z.boolean().default(false) }), output: consumptionReportSchema });
+export const readWorkspaceConsumption = defineRpc({ name: 'read-workspace-consumption', input: readConsumption.input, output: consumptionReportSchema });
 
 export function dateInZone(now: Date, timezone: string): string {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
@@ -81,15 +87,16 @@ export function modelVendor(model: string, source: SourceId): string {
   return '未识别供应商';
 }
 export type ModelTotal = Tokens & { model: string; source: SourceId; inferredModel: boolean; host?: HostIdentity };
-export type ConsumptionGroup = Tokens & { id: string; label: string; models: ModelTotal[] };
-export type ConsumptionGrouping = 'vendor' | 'source' | 'model' | 'host';
+export type ConsumptionGroup = Tokens & { id: string; label: string; detail?: string; models: ModelTotal[] };
+export type ConsumptionGrouping = 'vendor' | 'source' | 'model' | 'host' | 'workspace';
 export function groupConsumption(sources: SourceReport[], by: ConsumptionGrouping): ConsumptionGroup[] {
   const groups = new Map<string, ConsumptionGroup>();
-  for (const report of sources) for (const row of report.rows) {
-    const label = by === 'host' ? report.host?.label ?? '本机' : by === 'source' ? sourceNames[report.source] : by === 'model' ? row.model : modelVendor(row.model, report.source);
-    const id = by === 'host' ? report.host?.id ?? 'local' : label;
+  for (const report of sources) for (const row of (by === 'workspace' ? report.workspaceRows ?? report.rows : report.rows)) {
+    const workspace = row.workspace;
+    const label = by === 'workspace' ? workspace?.label ?? '未归属 Workspace' : by === 'host' ? report.host?.label ?? '本机' : by === 'source' ? sourceNames[report.source] : by === 'model' ? row.model : modelVendor(row.model, report.source);
+    const id = by === 'workspace' ? JSON.stringify([report.host?.id ?? 'local', workspace?.id ?? null]) : by === 'host' ? report.host?.id ?? 'local' : label;
     let group = groups.get(id);
-    if (!group) { group = { ...emptyTokens(), id, label, models: [] }; groups.set(id, group); }
+    if (!group) { group = { ...emptyTokens(), id, label, ...(by === 'workspace' ? { detail: [report.host?.label, workspace?.directory].filter(Boolean).join(' · ') } : {}), models: [] }; groups.set(id, group); }
     addTokens(group, row);
     let model = group.models.find(value => value.source === report.source && value.model === row.model && value.host?.id === report.host?.id);
     if (!model) { model = { ...emptyTokens(), source: report.source, model: row.model, inferredModel: false, ...(report.host ? { host: report.host } : {}) }; group.models.push(model); }

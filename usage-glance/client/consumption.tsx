@@ -22,6 +22,7 @@ function GroupCard({ group, total, theme, compact, byModel }: { group: Consumpti
           <Text style={{ color: theme.colors.foregroundMuted, fontSize: 14 }}>{expanded ? '−' : '+'}</Text>
         </View>
       </View>
+      {group.detail ? <Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 16 }}>{group.detail}</Text> : null}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <View style={{ flex: 1, height: 5, borderRadius: 3, backgroundColor: theme.colors.surface2, overflow: 'hidden' }}>
           <View style={{ height: '100%', width: `${share}%`, backgroundColor: theme.colors.accent, borderRadius: 3 }} />
@@ -41,7 +42,7 @@ function GroupCard({ group, total, theme, compact, byModel }: { group: Consumpti
   </View>;
 }
 
-type ConsumptionProps = Pick<PluginHostProps, 'theme' | 'layout'> & { query: ConsumptionQuery; scopeLabel?: string };
+type ConsumptionProps = Pick<PluginHostProps, 'theme' | 'layout'> & { query: ConsumptionQuery; workspaceQuery?: ConsumptionQuery; scopeLabel?: string };
 export function Consumption(props: ConsumptionProps) {
   const [timezone] = useState(consumptionTimezone);
   const [view, setView] = useState<'summary' | 'heatmap'>('summary');
@@ -53,7 +54,7 @@ export function Consumption(props: ConsumptionProps) {
     {view === 'summary' ? <ConsumptionSummary {...props} timezone={timezone} /> : <MonthlyHeatmap {...props} timezone={timezone} />}
   </View>;
 }
-function ConsumptionSummary({ theme, layout, query, timezone, scopeLabel }: ConsumptionProps & { timezone: string }) {
+function ConsumptionSummary({ theme, layout, query, workspaceQuery, timezone, scopeLabel }: ConsumptionProps & { timezone: string }) {
   const [preset, setPreset] = useState<'today' | 'week' | 'month' | 'custom'>('today');
   const [custom, setCustom] = useState(() => presetRange('month', timezone));
   const [draft, setDraft] = useState(custom);
@@ -62,14 +63,15 @@ function ConsumptionSummary({ theme, layout, query, timezone, scopeLabel }: Cons
   const [refreshError, setRefreshError] = useState(false);
   const range: ConsumptionRange = preset === 'custom' ? custom : presetRange(preset, timezone);
   const validation = rangeSchema.safeParse(draft);
-  const result = useConsumption(query, range);
+  const activeQuery = by === 'workspace' && workspaceQuery ? workspaceQuery : query;
+  const result = useConsumption(activeQuery, range);
   const report = result.data, sources = report?.sources ?? [];
   const groups = groupConsumption(sources, by), totals = emptyTokens();
   for (const group of groups) addTokens(totals, group);
   const pending = result.isPending || (report?.scanning === true && !hasConsumptionReading(report));
   const incomplete = !!report?.unsupportedProviders?.length || report?.hosts?.some(host => host.status !== 'ready') || sources.some(source => ['partial', 'error', 'loading'].includes(source.status));
   const latest = sources.map(source => source.updatedAt).filter((date): date is string => date !== null).sort()[0];
-  const refresh = async () => { setRefreshing(true); setRefreshError(false); try { await query.refresh(range); } catch { setRefreshError(true); } finally { setRefreshing(false); } };
+  const refresh = async () => { setRefreshing(true); setRefreshError(false); try { await activeQuery.refresh(range); } catch { setRefreshError(true); } finally { setRefreshing(false); } };
   return <View style={{ gap: 14, width: '100%' }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
       <View style={{ gap: 4, flexShrink: 1 }}>
@@ -98,17 +100,19 @@ function ConsumptionSummary({ theme, layout, query, timezone, scopeLabel }: Cons
       <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 19 }}>{pending ? '正在整理已启用来源的记录…' : report ? report.hosts?.some(host => host.status !== 'ready') ? '所选主机暂未返回记录，请查看下方主机状态。' : !sources.length ? '当前未启用支持消耗统计的 Provider。' : incomplete ? '尚无可显示的消耗，请查看下方数据来源状态。' : '该时间范围没有已记录的消耗。' : '暂时无法读取，请稍后刷新。'}</Text>
     </View>}
     <Text style={{ color: theme.colors.foregroundMuted, fontSize: 10, textAlign: 'center' }}>{range.since === range.until ? range.since : `${range.since} — ${range.until}`} · {timezone}</Text>
-    {groups.length ? <View style={{ gap: 2 }}>
+    <View style={{ gap: 2 }}>
       <Segments quiet wrap={layout.compact} theme={theme} options={[
         { label: '按 Provider', active: by === 'source', onPress: () => setBy('source') },
+        ...(workspaceQuery ? [{ label: '按 Workspace', active: by === 'workspace', onPress: () => setBy('workspace') }] : []),
         { label: '按模型', active: by === 'model', onPress: () => setBy('model') },
         { label: '按模型厂商', active: by === 'vendor', onPress: () => setBy('vendor') },
         ...(report?.hosts ? [{ label: '按主机', active: by === 'host', onPress: () => setBy('host') }] : []),
       ]} />
       {by === 'vendor' ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 17, paddingTop: 8 }}>按模型识别厂商，实际调用渠道可能不同</Text> : null}
       {by === 'model' ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 17, paddingTop: 8 }}>同名模型合并统计，展开查看各主机和 Provider 的消耗</Text> : null}
+      {by === 'workspace' ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 17, paddingTop: 8 }}>按左侧工作区归类，包含 Working 和 Done。无法匹配、已移除或归属不明确的记录保留在「未归属 Workspace」。</Text> : null}
       {groups.map(group => <GroupCard key={`${by}:${group.id}`} group={group} total={totalTokens(totals)} theme={theme} compact={layout.compact} byModel={by === 'model'} />)}
-    </View> : null}
+    </View>
     <ConsumptionSources report={report} theme={theme} />
   </View>;
 }

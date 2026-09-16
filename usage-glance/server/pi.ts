@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setImmediate } from 'node:timers/promises';
-import { addTokens, dateInZone, emptyTokens, type ConsumptionRange, type ConsumptionRow, type Tokens } from '../shared/consumption';
+import { addTokens, dateInZone, emptyTokens, type ConsumptionRange, type ConsumptionRow, type Tokens, type WorkspaceIdentity } from '../shared/consumption';
 
 /** Same agent-directory override (including ~ expansion) as Pi's config.ts. */
 export function piSessionsRoot(home = homedir(), env: NodeJS.ProcessEnv = process.env): string {
@@ -43,8 +43,8 @@ function timestamp(value: unknown): number {
 }
 
 /** Read retained v1-v3 session entries, including all branches, without sending transcripts. */
-export async function runPi(range: ConsumptionRange, signal: AbortSignal, root = piSessionsRoot()): Promise<{ rows: ConsumptionRow[]; message: string | null }> {
-  const rows = new Map<string, ConsumptionRow>(), seen = new Set<string>();
+export async function runPi(range: ConsumptionRange, signal: AbortSignal, root = piSessionsRoot(), resolveWorkspace?: (id?: string, cwd?: string) => WorkspaceIdentity | undefined): Promise<{ rows: ConsumptionRow[]; message: string | null }> {
+  const rows = new Map<string, ConsumptionRow>(), seen = new Map<string, ConsumptionRow>();
   let warnings = 0, readable = 0, files = 0;
   const directories = [root];
   while (directories.length) {
@@ -63,6 +63,7 @@ export async function runPi(range: ConsumptionRange, signal: AbortSignal, root =
       const input = createReadStream(path, { encoding: 'utf8', signal });
       const lines = createInterface({ input, crlfDelay: Infinity });
       let header = false, lineNumber = 0;
+      let workspace: WorkspaceIdentity | undefined;
       const legacyOccurrences = new Map<string, number>();
       try {
         for await (const line of lines) {
@@ -73,6 +74,7 @@ export async function runPi(range: ConsumptionRange, signal: AbortSignal, root =
             const entry = object(JSON.parse(line));
             if (!header) {
               if (entry.type !== 'session' || ![1, 2, 3].includes(Number(entry.version ?? 1))) { warnings++; break; }
+              workspace = resolveWorkspace?.(typeof entry.id === 'string' ? entry.id : undefined, typeof entry.cwd === 'string' ? entry.cwd : undefined);
               header = true; readable++; continue;
             }
             let payload: ObjectValue;
@@ -95,12 +97,11 @@ export async function runPi(range: ConsumptionRange, signal: AbortSignal, root =
             const occurrence = (legacyOccurrences.get(digest) ?? 0) + 1;
             legacyOccurrences.set(digest, occurrence);
             const identity = `${typeof entry.id === 'string' ? entry.id : occurrence}:${digest}`;
-            if (seen.has(identity)) continue;
-            seen.add(identity);
-            const key = `${date}\0${model}`;
-            let row = rows.get(key);
-            if (!row) { row = { ...emptyTokens(), date, model, inferredModel: model === '未记录模型' }; rows.set(key, row); }
-            addTokens(row, usage);
+            const previous = seen.get(identity);
+            if (previous) {
+              // Copies in different workspaces do not establish which spent the tokens.
+              if (previous.workspace?.id !== workspace?.id) delete previous.workspace;
+            } else seen.set(identity, { ...usage, date, model, inferredModel: model === '未记录模型', ...(workspace ? { workspace } : {}) });
           } catch { warnings++; }
         }
         if (!header && !lineNumber) warnings++;
@@ -111,6 +112,12 @@ export async function runPi(range: ConsumptionRange, signal: AbortSignal, root =
   }
   checkSignal(signal);
   if (!readable && (files || warnings)) throw new Error('本机 Pi 用量记录无法读取，请检查格式和读取权限');
+  for (const usage of seen.values()) {
+    const key = JSON.stringify([usage.date, usage.model, usage.workspace?.id]);
+    let row = rows.get(key);
+    if (!row) { row = { ...usage, ...emptyTokens() }; rows.set(key, row); }
+    addTokens(row, usage);
+  }
   return {
     rows: [...rows.values()].sort((a, b) => a.date.localeCompare(b.date) || a.model.localeCompare(b.model)),
     message: warnings ? `${warnings} 个 Pi 文件或记录未能读取，统计可能不完整` : null,

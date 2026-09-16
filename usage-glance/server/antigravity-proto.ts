@@ -1,6 +1,7 @@
 // Protobuf field layout and identity merging adapted from ccusage's Antigravity
 // adapter, commit 0d220e060669c5e5b6eccfa8b64cc6f0e3539fcc (MIT).
 // See THIRD-PARTY-NOTICES.md. Only accounting metadata is decoded.
+import type { WorkspaceIdentity } from '../shared/consumption';
 type Field = { number: number; value: bigint | Uint8Array | null };
 function fields(blob: Uint8Array): Field[] {
   if (!(blob instanceof Uint8Array) || blob.length > 32 * 1024 * 1024) throw new Error('Antigravity 元数据格式不兼容');
@@ -88,11 +89,12 @@ export function stepMetadata(blob: Uint8Array): AgyMetadata {
 }
 export function trajectoryTimestamp(blob: Uint8Array): number | undefined { return timestamp(bytes(fields(blob), 2)); }
 
-export type AgyEvent = AgyUsage & { time?: number; timeRank: number; model: string };
+export type AgyEvent = AgyUsage & { time?: number; timeRank: number; model: string; workspace?: WorkspaceIdentity };
 /** The same call appears in steps, generation metadata, retries, and DB copies. */
 export function dedupeAgy(events: AgyEvent[]): AgyEvent[] {
   const slots: (AgyEvent | null)[] = [], identities = new Map<string, number>();
   const merge = (target: AgyEvent, other: AgyEvent) => {
+    if (target.workspace?.id !== other.workspace?.id) delete target.workspace;
     for (const key of ['fresh', 'cacheRead', 'cacheWrite', 'output', 'reasoning'] as const) target[key] = Math.max(target[key], other[key]);
     target.output = Math.max(target.output, target.reasoning);
     if (target.model === '未记录模型' || /^antigravity-model-/.test(target.model)) target.model = other.model;

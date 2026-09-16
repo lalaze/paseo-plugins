@@ -48,8 +48,8 @@ export function parseCcusage(raw: unknown, range: ConsumptionRange): Consumption
   return rows;
 }
 
-export async function runCcusage(source: Exclude<SourceId, 'antigravity' | 'pi'>, range: ConsumptionRange, signal: AbortSignal, env: NodeJS.ProcessEnv = process.env): Promise<{ rows: ConsumptionRow[]; message: string | null }> {
-  const args = [source, 'daily', '--json', '--offline', '--no-cost', '--no-color', '--config', backend.config, '--since', range.since, '--until', range.until, '--timezone', range.timezone];
+export async function runCcusageCommand(source: Exclude<SourceId, 'antigravity' | 'pi'>, command: 'daily' | 'session' | 'projects', range: ConsumptionRange, signal: AbortSignal, env: NodeJS.ProcessEnv = process.env) {
+  const args = [source, command === 'projects' ? 'daily' : command, ...(command === 'projects' ? ['--instances'] : []), '--json', '--offline', '--no-cost', '--no-color', '--config', backend.config, '--since', range.since, '--until', range.until, '--timezone', range.timezone];
   const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     execFile(backend.binary, args, { signal, timeout: 60000, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024, windowsHide: true, env: { ...env, NO_COLOR: '1', FORCE_COLOR: '0' } }, (error, stdout, stderr) => {
       if (error) {
@@ -61,5 +61,10 @@ export async function runCcusage(source: Exclude<SourceId, 'antigravity' | 'pi'>
   });
   let json: unknown;
   try { json = JSON.parse(stdout); } catch { throw new Error('采集器未返回有效用量数据'); }
-  return { rows: parseCcusage(json, range), message: stderr.trim() ? '部分记录可能未被采集，请检查本机 CLI 记录是否完整' : null };
+  return { json, message: stderr.trim() ? '部分记录可能未被采集，请检查本机 CLI 记录是否完整' : null };
+}
+
+export async function runCcusage(source: Exclude<SourceId, 'antigravity' | 'pi'>, range: ConsumptionRange, signal: AbortSignal, env: NodeJS.ProcessEnv = process.env): Promise<{ rows: ConsumptionRow[]; message: string | null }> {
+  const result = await runCcusageCommand(source, 'daily', range, signal, env);
+  return { rows: parseCcusage(result.json, range), message: result.message };
 }

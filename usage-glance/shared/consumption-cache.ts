@@ -21,7 +21,9 @@ export function projectConsumptionReport(report: ConsumptionReport, range: Consu
   return { ...report, range, sources: report.sources.map(source => {
     const rows = source.rows.filter(row => row.date >= range.since && row.date <= range.until);
     const status = source.status === 'ready' || source.status === 'empty' ? rows.length ? 'ready' : 'empty' : source.status;
-    return { ...source, rows, status };
+    // Session totals cover the entire requested range and cannot be date-filtered.
+    const { workspaceRows, ...daily } = source;
+    return { ...daily, rows, status };
   }) };
 }
 
