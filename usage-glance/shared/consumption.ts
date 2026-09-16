@@ -44,7 +44,20 @@ export const workspaceIdentitySchema = z.object({ id: z.string(), label: z.strin
 export type WorkspaceIdentity = z.infer<typeof workspaceIdentitySchema>;
 export const consumptionRowSchema = tokensSchema.extend({ date: dateSchema, model: z.string().max(256), inferredModel: z.boolean(), workspace: workspaceIdentitySchema.optional() });
 export type ConsumptionRow = z.infer<typeof consumptionRowSchema>;
-export const workspaceConsumptionRowSchema = consumptionRowSchema.omit({ date: true });
+export const workspaceIssueSchema = z.enum(['unmatched', 'updating', 'accounting-mismatch', 'read-error']);
+export type WorkspaceIssue = z.infer<typeof workspaceIssueSchema>;
+export const workspaceIssueLabels: Record<WorkspaceIssue, string> = {
+  unmatched: '未归属 Workspace', updating: '用量更新中', 'accounting-mismatch': '待核对用量', 'read-error': '归属读取失败',
+};
+const workspaceIssueNotes: Record<WorkspaceIssue, string> = {
+  unmatched: '未找到唯一对应的工作区，可能缺少会话目录、工作区已移除或目录存在冲突。',
+  updating: '读取期间用量发生变化，重新核对后仍未对齐。暂按每日总量保留，下次刷新继续核对。',
+  'accounting-mismatch': '会话明细与每日总量仍有差异，暂未分配到工作区。展开可查看差异。',
+  'read-error': '工作区归属暂时无法读取，已保留每日总量，请稍后刷新。',
+};
+export const workspaceConsumptionRowSchema = consumptionRowSchema.omit({ date: true }).extend({
+  workspaceIssue: workspaceIssueSchema.optional(), workspaceNote: z.string().max(1024).optional(),
+});
 export type WorkspaceConsumptionRow = z.infer<typeof workspaceConsumptionRowSchema>;
 export const sourceReportSchema = z.object({
   source: z.enum(sourceIds), status: z.enum(['loading', 'ready', 'empty', 'partial', 'error']),
@@ -86,21 +99,22 @@ export function modelVendor(model: string, source: SourceId): string {
   if (/^minimax[ -]/.test(name)) return 'MiniMax';
   return '未识别供应商';
 }
-export type ModelTotal = Tokens & { model: string; source: SourceId; inferredModel: boolean; host?: HostIdentity };
-export type ConsumptionGroup = Tokens & { id: string; label: string; detail?: string; models: ModelTotal[] };
+export type ModelTotal = Tokens & { model: string; source: SourceId; inferredModel: boolean; host?: HostIdentity; workspaceNote?: string };
+export type ConsumptionGroup = Tokens & { id: string; label: string; detail?: string; note?: string; models: ModelTotal[] };
 export type ConsumptionGrouping = 'vendor' | 'source' | 'model' | 'host' | 'workspace';
 export function groupConsumption(sources: SourceReport[], by: ConsumptionGrouping): ConsumptionGroup[] {
   const groups = new Map<string, ConsumptionGroup>();
   for (const report of sources) for (const row of (by === 'workspace' ? report.workspaceRows ?? report.rows : report.rows)) {
-    const workspace = row.workspace;
-    const label = by === 'workspace' ? workspace?.label ?? '未归属 Workspace' : by === 'host' ? report.host?.label ?? '本机' : by === 'source' ? sourceNames[report.source] : by === 'model' ? row.model : modelVendor(row.model, report.source);
-    const id = by === 'workspace' ? JSON.stringify([report.host?.id ?? 'local', workspace?.id ?? null]) : by === 'host' ? report.host?.id ?? 'local' : label;
+    const workspace = row.workspace, issue = (row as WorkspaceConsumptionRow).workspaceIssue ?? 'unmatched';
+    const label = by === 'workspace' ? workspace?.label ?? workspaceIssueLabels[issue] : by === 'host' ? report.host?.label ?? '本机' : by === 'source' ? sourceNames[report.source] : by === 'model' ? row.model : modelVendor(row.model, report.source);
+    const id = by === 'workspace' ? JSON.stringify([report.host?.id ?? 'local', workspace?.id ?? null, workspace ? null : issue]) : by === 'host' ? report.host?.id ?? 'local' : label;
     let group = groups.get(id);
-    if (!group) { group = { ...emptyTokens(), id, label, ...(by === 'workspace' ? { detail: [report.host?.label, workspace?.directory].filter(Boolean).join(' · ') } : {}), models: [] }; groups.set(id, group); }
+    if (!group) { group = { ...emptyTokens(), id, label, ...(by === 'workspace' ? { detail: [report.host?.label, workspace?.directory].filter(Boolean).join(' · '), ...(!workspace ? { note: workspaceIssueNotes[issue] } : {}) } : {}), models: [] }; groups.set(id, group); }
     addTokens(group, row);
     let model = group.models.find(value => value.source === report.source && value.model === row.model && value.host?.id === report.host?.id);
     if (!model) { model = { ...emptyTokens(), source: report.source, model: row.model, inferredModel: false, ...(report.host ? { host: report.host } : {}) }; group.models.push(model); }
     addTokens(model, row); model.inferredModel ||= row.inferredModel;
+    if (by === 'workspace' && 'workspaceNote' in row) model.workspaceNote = row.workspaceNote;
   }
   for (const group of groups.values()) group.models.sort((a, b) => totalTokens(b) - totalTokens(a));
   return [...groups.values()].sort((a, b) => totalTokens(b) - totalTokens(a));

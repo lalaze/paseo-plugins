@@ -82,13 +82,14 @@ test('workspace ranges are exact in service, host lookup and multi-host aggregat
   } finally { service.dispose(); }
 });
 
-test('native Codex attribution keeps cross-day usage, forks and archived copies in their workspace', async () => {
+test('native Codex attribution keeps cross-day usage, forks, archived copies and renamed byte-identical backups in their workspace', async () => {
   const root = await mkdtemp(join(tmpdir(), 'workspace-codex-'));
   const usage = (input: number) => ({ input_tokens: input, output_tokens: 20, cached_input_tokens: 50, reasoning_output_tokens: 0, total_tokens: input + 20 });
   const event = (timestamp: string, last: object, total = last) => ({ type: 'event_msg', timestamp, payload: { type: 'token_count', info: { model: row.model, last_token_usage: last, total_token_usage: total } } });
   const parent = [{ type: 'session_meta', timestamp: '2026-09-10T08:00:00Z', payload: { id: 'parent', cwd: a.directory } }, event('2026-09-10T08:01:00Z', usage(100)), event('2026-09-11T08:01:00Z', usage(100), { ...usage(200), output_tokens: 40, cached_input_tokens: 100, total_tokens: 240 })];
   const files = {
     'sessions/2026/09/10/parent.jsonl': parent,
+    'sessions/2026/09/10/parent-backup.jsonl': parent,
     'archived_sessions/2026/09/10/parent.jsonl': parent,
     'sessions/2026/09/11/child.jsonl': [{ type: 'session_meta', timestamp: '2026-09-11T09:00:00Z', payload: { id: 'child', cwd: b.directory, forked_from_id: 'parent' } }, event('2026-09-11T09:00:00Z', usage(100)), event('2026-09-11T09:00:00Z', usage(100), { ...usage(200), output_tokens: 40, cached_input_tokens: 100, total_tokens: 240 }), event('2026-09-11T09:03:00Z', usage(100), { ...usage(300), output_tokens: 60, cached_input_tokens: 150, total_tokens: 360 })],
   };

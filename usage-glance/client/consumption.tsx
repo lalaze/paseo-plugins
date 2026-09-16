@@ -23,6 +23,7 @@ function GroupCard({ group, total, theme, compact, byModel }: { group: Consumpti
         </View>
       </View>
       {group.detail ? <Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 16 }}>{group.detail}</Text> : null}
+      {group.note ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 17 }}>{group.note}</Text> : null}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <View style={{ flex: 1, height: 5, borderRadius: 3, backgroundColor: theme.colors.surface2, overflow: 'hidden' }}>
           <View style={{ height: '100%', width: `${share}%`, backgroundColor: theme.colors.accent, borderRadius: 3 }} />
@@ -37,6 +38,7 @@ function GroupCard({ group, total, theme, compact, byModel }: { group: Consumpti
         <Text selectable style={{ color: theme.colors.foreground, fontWeight: '500', fontSize: 12, lineHeight: 18, flexShrink: 1 }}>{byModel ? `${model.host ? `${model.host.label} · ` : ''}${sourceNames[model.source]}` : model.model}{model.inferredModel ? ' · 模型推定' : ''}</Text>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{byModel ? '' : `${model.host ? `${model.host.label} · ` : ''}${sourceNames[model.source]} · `}共 {formatTokens(totalTokens(model))} token</Text>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 18 }}>输入 {formatTokens(model.input)} · 输出 {formatTokens(model.output)}{model.cacheRead ? ` · 缓存读取 ${formatTokens(model.cacheRead)}` : ''}{model.cacheWrite ? ` · 缓存写入 ${formatTokens(model.cacheWrite)}` : ''}{model.reasoning !== null ? ` · 推理 ${formatTokens(model.reasoning)}` : ''}</Text>
+        {model.workspaceNote ? <Text style={{ color: theme.colors.statusWarning, fontSize: 11, lineHeight: 18 }}>{model.workspaceNote}</Text> : null}
       </View>)}
     </View> : null}
   </View>;
@@ -110,7 +112,7 @@ function ConsumptionSummary({ theme, layout, query, workspaceQuery, timezone, sc
       ]} />
       {by === 'vendor' ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 17, paddingTop: 8 }}>按模型识别厂商，实际调用渠道可能不同</Text> : null}
       {by === 'model' ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 17, paddingTop: 8 }}>同名模型合并统计，展开查看各主机和 Provider 的消耗</Text> : null}
-      {by === 'workspace' ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 17, paddingTop: 8 }}>按左侧工作区归类，包含 Working 和 Done。无法匹配、已移除或归属不明确的记录保留在「未归属 Workspace」。</Text> : null}
+      {by === 'workspace' ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 17, paddingTop: 8 }}>按左侧工作区归类，包含 Working 和 Done。无法匹配的记录与暂未完成核对的用量分别列出，均计入总量。</Text> : null}
       {groups.map(group => <GroupCard key={`${by}:${group.id}`} group={group} total={totalTokens(totals)} theme={theme} compact={layout.compact} byModel={by === 'model'} />)}
     </View>
     <ConsumptionSources report={report} theme={theme} />
