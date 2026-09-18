@@ -71,7 +71,7 @@ function place(element: HTMLElement, rect: DOMRect, width = 0) {
 }
 
 export function createOverlayController(runtimes: Map<string, Runtime>): OverlayController {
-  let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, card: HTMLDivElement | null = null, translateTimer: number | undefined, request = 0;
+  let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, card: HTMLDivElement | null = null, translateTimer: number | undefined, request = 0, inlineRequest = 0;
   const highlightedRanges = new Map<HTMLElement, Range>();
   const removeTrigger = () => { trigger?.remove(); trigger = null; };
   const removeLauncher = () => { launcher?.remove(); launcher = null; };
@@ -92,9 +92,9 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     css.highlights.set(HIGHLIGHT_NAME, new HighlightClass(...highlightedRanges.values()));
   }
 
-  function persistTranslation(snapshot: SelectionSnapshot, result: TranslationResult) {
+  function persistAnnotation(snapshot: SelectionSnapshot, text: string, error = false): HTMLElement | null {
     const { message, anchor, range, selectionKey } = snapshot;
-    if (!message?.isConnected || !range || !selectionKey) return;
+    if (!message?.isConnected || !range || !selectionKey) return null;
     const existing = Array.from(message.querySelectorAll<HTMLElement>('[data-paseo-translate-annotation]')).find(node => node.dataset.paseoTranslateKey === selectionKey);
     const annotation = existing ?? document.createElement('div');
     if (!existing) {
@@ -113,8 +113,24 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     const source = annotation.querySelector<HTMLElement>('[data-paseo-translate-source]');
     const output = annotation.querySelector<HTMLElement>('[data-paseo-translate-output]');
     if (source) source.textContent = snapshot.text;
-    if (output) output.textContent = result.translation;
+    if (output) { output.textContent = text; output.style.color = error ? '#fca5a5' : '#e4e4e7'; }
     highlightedRanges.set(annotation, range); syncHighlights();
+    return annotation;
+  }
+
+  async function translateInline(snapshot: SelectionSnapshot, runtime: Runtime) {
+    const sequence = String(++inlineRequest);
+    const annotation = persistAnnotation(snapshot, '正在翻译…');
+    if (!annotation) return;
+    annotation.dataset.paseoTranslateRequest = sequence;
+    try {
+      const result = await runtime.translate(snapshot.text, 'auto');
+      if (!annotation.isConnected || annotation.dataset.paseoTranslateRequest !== sequence) return;
+      persistAnnotation(snapshot, result.translation);
+    } catch (error) {
+      if (!annotation.isConnected || annotation.dataset.paseoTranslateRequest !== sequence) return;
+      persistAnnotation(snapshot, error instanceof Error ? error.message : String(error), true);
+    }
   }
 
   function currentRoute() {
@@ -146,7 +162,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     trigger.dataset.paseoTranslate = 'trigger';
     style(trigger, { position: 'fixed', zIndex: '2147483000', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
     trigger.addEventListener('pointerdown', event => event.preventDefault());
-    trigger.addEventListener('click', () => { removeTrigger(); showCard(snapshot, runtime); });
+    trigger.addEventListener('click', () => { removeTrigger(); void translateInline(snapshot, runtime); });
     document.body.append(trigger); place(trigger, snapshot.rect);
   }
 
@@ -190,7 +206,6 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
         if (sequence !== request || !card) return;
         status.textContent = `${result.detectedLanguage ? `${result.detectedLanguage} → ` : ''}${languageOptions.find(option => option.value === result.target)?.label ?? result.target}`;
         status.style.color = '#a1a1aa'; output.textContent = result.translation; note.textContent = result.note || ''; model.textContent = result.model; model.title = result.model; style(footer, { display: 'flex' });
-        if (text === snapshot.text) persistTranslation(snapshot, result);
       } catch (error) {
         if (sequence !== request || !card) return;
         status.textContent = error instanceof Error ? error.message : String(error); status.style.color = '#f87171';
