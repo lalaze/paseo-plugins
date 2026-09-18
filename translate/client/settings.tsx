@@ -8,6 +8,7 @@ export function TranslationSettingsScreen({ theme, layout }: PluginSurfaceProps)
   const [apiUrl, setApiUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
+  const [englishLockModels, setEnglishLockModels] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -17,6 +18,7 @@ export function TranslationSettingsScreen({ theme, layout }: PluginSurfaceProps)
     setApiUrl(settings.values.apiUrl);
     setApiKey(settings.values.apiKey);
     setModel(settings.values.model);
+    setEnglishLockModels(settings.values.englishLockModels);
   }, [settings.status, settings.status === 'ready' ? settings.revision : '']);
 
   const fieldStyle = {
@@ -42,7 +44,7 @@ export function TranslationSettingsScreen({ theme, layout }: PluginSurfaceProps)
   const save = async () => {
     setError(null); setMessage(null);
     try {
-      const values = validateTranslationSettings({ apiUrl, apiKey, model });
+      const values = validateTranslationSettings({ apiUrl, apiKey, model, englishLockModels });
       const saved = await settings.save(values, settings.revision);
       if (saved) setMessage('已保存。之后的翻译会直接调用此 API。');
       else setError(settings.saveError || '保存失败，请重试');
@@ -79,6 +81,14 @@ export function TranslationSettingsScreen({ theme, layout }: PluginSurfaceProps)
     <View style={{ gap: 7 }}>
       <Text style={labelStyle}>模型</Text>
       <TextInput value={model} onChangeText={setModel} style={fieldStyle} autoCapitalize="none" autoCorrect={false} placeholder="例如 gpt-4.1-mini" placeholderTextColor={theme.colors.foregroundMuted} />
+    </View>
+
+    <View style={{ gap: 7 }}>
+      <Text style={labelStyle}>自动 EN 锁模型</Text>
+      <TextInput value={englishLockModels} onChangeText={setEnglishLockModels} style={fieldStyle} autoCapitalize="none" autoCorrect={false} multiline placeholder="例如 claude, anthropic" placeholderTextColor={theme.colors.foregroundMuted} />
+      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>
+        用逗号、分号或换行分隔关键词，不区分大小写。当前对话的供应商或模型名命中任一关键词时，EN 锁会自动开启且不能手动关闭；留空则禁用自动锁。
+      </Text>
     </View>
 
     {error ? <Text style={{ color: theme.colors.statusDanger }}>{error}</Text> : null}

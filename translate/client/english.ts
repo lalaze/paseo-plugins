@@ -8,3 +8,14 @@ const latinLetter = /\p{Script=Latin}/u;
 export function isEnglishCompatibleDraft(text: string): boolean {
   return [...text].every(character => !letter.test(character) || latinLetter.test(character));
 }
+
+/** Comma, semicolon or newline separated, case-insensitive model keywords. */
+export function parseEnglishLockModels(value: string): string[] {
+  return [...new Set(value.split(/[,，;；\n]+/).map(keyword => keyword.trim().toLocaleLowerCase()).filter(Boolean))];
+}
+
+export function matchesEnglishLockModel(descriptor: string | null, keywords: readonly string[]): boolean {
+  if (!descriptor || !keywords.length) return false;
+  const normalized = descriptor.toLocaleLowerCase();
+  return keywords.some(keyword => normalized.includes(keyword));
+}

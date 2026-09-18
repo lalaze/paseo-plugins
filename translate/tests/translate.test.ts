@@ -3,7 +3,7 @@ import test from 'node:test';
 import { buildTranslationPrompt, parseTranslationOutput, resolveTarget, translateSelection } from '../server/translate';
 import { validateTranslationSettings } from '../shared/settings';
 
-const settings = { apiUrl: 'https://translate.example/v1/chat/completions', apiKey: 'secret-key', model: 'translate-model' };
+const settings = { apiUrl: 'https://translate.example/v1/chat/completions', apiKey: 'secret-key', model: 'translate-model', englishLockModels: 'claude, anthropic' };
 
 test('auto direction sends CJK text to English and other text to Chinese', () => {
   assert.equal(resolveTarget('你好，world', 'auto'), 'en');

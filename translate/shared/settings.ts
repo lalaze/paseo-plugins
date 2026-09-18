@@ -9,6 +9,7 @@ export const translationSettings = defineSettings({
     apiUrl: z.string().trim().max(2048).default('https://api.openai.com/v1/chat/completions'),
     apiKey: z.string().max(8192).default(''),
     model: z.string().trim().max(300).default(''),
+    englishLockModels: z.string().trim().max(2000).default('claude, anthropic'),
   }),
 });
 

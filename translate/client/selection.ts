@@ -1,13 +1,18 @@
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { settingsRpc } from '@getpaseo/plugin';
 import { parseConversationRoute } from './route';
-import { isEnglishCompatibleDraft } from './english';
+import { isEnglishCompatibleDraft, matchesEnglishLockModel, parseEnglishLockModels } from './english';
 import { translateSelectionRpc, type TargetLanguage, type TranslationResult } from '../shared/rpc';
 import { translationSettings, validateTranslationSettings } from '../shared/settings';
 
-type Runtime = { translate(text: string, target: TargetLanguage): Promise<TranslationResult> };
+type Runtime = {
+  translate(text: string, target: TargetLanguage): Promise<TranslationResult>;
+  agentModel(agentId: string): Promise<string | null>;
+  englishLockModels(): Promise<string[]>;
+  subscribeAgentModels(handler: (agentId: string, model: string | null) => void): () => void;
+};
 type SelectionSnapshot = { text: string; rect: DOMRect; route: { serverId: string }; message?: Element; anchor?: Element; range?: Range; selectionKey?: string };
-type OverlayController = { refresh(): void; dispose(): void };
+type OverlayController = { refresh(): void; updateAgentModel(serverId: string, agentId: string, model: string | null): void; dispose(): void };
 type Registry = { readonly closed: boolean; register(serverId: string, runtime: Runtime): () => void };
 type HighlightRegistry = { set(name: string, highlight: unknown): void; delete(name: string): boolean };
 type HighlightConstructor = new (...ranges: Range[]) => unknown;
@@ -120,9 +125,11 @@ function saveStrictEnglishMode(enabled: boolean) {
 }
 
 export function createOverlayController(runtimes: Map<string, Runtime>): OverlayController {
-  let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, englishGuard: HTMLButtonElement | null = null, launcherTimer: number | undefined, guardTimer: number | undefined, draftUndo: DraftUndo | null = null, composerRequest = 0, composerBusy = false, writingComposer = false, inlineRequest = 0, strictEnglish = loadStrictEnglishMode();
+  let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, englishGuard: HTMLButtonElement | null = null, launcherTimer: number | undefined, guardTimer: number | undefined, draftUndo: DraftUndo | null = null, composerRequest = 0, composerBusy = false, writingComposer = false, inlineRequest = 0, modelRequest = 0, manualStrictEnglish = loadStrictEnglishMode(), automaticEnglishLock = false, activeModelDescriptor: string | null = null, activePolicyKey: string | null = null;
   const highlightedRanges = new Map<HTMLElement, Range>();
   const annotationGroups = new WeakMap<Element, HTMLElement>();
+  const agentModels = new Map<string, string | null>();
+  const englishLockModels = new Map<string, string[]>();
   const removeTrigger = () => { trigger?.remove(); trigger = null; };
   const clearLauncherTimer = () => { if (launcherTimer !== undefined) { window.clearTimeout(launcherTimer); launcherTimer = undefined; } };
   const clearGuardTimer = () => { if (guardTimer !== undefined) { window.clearTimeout(guardTimer); guardTimer = undefined; } };
@@ -199,6 +206,54 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     return parseConversationRoute(window.location.pathname, window.location.search, window.location.hash);
   }
 
+  function agentKey(serverId: string, agentId: string) {
+    return `${serverId}\u0000${agentId}`;
+  }
+
+  function strictEnglishEnabled() {
+    return manualStrictEnglish || automaticEnglishLock;
+  }
+
+  function applyAutomaticEnglishLock(descriptor: string | null, keywords: readonly string[]) {
+    activeModelDescriptor = descriptor;
+    automaticEnglishLock = matchesEnglishLockModel(descriptor, keywords);
+    clearGuardTimer();
+    updateEnglishGuard();
+  }
+
+  function refreshEnglishLockPolicy(force = false) {
+    const route = currentRoute(), runtime = route ? runtimes.get(route.serverId) : undefined;
+    if (!route?.agentId || !runtime) {
+      activePolicyKey = null; modelRequest++;
+      applyAutomaticEnglishLock(null, []);
+      return;
+    }
+    const key = agentKey(route.serverId, route.agentId);
+    if (!force && activePolicyKey === key) return;
+    activePolicyKey = key;
+    const cachedModel = agentModels.get(key), cachedKeywords = englishLockModels.get(route.serverId);
+    if (cachedModel !== undefined && cachedKeywords) applyAutomaticEnglishLock(cachedModel, cachedKeywords);
+    else applyAutomaticEnglishLock(null, []);
+    const sequence = ++modelRequest;
+    void Promise.all([runtime.agentModel(route.agentId), runtime.englishLockModels()]).then(([descriptor, keywords]) => {
+      agentModels.set(key, descriptor); englishLockModels.set(route.serverId, keywords);
+      const current = currentRoute();
+      if (sequence === modelRequest && current?.serverId === route.serverId && current.agentId === route.agentId) applyAutomaticEnglishLock(descriptor, keywords);
+    }).catch(() => {
+      if (sequence === modelRequest) applyAutomaticEnglishLock(null, []);
+    });
+  }
+
+  function updateAgentModel(serverId: string, agentId: string, descriptor: string | null) {
+    agentModels.set(agentKey(serverId, agentId), descriptor);
+    const route = currentRoute();
+    if (route?.serverId !== serverId || route.agentId !== agentId) return;
+    activeModelDescriptor = descriptor;
+    const keywords = englishLockModels.get(serverId);
+    if (keywords) applyAutomaticEnglishLock(descriptor, keywords);
+    else refreshEnglishLockPolicy(true);
+  }
+
   function setLauncherState(label: string, title: string, busy = false) {
     if (!launcher) return;
     launcher.textContent = label; launcher.title = title; launcher.disabled = busy; launcher.setAttribute('aria-busy', String(busy));
@@ -217,11 +272,17 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
 
   function updateEnglishGuard() {
     if (!englishGuard) return;
-    englishGuard.textContent = strictEnglish ? 'EN锁' : 'EN';
-    englishGuard.title = strictEnglish ? '严格英文模式已开启：点击关闭' : '严格英文模式已关闭：点击开启';
-    englishGuard.setAttribute('aria-pressed', String(strictEnglish));
-    style(englishGuard, strictEnglish
-      ? { borderColor: '#60a5fa', background: '#1d4ed8', color: '#eff6ff' }
+    const enabled = strictEnglishEnabled();
+    englishGuard.textContent = enabled ? 'EN锁' : 'EN';
+    englishGuard.title = automaticEnglishLock
+      ? `当前模型 ${activeModelDescriptor ?? ''} 命中自动 EN 锁规则，切换模型或修改设置后解除`
+      : enabled ? '严格英文模式已开启：点击关闭' : '严格英文模式已关闭：点击开启';
+    englishGuard.setAttribute('aria-pressed', String(enabled));
+    englishGuard.setAttribute('aria-disabled', String(automaticEnglishLock));
+    style(englishGuard, automaticEnglishLock
+      ? { borderColor: '#c084fc', background: '#6b21a8', color: '#faf5ff' }
+      : enabled
+        ? { borderColor: '#60a5fa', background: '#1d4ed8', color: '#eff6ff' }
       : { borderColor: '#3f3f46', background: '#27272a', color: '#d4d4d8' });
   }
 
@@ -233,7 +294,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   }
 
   function blockNonEnglishDraft(event: Event): boolean {
-    if (!strictEnglish) return false;
+    if (!strictEnglishEnabled()) return false;
     const editor = findComposer(), text = editor ? editorText(editor).trim() : '';
     if (!editor || !text || isEnglishCompatibleDraft(text)) return false;
     event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation(); editor.focus();
@@ -296,7 +357,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
 
   function refreshLauncher() {
     const route = currentRoute();
-    if (!route || !runtimes.has(route.serverId)) { removeLauncher(); return; }
+    if (!route || !runtimes.has(route.serverId)) { activePolicyKey = null; modelRequest++; applyAutomaticEnglishLock(null, []); removeLauncher(); return; }
     if (!launcher) {
       launcher = button('译', '翻译当前聊天输入并替换原文（Alt/Option + T）'); launcher.dataset.paseoTranslate = 'launcher';
       style(launcher, { position: 'fixed', zIndex: '2147482999', minWidth: '34px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
@@ -308,9 +369,15 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
       englishGuard = button('EN', '开启严格英文模式'); englishGuard.dataset.paseoTranslate = 'english-guard';
       style(englishGuard, { position: 'fixed', zIndex: '2147482999', minWidth: '38px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
       englishGuard.addEventListener('pointerdown', event => event.preventDefault());
-      englishGuard.addEventListener('click', () => { clearGuardTimer(); strictEnglish = !strictEnglish; saveStrictEnglishMode(strictEnglish); updateEnglishGuard(); findComposer()?.focus(); });
+      englishGuard.addEventListener('click', () => {
+        clearGuardTimer();
+        if (automaticEnglishLock) flashEnglishGuard('当前模型命中自动 EN 锁规则；请切换模型或在插件设置中修改关键词');
+        else { manualStrictEnglish = !manualStrictEnglish; saveStrictEnglishMode(manualStrictEnglish); updateEnglishGuard(); }
+        findComposer()?.focus();
+      });
       document.body.append(englishGuard); updateEnglishGuard();
     }
+    refreshEnglishLockPolicy();
     positionLauncher();
   }
 
@@ -346,12 +413,12 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     else if (event.key === 'Escape' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a')) removeTrigger();
   };
   const clickGuard = (event: MouseEvent) => {
-    if (!strictEnglish) return;
+    if (!strictEnglishEnabled()) return;
     const target = event.target as Element | null, control = target?.closest('button, [role="button"]'), editor = findComposer();
     if (control && editor && isSendControl(control, editor)) blockNonEnglishDraft(event);
   };
   const submitGuard = (event: SubmitEvent) => {
-    if (!strictEnglish) return;
+    if (!strictEnglishEnabled()) return;
     const editor = findComposer(), form = event.target as HTMLFormElement | null;
     if (editor && form && (form.contains(editor) || editor.closest('form') === form)) blockNonEnglishDraft(event);
   };
@@ -361,10 +428,10 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     if (target === draftUndo.editor || (target && draftUndo.editor.contains(target))) { draftUndo = null; resetLauncher(); }
   };
   const dismiss = () => { removeTrigger(); positionLauncher(); };
-  const routeChanged = () => { composerRequest++; composerBusy = false; draftUndo = null; removeTrigger(); refreshLauncher(); resetLauncher(); };
+  const routeChanged = () => { composerRequest++; composerBusy = false; draftUndo = null; removeTrigger(); activePolicyKey = null; refreshLauncher(); resetLauncher(); };
   document.addEventListener('pointerup', delayedRefresh); document.addEventListener('keyup', delayedRefresh); document.addEventListener('touchend', delayedRefresh);
   document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown, true); document.addEventListener('click', clickGuard, true); document.addEventListener('submit', submitGuard, true); document.addEventListener('input', inputChanged, true); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
-  return { refresh, dispose() { composerRequest++; dismiss(); removeLauncher(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
+  return { refresh, updateAgentModel, dispose() { composerRequest++; modelRequest++; dismiss(); removeLauncher(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
 }
 
 function createRegistry(): Registry {
@@ -375,8 +442,10 @@ function createRegistry(): Registry {
     get closed() { return closed; },
     register(serverId, runtime) {
       if (closed) throw new Error('Translation client registry is closed');
+      const unsubscribeModels = runtime.subscribeAgentModels((agentId, model) => overlay?.updateAgentModel(serverId, agentId, model));
       runtimes.set(serverId, runtime); overlay?.refresh();
       return () => {
+        unsubscribeModels();
         if (runtimes.get(serverId) === runtime) runtimes.delete(serverId);
         if (!runtimes.size && !closed) { closed = true; overlay?.dispose(); }
       };
@@ -397,5 +466,19 @@ export function registerTranslationClient(serverId: string, client: PluginClient
       catch (error) { throw new Error(`${error instanceof Error ? error.message : String(error)}；请点击“设置”完成配置`); }
       return client.rpc(translateSelectionRpc, { text, target, settings });
     },
+    agentModel: async agentId => {
+      const handle = client.paseo.agents.ref(agentId);
+      const agent = handle.current() ?? (await handle.refresh())?.agent ?? null;
+      return agent ? `${agent.provider}/${agent.model ?? ''}` : null;
+    },
+    englishLockModels: async () => {
+      const saved = await client.rpc(contracts.read, {});
+      if (saved.status !== 'ready') return [];
+      return parseEnglishLockModels(translationSettings.schema.parse(saved.values).englishLockModels);
+    },
+    subscribeAgentModels: handler => client.paseo.agents.subscribe(update => {
+      if (update.kind === 'upsert') handler(update.agent.id, `${update.agent.provider}/${update.agent.model ?? ''}`);
+      else handler(update.agentId, null);
+    }),
   });
 }
