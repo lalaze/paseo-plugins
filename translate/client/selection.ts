@@ -1,6 +1,7 @@
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { settingsRpc } from '@getpaseo/plugin';
 import { parseConversationRoute } from './route';
+import { isEnglishCompatibleDraft } from './english';
 import { translateSelectionRpc, type TargetLanguage, type TranslationResult } from '../shared/rpc';
 import { translationSettings, validateTranslationSettings } from '../shared/settings';
 
@@ -14,6 +15,7 @@ type DraftUndo = { editor: HTMLElement; before: string; after: string };
 
 const REGISTRY_KEY = Symbol.for('lalaze.paseo-translate.registry.v1');
 const HIGHLIGHT_NAME = 'paseo-translate-selection';
+const STRICT_ENGLISH_KEY = 'lalaze.paseo-translate.strict-english.v1';
 
 function elementFor(node: Node | null): Element | null {
   return node instanceof Element ? node : node?.parentElement ?? null;
@@ -107,13 +109,24 @@ function replaceEditorText(editor: HTMLElement, text: string) {
   range.selectNodeContents(editor); range.collapse(false); selection?.removeAllRanges(); selection?.addRange(range);
 }
 
+function loadStrictEnglishMode() {
+  try { return window.localStorage.getItem(STRICT_ENGLISH_KEY) === 'true'; }
+  catch { return false; }
+}
+
+function saveStrictEnglishMode(enabled: boolean) {
+  try { window.localStorage.setItem(STRICT_ENGLISH_KEY, String(enabled)); }
+  catch { /* Storage may be unavailable in hardened browser contexts. */ }
+}
+
 export function createOverlayController(runtimes: Map<string, Runtime>): OverlayController {
-  let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, launcherTimer: number | undefined, draftUndo: DraftUndo | null = null, composerRequest = 0, composerBusy = false, writingComposer = false, inlineRequest = 0;
+  let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, englishGuard: HTMLButtonElement | null = null, launcherTimer: number | undefined, guardTimer: number | undefined, draftUndo: DraftUndo | null = null, composerRequest = 0, composerBusy = false, writingComposer = false, inlineRequest = 0, strictEnglish = loadStrictEnglishMode();
   const highlightedRanges = new Map<HTMLElement, Range>();
   const annotationGroups = new WeakMap<Element, HTMLElement>();
   const removeTrigger = () => { trigger?.remove(); trigger = null; };
   const clearLauncherTimer = () => { if (launcherTimer !== undefined) { window.clearTimeout(launcherTimer); launcherTimer = undefined; } };
-  const removeLauncher = () => { clearLauncherTimer(); launcher?.remove(); launcher = null; };
+  const clearGuardTimer = () => { if (guardTimer !== undefined) { window.clearTimeout(guardTimer); guardTimer = undefined; } };
+  const removeLauncher = () => { clearLauncherTimer(); clearGuardTimer(); launcher?.remove(); englishGuard?.remove(); launcher = null; englishGuard = null; };
 
   function syncHighlights() {
     const css = globalThis.CSS as typeof CSS & { highlights?: HighlightRegistry };
@@ -190,6 +203,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     if (!launcher) return;
     launcher.textContent = label; launcher.title = title; launcher.disabled = busy; launcher.setAttribute('aria-busy', String(busy));
     style(launcher, { cursor: busy ? 'wait' : 'pointer', opacity: busy ? '.65' : '1' });
+    window.requestAnimationFrame(positionLauncher);
   }
 
   function resetLauncher() {
@@ -201,11 +215,49 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     launcherTimer = window.setTimeout(() => { launcherTimer = undefined; if (!draftUndo && !composerBusy) resetLauncher(); }, 1800);
   }
 
+  function updateEnglishGuard() {
+    if (!englishGuard) return;
+    englishGuard.textContent = strictEnglish ? 'EN锁' : 'EN';
+    englishGuard.title = strictEnglish ? '严格英文模式已开启：点击关闭' : '严格英文模式已关闭：点击开启';
+    englishGuard.setAttribute('aria-pressed', String(strictEnglish));
+    style(englishGuard, strictEnglish
+      ? { borderColor: '#60a5fa', background: '#1d4ed8', color: '#eff6ff' }
+      : { borderColor: '#3f3f46', background: '#27272a', color: '#d4d4d8' });
+  }
+
+  function flashEnglishGuard(message: string) {
+    if (!englishGuard) return;
+    clearGuardTimer(); englishGuard.textContent = '仅英文'; englishGuard.title = message;
+    style(englishGuard, { borderColor: '#f87171', background: '#7f1d1d', color: '#fee2e2' });
+    guardTimer = window.setTimeout(() => { guardTimer = undefined; updateEnglishGuard(); }, 1800);
+  }
+
+  function blockNonEnglishDraft(event: Event): boolean {
+    if (!strictEnglish) return false;
+    const editor = findComposer(), text = editor ? editorText(editor).trim() : '';
+    if (!editor || !text || isEnglishCompatibleDraft(text)) return false;
+    event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation(); editor.focus();
+    flashEnglishGuard('检测到非英文内容，请先点击“译”转换后再发送');
+    return true;
+  }
+
+  function isSendControl(control: Element, editor: HTMLElement) {
+    const form = editor.closest('form');
+    if (control instanceof HTMLButtonElement && control.type === 'submit' && form?.contains(control)) return true;
+    const label = [control.getAttribute('aria-label'), control.getAttribute('title'), control.getAttribute('data-testid'), control.textContent].filter(Boolean).join(' ');
+    if (!/(?:^|\b)send(?:\b|$)|发送|提交|运行/i.test(label)) return false;
+    if (form?.contains(control)) return true;
+    const editorRect = editor.getBoundingClientRect(), controlRect = control.getBoundingClientRect();
+    return Math.abs(controlRect.bottom - editorRect.bottom) < 100 && controlRect.left >= editorRect.left - 80 && controlRect.right <= editorRect.right + 80;
+  }
+
   function positionLauncher() {
-    if (!launcher) return;
+    if (!launcher || !englishGuard) return;
     const editor = findComposer(), rect = editor?.getBoundingClientRect();
-    if (!rect) { style(launcher, { right: '18px', bottom: '82px', left: 'auto', top: 'auto' }); return; }
-    style(launcher, { right: `${Math.max(8, window.innerWidth - rect.right + 8)}px`, bottom: `${Math.max(8, window.innerHeight - rect.top + 6)}px`, left: 'auto', top: 'auto' });
+    const right = rect ? Math.max(8, window.innerWidth - rect.right + 8) : 18;
+    const bottom = rect ? Math.max(8, window.innerHeight - rect.top + 6) : 82;
+    style(launcher, { right: `${right}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto' });
+    style(englishGuard, { right: `${right + (launcher.offsetWidth || 34) + 6}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto' });
   }
 
   async function translateComposer() {
@@ -245,12 +297,21 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   function refreshLauncher() {
     const route = currentRoute();
     if (!route || !runtimes.has(route.serverId)) { removeLauncher(); return; }
-    if (launcher) { positionLauncher(); return; }
-    launcher = button('译', '翻译当前聊天输入并替换原文（Alt/Option + T）'); launcher.dataset.paseoTranslate = 'launcher';
-    style(launcher, { position: 'fixed', zIndex: '2147482999', minWidth: '34px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
-    launcher.addEventListener('pointerdown', event => event.preventDefault());
-    launcher.addEventListener('click', () => { void translateComposer(); });
-    document.body.append(launcher); positionLauncher();
+    if (!launcher) {
+      launcher = button('译', '翻译当前聊天输入并替换原文（Alt/Option + T）'); launcher.dataset.paseoTranslate = 'launcher';
+      style(launcher, { position: 'fixed', zIndex: '2147482999', minWidth: '34px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
+      launcher.addEventListener('pointerdown', event => event.preventDefault());
+      launcher.addEventListener('click', () => { void translateComposer(); });
+      document.body.append(launcher);
+    }
+    if (!englishGuard) {
+      englishGuard = button('EN', '开启严格英文模式'); englishGuard.dataset.paseoTranslate = 'english-guard';
+      style(englishGuard, { position: 'fixed', zIndex: '2147482999', minWidth: '38px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
+      englishGuard.addEventListener('pointerdown', event => event.preventDefault());
+      englishGuard.addEventListener('click', () => { clearGuardTimer(); strictEnglish = !strictEnglish; saveStrictEnglishMode(strictEnglish); updateEnglishGuard(); findComposer()?.focus(); });
+      document.body.append(englishGuard); updateEnglishGuard();
+    }
+    positionLauncher();
   }
 
   function showTrigger(snapshot: SelectionSnapshot) {
@@ -273,12 +334,26 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   const delayedRefresh = () => { window.setTimeout(refresh, 0); };
   const outside = (event: PointerEvent) => {
     const target = event.target as Node | null;
-    if (trigger?.contains(target) || launcher?.contains(target)) return;
+    if (trigger?.contains(target) || launcher?.contains(target) || englishGuard?.contains(target)) return;
     removeTrigger();
   };
   const keydown = (event: KeyboardEvent) => {
     if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && event.key.toLowerCase() === 't' && !event.isComposing) { event.preventDefault(); void translateComposer(); }
+    else if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      const editor = findComposer(), target = event.target as Node | null;
+      if (editor && target && (target === editor || editor.contains(target)) && blockNonEnglishDraft(event)) return;
+    }
     else if (event.key === 'Escape' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a')) removeTrigger();
+  };
+  const clickGuard = (event: MouseEvent) => {
+    if (!strictEnglish) return;
+    const target = event.target as Element | null, control = target?.closest('button, [role="button"]'), editor = findComposer();
+    if (control && editor && isSendControl(control, editor)) blockNonEnglishDraft(event);
+  };
+  const submitGuard = (event: SubmitEvent) => {
+    if (!strictEnglish) return;
+    const editor = findComposer(), form = event.target as HTMLFormElement | null;
+    if (editor && form && (form.contains(editor) || editor.closest('form') === form)) blockNonEnglishDraft(event);
   };
   const inputChanged = (event: Event) => {
     if (writingComposer || !draftUndo) return;
@@ -288,8 +363,8 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   const dismiss = () => { removeTrigger(); positionLauncher(); };
   const routeChanged = () => { composerRequest++; composerBusy = false; draftUndo = null; removeTrigger(); refreshLauncher(); resetLauncher(); };
   document.addEventListener('pointerup', delayedRefresh); document.addEventListener('keyup', delayedRefresh); document.addEventListener('touchend', delayedRefresh);
-  document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown); document.addEventListener('input', inputChanged, true); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
-  return { refresh, dispose() { composerRequest++; dismiss(); removeLauncher(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
+  document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown, true); document.addEventListener('click', clickGuard, true); document.addEventListener('submit', submitGuard, true); document.addEventListener('input', inputChanged, true); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
+  return { refresh, dispose() { composerRequest++; dismiss(); removeLauncher(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
 }
 
 function createRegistry(): Registry {
