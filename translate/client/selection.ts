@@ -101,10 +101,10 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
 
   function showCard(snapshot: SelectionSnapshot, runtime: Runtime) {
     closeCard();
-    card = document.createElement('div'); card.dataset.paseoTranslate = 'card'; card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', '划词翻译');
+    card = document.createElement('div'); card.dataset.paseoTranslate = 'card'; card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', '翻译');
     style(card, { position: 'fixed', zIndex: '2147483000', width: 'min(400px, calc(100vw - 16px))', maxHeight: 'min(520px, calc(100vh - 16px))', overflow: 'auto', boxSizing: 'border-box', padding: '12px', border: '1px solid #3f3f46', borderRadius: '12px', background: '#18181b', color: '#fafafa', boxShadow: '0 16px 48px rgba(0,0,0,.38)', font: '13px/1.55 system-ui, sans-serif' });
     const header = document.createElement('div'); style(header, { display: 'flex', alignItems: 'center', gap: '8px' });
-    const title = document.createElement('strong'); title.textContent = '划词翻译'; style(title, { flex: '1', fontSize: '13px' });
+    const title = document.createElement('strong'); title.textContent = '翻译'; style(title, { flex: '1', fontSize: '13px' });
     const select = document.createElement('select'); select.setAttribute('aria-label', '目标语言');
     style(select, { background: '#27272a', color: '#fafafa', border: '1px solid #3f3f46', borderRadius: '7px', padding: '5px 7px', font: '12px system-ui, sans-serif' });
     for (const option of languageOptions) { const node = document.createElement('option'); node.value = option.value; node.textContent = option.label; select.append(node); }

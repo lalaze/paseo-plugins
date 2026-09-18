@@ -44,7 +44,7 @@ export function TranslationSettingsScreen({ theme, layout }: PluginSurfaceProps)
     try {
       const values = validateTranslationSettings({ apiUrl, apiKey, model });
       const saved = await settings.save(values, settings.revision);
-      if (saved) setMessage('已保存。之后的划词翻译会直接调用此 API。');
+      if (saved) setMessage('已保存。之后的翻译会直接调用此 API。');
       else setError(settings.saveError || '保存失败，请重试');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
