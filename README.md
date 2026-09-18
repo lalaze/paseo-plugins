@@ -2,7 +2,7 @@
 
 Paseo 插件与配套扩展的多包仓库。先在目标主机 **Settings → Plugins** 开启插件。也可以按下面各节单独安装；更新、卸载和限制见各目录 README。
 
-一键安装全部包（三个插件、额度补丁、Kimi 续期、Hub ACP）：
+一键安装全部包（四个插件、额度补丁、Kimi 续期、Hub ACP）：
 
 ```bash
 ./install-all.sh
@@ -65,6 +65,16 @@ paseo plugin add lalaze/paseo-plugins --path file-upload
 ```
 
 详细说明：[file-upload/README.md](file-upload/README.md)
+
+## [划词翻译](translate)
+
+在 AI 对话的用户消息或回复中选中文字，原地翻译并复制结果；默认复用当前对话的 AI，不污染聊天记录。插件 ID：`paseo-translate`。
+
+```bash
+paseo plugin add lalaze/paseo-plugins --path translate
+```
+
+详细说明：[translate/README.md](translate/README.md)
 
 ## [Antigravity 额度补丁](agy-quota)
 
