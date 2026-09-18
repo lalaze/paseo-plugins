@@ -214,11 +214,12 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     const annotation = existing ?? document.createElement('div');
     if (!existing) {
       annotation.dataset.paseoTranslateAnnotation = ''; annotation.dataset.paseoTranslateKey = selectionKey;
-      style(annotation, { display: 'inline-flex', alignItems: 'center', gap: '5px', maxWidth: '100%', padding: '3px 6px', border: '1px solid rgba(96,165,250,.24)', borderRadius: '6px', background: 'rgba(59,130,246,.10)', color: '#e4e4e7', font: '12px/1.45 system-ui, sans-serif' });
+      style(annotation, { display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: '3px 5px', maxWidth: '100%', padding: '3px 6px', border: '1px solid rgba(96,165,250,.24)', borderRadius: '6px', background: 'rgba(59,130,246,.10)', color: '#e4e4e7', font: '12px/1.45 system-ui, sans-serif' });
       const source = document.createElement('span'); source.dataset.paseoTranslateSource = '';
-      style(source, { flex: '0 1 auto', padding: '0 5px', borderRadius: '4px', background: 'rgba(59,130,246,.32)', color: '#dbeafe', overflowWrap: 'anywhere' });
+      // The selected text is already highlighted in the message, so the echo is a clipped label and the translation keeps the room.
+      style(source, { flex: '0 1 auto', maxWidth: 'min(100%, 20em)', padding: '0 5px', borderRadius: '4px', background: 'rgba(59,130,246,.32)', color: '#dbeafe', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' });
       const arrow = document.createElement('span'); arrow.textContent = '→'; arrow.setAttribute('aria-hidden', 'true'); style(arrow, { color: '#93c5fd' });
-      const output = document.createElement('span'); output.dataset.paseoTranslateOutput = ''; style(output, { flex: '1', minWidth: '0', overflowWrap: 'anywhere' });
+      const output = document.createElement('span'); output.dataset.paseoTranslateOutput = ''; style(output, { flex: '1 1 14em', minWidth: '0', overflowWrap: 'anywhere' });
       const remove = button('×', '移除这条翻译'); style(remove, { flex: '0 0 auto', padding: '0 5px', border: '0', background: 'transparent', color: '#a1a1aa', fontSize: '15px', lineHeight: '1.3' });
       remove.addEventListener('click', () => {
         const group = annotation.parentElement; highlightedRanges.delete(annotation); annotation.remove();
@@ -239,7 +240,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     }
     const source = annotation.querySelector<HTMLElement>('[data-paseo-translate-source]');
     const output = annotation.querySelector<HTMLElement>('[data-paseo-translate-output]');
-    if (source) source.textContent = snapshot.text;
+    if (source) { source.textContent = snapshot.text; source.title = snapshot.text; }
     if (output) { output.textContent = text; output.style.color = error ? '#fca5a5' : '#e4e4e7'; }
     highlightedRanges.set(annotation, range); syncHighlights();
     return annotation;

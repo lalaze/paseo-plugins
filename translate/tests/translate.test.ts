@@ -5,9 +5,13 @@ import { validateTranslationSettings } from '../shared/settings';
 
 const settings = { apiUrl: 'https://translate.example/v1/chat/completions', apiKey: 'secret-key', model: 'translate-model', englishLockModels: 'claude, anthropic' };
 
-test('auto direction sends CJK text to English and other text to Chinese', () => {
-  assert.equal(resolveTarget('你好，world', 'auto'), 'en');
+test('auto direction follows the dominant script', () => {
+  assert.equal(resolveTarget('你好世界，world', 'auto'), 'en');
   assert.equal(resolveTarget('hello world', 'auto'), 'zh-CN');
+  assert.equal(resolveTarget('Please review the 翻译 plugin before merging', 'auto'), 'zh-CN');
+  assert.equal(resolveTarget('翻译 hello', 'auto'), 'en');
+  assert.equal(resolveTarget('翻译 hello world', 'auto'), 'en');
+  assert.equal(resolveTarget('翻译 hello world again', 'auto'), 'zh-CN');
   assert.equal(resolveTarget('hello', 'ja'), 'ja');
 });
 

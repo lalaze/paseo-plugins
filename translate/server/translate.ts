@@ -9,11 +9,15 @@ const targetLabels: Record<Exclude<TargetLanguage, 'auto'>, string> = {
   'zh-CN': 'Simplified Chinese', en: 'English', ja: 'Japanese', ko: 'Korean', fr: 'French', de: 'German', es: 'Spanish', ru: 'Russian',
 };
 
+const cjkCharacter = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
 export function resolveTarget(text: string, requested: TargetLanguage): Exclude<TargetLanguage, 'auto'> {
   if (requested !== 'auto') return requested;
-  const meaningful = [...text].filter(character => /[\p{L}\p{N}]/u.test(character));
-  const cjk = meaningful.filter(character => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(character)).length;
-  return cjk > 0 && cjk / Math.max(meaningful.length, 1) >= 0.15 ? 'en' : 'zh-CN';
+  // A CJK character carries about a word of meaning, so weigh characters against words of other scripts
+  // and let mixed drafts follow the dominant script instead of flipping to English on a few Chinese words.
+  const cjk = [...text].filter(character => cjkCharacter.test(character)).length;
+  const otherWords = text.match(/[\p{L}\p{N}]+/gu)?.map(word => [...word].filter(character => !cjkCharacter.test(character)).length).filter(Boolean).length ?? 0;
+  return cjk > 0 && cjk >= otherWords ? 'en' : 'zh-CN';
 }
 
 export function buildTranslationPrompt(text: string, target: Exclude<TargetLanguage, 'auto'>): string {
