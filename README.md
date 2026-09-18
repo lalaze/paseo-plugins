@@ -2,7 +2,7 @@
 
 Paseo 插件与配套扩展的多包仓库。先在目标主机 **Settings → Plugins** 开启插件。也可以按下面各节单独安装；更新、卸载和限制见各目录 README。
 
-一键安装全部包（四个插件、额度补丁、Kimi 续期、Hub ACP）：
+一键安装全部包（五个插件、额度补丁、Kimi 续期、Hub ACP）：
 
 ```bash
 ./install-all.sh
@@ -55,6 +55,16 @@ paseo plugin add lalaze/paseo-plugins --path usage-glance
 ```
 
 详细说明：[usage-glance/README.md](usage-glance/README.md)
+
+## [回复测速](response-speed)
+
+在每轮 AI 回复后显示该 Provider / 模型的生成速度（t/s）、输出 token、首字延迟（TTFT）、全程速度和总耗时。只使用 Provider 上报的 token，不按字符数猜测。插件 ID：`paseo-response-speed`。
+
+```bash
+paseo plugin add lalaze/paseo-plugins --path response-speed
+```
+
+详细说明：[response-speed/README.md](response-speed/README.md)
 
 ## [文件传输](file-upload)
 
