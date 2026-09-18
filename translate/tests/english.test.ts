@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isEnglishCompatibleDraft, matchesEnglishLockModel, parseEnglishLockModels } from '../client/english';
+import { isEnglishCompatibleDraft, matchesEnglishLockModel, normalizeComposerModelLabel, parseEnglishLockModels } from '../client/english';
 
 test('strict English mode allows English and language-neutral draft content', () => {
   assert.equal(isEnglishCompatibleDraft('Please review https://example.com/a?q=1 🙂'), true);
@@ -21,4 +21,13 @@ test('configurable model keywords match provider and model descriptors', () => {
   assert.equal(matchesEnglishLockModel('custom/Sonnet 4 tuned', keywords), true);
   assert.equal(matchesEnglishLockModel('openai/gpt-5', keywords), false);
   assert.equal(matchesEnglishLockModel('anthropic/claude', []), false);
+});
+
+test('normalizes short Claude model labels shown by the composer', () => {
+  assert.equal(normalizeComposerModelLabel('  Opus  5  '), 'claude/Opus 5');
+  assert.equal(normalizeComposerModelLabel('Sonnet 4.6'), 'claude/Sonnet 4.6');
+  assert.equal(normalizeComposerModelLabel('Fable 5 1M'), 'claude/Fable 5 1M');
+  assert.equal(normalizeComposerModelLabel('Mythos 5.1'), 'claude/Mythos 5.1');
+  assert.equal(normalizeComposerModelLabel('GPT-5.6'), 'GPT-5.6');
+  assert.equal(normalizeComposerModelLabel('  '), null);
 });

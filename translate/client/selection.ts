@@ -1,7 +1,7 @@
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { settingsRpc } from '@getpaseo/plugin';
 import { parseConversationRoute } from './route';
-import { isEnglishCompatibleDraft, matchesEnglishLockModel, parseEnglishLockModels } from './english';
+import { isEnglishCompatibleDraft, matchesEnglishLockModel, normalizeComposerModelLabel, parseEnglishLockModels } from './english';
 import { translateSelectionRpc, type TargetLanguage, type TranslationResult } from '../shared/rpc';
 import { translationSettings, validateTranslationSettings } from '../shared/settings';
 
@@ -87,6 +87,16 @@ function findComposer(): HTMLElement | null {
   const candidates = Array.from(document.querySelectorAll<HTMLElement>(preferred)).filter(visibleEditor);
   const pool = candidates.length ? candidates : Array.from(document.querySelectorAll<HTMLElement>(fallback)).filter(visibleEditor);
   return pool.sort((left, right) => right.getBoundingClientRect().bottom - left.getBoundingClientRect().bottom || right.getBoundingClientRect().width - left.getBoundingClientRect().width)[0] ?? null;
+}
+
+function composerModelDescriptor(): string | null {
+  const editor = findComposer();
+  if (!editor) return null;
+  for (let container = editor.parentElement; container && container !== document.body; container = container.parentElement) {
+    const selector = container.querySelector<HTMLElement>('[data-testid="combined-model-selector"]');
+    if (selector) return normalizeComposerModelLabel(selector.textContent ?? '');
+  }
+  return null;
 }
 
 function editorText(editor: HTMLElement): string {
@@ -223,9 +233,26 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
 
   function refreshEnglishLockPolicy(force = false) {
     const route = currentRoute(), runtime = route ? runtimes.get(route.serverId) : undefined;
-    if (!route?.agentId || !runtime) {
+    if (!route || !runtime) {
       activePolicyKey = null; modelRequest++;
       applyAutomaticEnglishLock(null, []);
+      return;
+    }
+    if (!route.agentId) {
+      const descriptor = composerModelDescriptor();
+      const key = `composer\u0000${route.serverId}\u0000${descriptor ?? ''}`;
+      if (!force && activePolicyKey === key) return;
+      activePolicyKey = key;
+      const cachedKeywords = englishLockModels.get(route.serverId);
+      applyAutomaticEnglishLock(descriptor, cachedKeywords ?? []);
+      const sequence = ++modelRequest;
+      void runtime.englishLockModels().then(keywords => {
+        englishLockModels.set(route.serverId, keywords);
+        const current = currentRoute();
+        if (sequence === modelRequest && current?.serverId === route.serverId && !current.agentId && composerModelDescriptor() === descriptor) applyAutomaticEnglishLock(descriptor, keywords);
+      }).catch(() => {
+        if (sequence === modelRequest) applyAutomaticEnglishLock(null, []);
+      });
       return;
     }
     const key = agentKey(route.serverId, route.agentId);
@@ -429,9 +456,22 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   };
   const dismiss = () => { removeTrigger(); positionLauncher(); };
   const routeChanged = () => { composerRequest++; composerBusy = false; draftUndo = null; removeTrigger(); activePolicyKey = null; refreshLauncher(); resetLauncher(); };
+  const modelObserver = new MutationObserver(records => {
+    const selector = '[data-testid="combined-model-selector"]';
+    const changed = records.some(record => {
+      const target = elementFor(record.target);
+      if (target?.closest(selector)) return true;
+      return Array.from(record.addedNodes).some(node => {
+        const element = elementFor(node);
+        return Boolean(element?.matches(selector) || element?.querySelector(selector));
+      });
+    });
+    if (changed) { activePolicyKey = null; window.setTimeout(refreshLauncher, 0); }
+  });
+  modelObserver.observe(document.body, { childList: true, characterData: true, subtree: true });
   document.addEventListener('pointerup', delayedRefresh); document.addEventListener('keyup', delayedRefresh); document.addEventListener('touchend', delayedRefresh);
   document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown, true); document.addEventListener('click', clickGuard, true); document.addEventListener('submit', submitGuard, true); document.addEventListener('input', inputChanged, true); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
-  return { refresh, updateAgentModel, dispose() { composerRequest++; modelRequest++; dismiss(); removeLauncher(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
+  return { refresh, updateAgentModel, dispose() { composerRequest++; modelRequest++; modelObserver.disconnect(); dismiss(); removeLauncher(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
 }
 
 function createRegistry(): Registry {

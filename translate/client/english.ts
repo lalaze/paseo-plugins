@@ -19,3 +19,10 @@ export function matchesEnglishLockModel(descriptor: string | null, keywords: rea
   const normalized = descriptor.toLocaleLowerCase();
   return keywords.some(keyword => normalized.includes(keyword));
 }
+
+/** Add the provider family hidden behind Paseo's short Claude model labels. */
+export function normalizeComposerModelLabel(label: string): string | null {
+  const normalized = label.replace(/\s+/g, ' ').trim();
+  if (!normalized) return null;
+  return /\b(?:opus|sonnet|haiku|fable|mythos)\b/i.test(normalized) ? `claude/${normalized}` : normalized;
+}
