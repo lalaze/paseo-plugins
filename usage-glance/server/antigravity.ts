@@ -40,7 +40,7 @@ function readDatabase(path: string): { events: AgyEvent[]; warnings: number } {
       // Unidentified steps cannot safely be added to generation totals. Report the
       // gap instead of guessing whether this is a duplicate or another request.
       if (hasGenerations && identity.startsWith('step:') && !usage.identities.length) { warnings++; return []; }
-      const model = usage.model && !/^antigravity-model-/.test(usage.model) ? usage.model : metadata.model ?? usage.model ?? '未记录模型';
+      const model = usage.model && !/^antigravity-model-/.test(usage.model) ? usage.model : metadata.model ?? usage.model ?? 'Unrecorded model';
       return [{ ...usage, model, time: metadata.time ?? fallback, timeRank: metadata.time !== undefined ? 2 : fallback !== undefined ? 1 : 0,
         // Row identities deduplicate backup copies when server IDs are absent.
         identities: usage.identities.length ? usage.identities : [`row:${identity}:${index}:${createHash('sha256').update(JSON.stringify(usage)).digest('hex')}`],
@@ -80,7 +80,7 @@ export async function runAntigravity(range: ConsumptionRange, signal: AbortSigna
     if (event.timeRank < 2) estimatedDates++;
     const key = JSON.stringify([date, event.model, event.workspace?.id]);
     let row = rows.get(key);
-    if (!row) { row = { ...emptyTokens(), date, model: event.model, inferredModel: event.model === '未记录模型' || /^antigravity-model-/.test(event.model), ...(event.workspace ? { workspace: event.workspace } : {}) }; rows.set(key, row); }
+    if (!row) { row = { ...emptyTokens(), date, model: event.model, inferredModel: event.model === 'Unrecorded model' || /^antigravity-model-/.test(event.model), ...(event.workspace ? { workspace: event.workspace } : {}) }; rows.set(key, row); }
     addTokens(row, { input: event.fresh + event.cacheRead + event.cacheWrite, output: event.output, cacheRead: event.cacheRead, cacheWrite: event.cacheWrite, reasoning: event.reasoning });
   }
   const messages = [warnings ? `${warnings} 个文件或记录未能读取` : '', missingDates ? `${missingDates} 条记录缺少日期，未计入` : '', estimatedDates ? `${estimatedDates} 条记录按会话日期归类` : ''].filter(Boolean);

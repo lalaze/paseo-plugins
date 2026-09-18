@@ -14,20 +14,20 @@ test("following the provider default is distinct from explicitly choosing Defaul
   const entry = { status: "ready" as const, modes, defaultModeId: "auto-review" };
   const choices = permissionChoices(entry);
   assert.deepEqual(choices.options.map(option => option.id), ["", "auto", "auto-review", "full-access"]);
-  assert.match(choices.options[0].label, /跟随供应商默认.*自动审核/);
-  assert.match(choices.options[1].label, /默认权限/);
-  assert.equal(permissionChoices({ ...entry, defaultModeId: "auto" }).options[0].label, "跟随供应商默认：默认权限（Default permissions）");
+  assert.match(choices.options[0].label, /Follow provider default.*Auto review/);
+  assert.match(choices.options[1].label, /Default permissions/);
+  assert.equal(permissionChoices({ ...entry, defaultModeId: "auto" }).options[0].label, "Follow provider default: Default permissions (Default permissions)");
   assert.equal(permissionChoices({ status: "ready", modes: [{ id: "auto", label: "Auto mode" }], defaultModeId: "auto" }).options[1].label, "Auto mode");
 });
 
 test("permissions use the provider catalog and preserve saved selections during discovery and removal", () => {
-  assert.deepEqual(permissionChoices().options, [{ id: "", label: "跟随供应商默认" }]);
+  assert.deepEqual(permissionChoices().options, [{ id: "", label: "Follow provider default" }]);
   assert.equal(permissionChoices(undefined, "custom").unavailable, false);
   assert.equal(permissionChoices({ status: "loading", modes: [] }, "custom").unavailable, false);
   assert.equal(permissionChoices({ status: "ready" }, "custom").unavailable, false);
   const removed = permissionChoices({ status: "ready", modes }, "custom");
   assert.equal(removed.unavailable, true);
-  assert.deepEqual(removed.options.at(-1), { id: "custom", label: "custom（已保存，当前不可用）" });
+  assert.deepEqual(removed.options.at(-1), { id: "custom", label: "custom (saved, currently unavailable)" });
   const custom = permissionChoices({ status: "ready", modes: [{ id: "custom", label: "自定义权限", description: "供应商的说明" }] }, "custom");
   assert.equal(custom.unavailable, false); assert.equal(custom.description, "供应商的说明");
   assert.equal(custom.options.length, 2);

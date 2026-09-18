@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { markdownSnapshot, toolPresentation, isPlanFile, isPlanConfirmation, planEntries, toolKind } from '../src/hub/presentation.mjs';
+import { markdownSnapshot, questionPresentation, toolPresentation, isPlanFile, isPlanConfirmation, planEntries, toolKind } from '../src/hub/presentation.mjs';
+import { resolveUiLocale } from '../src/hub/i18n.mjs';
 
 const body = 'diff --git a/README.md b/README.md\n@@ -1,2 +1,3 @@\n ```\n context\n+new\n';
 const raw = '结果：\n\n```diff\n' + body + '```\n完成。';
@@ -73,4 +74,12 @@ test('tool kinds distinguish commands from reads, searches and plan artifacts', 
   assert.equal(isPlanConfirmation('确认'), true);
   assert.equal(isPlanConfirmation('please change the plan to use postgres'), false);
   assert.deepEqual(planEntries('# Plan\n\n- Inspect the renderer\n- Apply the patch\n').map(e => e.content), ['Plan', 'Inspect the renderer', 'Apply the patch']);
+});
+
+test('control copy follows the client or desktop locale', () => {
+  assert.equal(resolveUiLocale('zh-Hans', {}), 'zh-CN');
+  assert.equal(resolveUiLocale(undefined, { LANG: 'en_US.UTF-8' }), 'en');
+  const question = [{ question: 'Choose scope', options: [{ id: 'one', text: '(Recommended) One' }] }];
+  assert.equal(questionPresentation(question, { locale: 'en' }).title, 'Your input is needed');
+  assert.equal(questionPresentation(question, { locale: 'zh-CN' }).title, '需要你确认');
 });

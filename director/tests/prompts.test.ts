@@ -24,11 +24,11 @@ test("legacy prompts, approval mode, JSON-like goals and retry suffixes remain r
   const h = await harness({ requirePlanApproval: true }); t.after(() => h.cleanup());
   const run = h.run(); run.goal = '支持 {"name":"中文"} 和\n多行目标';
   const prompt = buildPrompt(run, "plan", "22df95f7-5163-4c55-9137-c8df04ed73f7");
-  assert.match(readDirectorPrompt(prompt)!.next, /等你确认/);
+  assert.match(readDirectorPrompt(prompt)!.next, /waits for your approval/);
   const legacy = prompt.replace(/^  "branch":.*\n/m, "").replace(/^  "requirePlanApproval":.*\n/m, "");
   const card = readDirectorPrompt(legacy + "\n上一轮结果格式错误，请补交正确格式。")!;
   assert.equal(card.goal, run.goal); assert.equal(card.branch, undefined);
-  assert.match(card.next, /已保存的协作设置/);
+  assert.match(card.next, /saved collaboration settings/);
 });
 
 test("ordinary, unrelated, malformed and incomplete messages are not replaced", async t => {

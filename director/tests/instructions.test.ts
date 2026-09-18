@@ -78,8 +78,8 @@ test("settings persist independent role and per-AI prompts, support clearing and
   h.store.saveSettings({ ...s, rolePrompts: undefined, profiles: settings().profiles });
   assert.equal(h.store.settings()!.rolePrompts, undefined);
   assert.equal(h.store.settings()!.profiles.some(profile => profile.instructions), false);
-  assert.throws(() => validateSettings({ ...s, rolePrompts: { review: "字".repeat(8001) } }), /前置提示词最多 8000/);
-  assert.throws(() => validateSettings({ ...s, profiles: s.profiles.map(profile => ({ ...profile, instructions: "字".repeat(8001) })) }), /补充提示词最多 8000/);
+  assert.throws(() => validateSettings({ ...s, rolePrompts: { review: "字".repeat(8001) } }), /Role instructions.*8000/);
+  assert.throws(() => validateSettings({ ...s, profiles: s.profiles.map(profile => ({ ...profile, instructions: "字".repeat(8001) })) }), /Additional AI instructions.*8000/);
   assert.equal(SettingsSchema.safeParse({ ...s, rolePrompts: { execute: "字".repeat(8000) } }).success, true);
 });
 
@@ -88,7 +88,7 @@ test("assignment input trims names and rejects rules that cannot match planned t
   assert.deepEqual(makeAssignment("category", " frontend ", "worker", profiles), { key: "frontend", profileId: "worker" });
   assert.deepEqual(makeAssignment("category", "数据迁移", "worker", profiles), { key: "数据迁移", profileId: "worker" });
   assert.deepEqual(makeAssignment("task", " task-1 ", "worker", profiles), { key: "task-1", profileId: "worker" });
-  for (const key of ["", " ", "字".repeat(81)]) assert.throws(() => makeAssignment("category", key, "worker", profiles), /任务类型/);
-  for (const key of ["", "task 1", "任务一", "x".repeat(81)]) assert.throws(() => makeAssignment("task", key, "worker", profiles), /任务 ID/);
-  assert.throws(() => makeAssignment("category", "frontend", "missing", profiles), /配置完整/);
+  for (const key of ["", " ", "字".repeat(81)]) assert.throws(() => makeAssignment("category", key, "worker", profiles), /Task category/);
+  for (const key of ["", "task 1", "任务一", "x".repeat(81)]) assert.throws(() => makeAssignment("task", key, "worker", profiles), /Task ID/);
+  assert.throws(() => makeAssignment("category", "frontend", "missing", profiles), /fully configured/);
 });

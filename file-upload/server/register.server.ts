@@ -4,7 +4,7 @@ import { FileService } from './files.server';
 const service = new FileService();
 async function root(workspaceId: string, context: PluginHandlerContext) {
   const workspace = await context.paseo.workspaces.ref(workspaceId).refresh();
-  if (!workspace?.workspaceDirectory) throw new Error('当前工作区不可用');
+  if (!workspace?.workspaceDirectory) throw new Error('The current workspace is unavailable');
   return workspace.workspaceDirectory;
 }
 export async function list(input: { workspaceId: string; path: string }, context: PluginHandlerContext) { return service.list(await root(input.workspaceId, context), input.path); }

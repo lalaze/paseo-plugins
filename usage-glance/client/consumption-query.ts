@@ -2,6 +2,7 @@ import { queryOptions, useQuery, type QueryClient } from '@tanstack/react-query'
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import type { PaseoApi } from '@getpaseo/client';
 import { enabledConsumptionSources, unsupportedConsumptionProviders, readConsumption, type ConsumptionRange, type ConsumptionReport } from '../shared/consumption';
+import { ui } from './i18n';
 
 export function createConsumptionQuery(client: QueryClient, rpc: PluginClientContext['rpc'], providers: Pick<PaseoApi['providers'], 'subscribe'>, contract = readConsumption) {
   let revision = 0, previous: string | undefined, closed = false;
@@ -30,7 +31,7 @@ export function createConsumptionQuery(client: QueryClient, rpc: PluginClientCon
       queryKey: ['token-consumption', range] as const,
       queryFn: async ({ signal }) => {
         const report = await rpc(contract, { range, refresh: false });
-        if (signal.aborted) throw new Error('读取已取消');
+        if (signal.aborted) throw new Error(ui('Read canceled', '读取已取消'));
         return report;
       },
       staleTime: 1000,

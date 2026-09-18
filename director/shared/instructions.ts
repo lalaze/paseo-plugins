@@ -3,19 +3,19 @@ import type { Operation, Run } from "./schema";
 export type InstructionRole = "plan" | "execute" | "review";
 export const instructionRoles: Record<InstructionRole, { label: string; description: string; example: string }> = {
   plan: {
-    label: "设计 AI",
-    description: "制定总纲或根据修改意见重新设计时使用。",
-    example: "先阅读项目说明和现有实现，再制定可执行的方案。优先复用已有结构，写清修改范围、接口、依赖关系和验收标准。按用户配置的任务类型拆分工作，只制定方案，不直接修改源代码。",
+    label: "Planning AI",
+    description: "Used when creating the plan or redesigning it from change requests.",
+    example: "Read the project documentation and existing implementation before creating an actionable plan. Prefer existing structures and describe the scope, interfaces, dependencies, and acceptance criteria. Split work according to the user's configured task categories. Create the plan only; do not modify source code.",
   },
   execute: {
-    label: "执行 AI",
-    description: "所有执行者在实现、返工和追加修改时使用，包括按类型指定的 AI。",
-    example: "动手前阅读相关代码和项目约定，优先复用现有实现。围绕当前任务做必要修改，保留已有功能与用户改动。完成后运行与改动相关的验证，说明改了什么、实际验证结果和仍有的问题。不要修改测试来掩盖失败；遇到真实阻碍时说明原因。",
+    label: "Implementation AI",
+    description: "Used by every implementer during implementation, rework, and follow-up changes, including category-specific AIs.",
+    example: "Read the relevant code and project conventions before editing, and prefer existing implementations. Make only the changes needed for the current task while preserving existing behavior and user work. Run relevant verification afterward, and report what changed, the actual results, and any remaining problems. Do not alter tests to hide failures; explain genuine blockers.",
   },
   review: {
-    label: "审核 AI",
-    description: "全部任务完成后的统一审核与返工复审时使用；沿用设计会话也会应用。",
-    example: "逐项对照验收标准，独立检查实际代码、差异和执行报告，按需运行测试或构建。重点检查功能遗漏、边界情况、回归风险和验证证据。问题需注明位置、具体修改要求及复验方法；只审核，不修改源代码。通过时写清依据，未验证的部分如实说明，不把推测当成已通过。",
+    label: "Review AI",
+    description: "Used for the final review and re-review after rework; also applies when reusing the planning conversation.",
+    example: "Check each acceptance criterion independently against the actual code, diff, and implementation reports, running tests or builds as needed. Focus on missing behavior, edge cases, regression risk, and verification evidence. For every issue, give the location, required change, and re-verification method. Review only; do not modify source code. Explain the evidence for approval and identify anything not verified instead of treating assumptions as passed.",
   },
 };
 
@@ -30,7 +30,7 @@ export function preInstructionsFor(run: Run, kind: Operation["kind"], taskId?: s
   const profile = run.settings.profiles.find(entry => entry.id === profileId);
   const agentText = profile?.instructions?.trim();
   return [
-    ...(roleText ? [{ source: `${instructionRoles[role].label}前置提示词`, text: roleText }] : []),
-    ...(agentText ? [{ source: `${profile!.label}的补充提示词`, text: agentText }] : []),
+    ...(roleText ? [{ source: `${instructionRoles[role].label} instructions`, text: roleText }] : []),
+    ...(agentText ? [{ source: `Additional instructions for ${profile!.label}`, text: agentText }] : []),
   ];
 }

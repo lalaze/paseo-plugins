@@ -26,7 +26,7 @@ export function buildTranslationPrompt(text: string, target: Exclude<TargetLangu
 
 export function parseTranslationOutput(raw: string): Pick<TranslationResult, 'translation' | 'detectedLanguage' | 'note'> {
   const trimmed = raw.trim();
-  if (!trimmed) throw new Error('翻译 API 没有返回翻译结果');
+  if (!trimmed) throw new Error('The Translation API returned no translation');
   const candidates = [trimmed];
   for (const match of trimmed.matchAll(/```(?:json)?\s*\n?([\s\S]*?)```/gi)) candidates.unshift(match[1].trim());
   const firstBrace = trimmed.indexOf('{'), lastBrace = trimmed.lastIndexOf('}');
@@ -45,12 +45,12 @@ export function parseTranslationOutput(raw: string): Pick<TranslationResult, 'tr
     }
   }
   const plain = trimmed.replace(/^```(?:\w+)?\s*/i, '').replace(/```$/i, '').trim();
-  if (!plain) throw new Error('翻译 API 没有返回翻译结果');
+  if (!plain) throw new Error('The Translation API returned no translation');
   return { translation: plain.slice(0, 20000), detectedLanguage: null, note: null };
 }
 
 function responseContent(value: unknown): string {
-  if (!value || typeof value !== 'object') throw new Error('翻译 API 返回格式不正确');
+  if (!value || typeof value !== 'object') throw new Error('The Translation API returned an invalid response');
   const record = value as Record<string, unknown>;
   const choices = Array.isArray(record.choices) ? record.choices : [];
   const first = choices[0] as Record<string, unknown> | undefined;
@@ -61,7 +61,7 @@ function responseContent(value: unknown): string {
     const text = content.map(part => part && typeof part === 'object' && typeof (part as Record<string, unknown>).text === 'string' ? (part as Record<string, unknown>).text : '').join('');
     if (text) return text;
   }
-  throw new Error('翻译 API 响应中没有 choices[0].message.content');
+  throw new Error('The Translation API response is missing choices[0].message.content');
 }
 
 function apiError(body: string, status: number): Error {
@@ -69,12 +69,12 @@ function apiError(body: string, status: number): Error {
     const value = JSON.parse(body) as Record<string, unknown>;
     const error = value.error as Record<string, unknown> | undefined;
     const message = typeof error?.message === 'string' ? error.message : typeof value.message === 'string' ? value.message : '';
-    if (message) return new Error(`翻译 API 请求失败（${status}）：${message.slice(0, 500)}`);
+    if (message) return new Error(`Translation API request failed (${status}): ${message.slice(0, 500)}`);
   } catch {
     // Fall through to the bounded plain-text response.
   }
   const detail = body.trim().replace(/\s+/g, ' ').slice(0, 500);
-  return new Error(`翻译 API 请求失败（${status}）${detail ? `：${detail}` : ''}`);
+  return new Error(`Translation API request failed (${status})${detail ? `: ${detail}` : ''}`);
 }
 
 export async function translateSelection(input: TranslationInput, fetchImpl: Fetch = globalThis.fetch): Promise<TranslationResult> {
@@ -101,10 +101,10 @@ export async function translateSelection(input: TranslationInput, fetchImpl: Fet
     if (!response.ok) throw apiError(body, response.status);
     let payload: unknown;
     try { payload = JSON.parse(body); }
-    catch { throw new Error('翻译 API 返回的不是有效 JSON'); }
+    catch { throw new Error('The Translation API returned invalid JSON'); }
     return { ...parseTranslationOutput(responseContent(payload)), target, model: settings.model };
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') throw new Error('翻译 API 响应超时，请稍后重试');
+    if (error instanceof Error && error.name === 'AbortError') throw new Error('The Translation API timed out. Try again later');
     throw error;
   } finally {
     clearTimeout(timeout);
@@ -114,7 +114,7 @@ export async function translateSelection(input: TranslationInput, fetchImpl: Fet
 export function createTranslationHandler() {
   let active = 0;
   return async (input: TranslationInput) => {
-    if (active >= 3) throw new Error('同时进行的翻译过多，请稍后重试');
+    if (active >= 3) throw new Error('Too many translations are running. Try again later');
     active++;
     try { return await translateSelection(input); }
     finally { active--; }

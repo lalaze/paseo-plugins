@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getSettingsRpc } from "../shared/rpc";
 import { SettingsEditor } from "./settings";
 import { ErrorText, Label } from "./ui";
+import { ui } from "./i18n";
 
 export function DirectorSurface({ host, theme, layout, onConfigured }: PluginSurfaceProps & { onConfigured?: () => Promise<void> }) {
   const get = useRpc(getSettingsRpc);
@@ -12,7 +13,7 @@ export function DirectorSurface({ host, theme, layout, onConfigured }: PluginSur
   const [saved, setSaved] = useState(false);
   const [launchError, setLaunchError] = useState<unknown>();
   return <View style={{ flex: 1, padding: layout.compact ? 12 : 24, gap: 12 }}>
-    {saved && <Label theme={theme}>协作设置已保存，用于之后新建的主对话。</Label>}
+    {saved && <Label theme={theme}>{ui("Collaboration settings saved for future main conversations.", "协作设置已保存，用于之后新建的主对话。")}</Label>}
     <ErrorText theme={theme} error={launchError ?? settings.error ?? settings.data?.error} />
     <SettingsEditor hostId={host.id} initial={settings.data?.settings ?? null} cwd="" theme={theme} compact={layout.compact} onSaved={() => { setSaved(true); setLaunchError(undefined); void settings.refetch(); void onConfigured?.().catch(setLaunchError); }} />
   </View>;

@@ -10,7 +10,7 @@ import * as contracts from '../shared/files.shared';
 const root = await mkdtemp(path.join(tmpdir(), 'paseo-transfer-preview-'));
 await mkdir(path.join(root, 'uploads/assets/imgs'), { recursive: true });
 await writeFile(path.join(root, 'uploads/assets/imgs/example.txt'), 'Tree preview\n');
-await writeFile(path.join(root, 'README.txt'), 'Paseo 文件传输预览\n');
+await writeFile(path.join(root, 'README.txt'), 'Paseo file-transfer preview\n');
 const service = new FileService(), token = randomUUID();
 const result = await build({ entryPoints: ['dev/main.tsx'], bundle: true, write: false, format: 'iife', jsx: 'automatic', plugins: [{ name: 'preview-host', setup(builder) {
   builder.onResolve({ filter: /^@getpaseo\/plugin\/client$/ }, () => ({ path: path.resolve('dev/sdk.ts') }));
@@ -22,7 +22,7 @@ const server = createServer(async (request, response) => {
   response.setHeader('Cache-Control', 'no-store');
   if (request.url === '/' && request.method === 'GET') {
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
-    response.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="preview-token" content="${token}"><title>Paseo 文件传输预览</title></head><body style="margin:0;background:#171b22"><div id="root" style="max-width:820px;height:100dvh;margin:auto"></div><script src="/app.js"></script></body></html>`); return;
+    response.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="preview-token" content="${token}"><title>Paseo File Transfer Preview</title></head><body style="margin:0;background:#171b22"><div id="root" style="max-width:820px;height:100dvh;margin:auto"></div><script src="/app.js"></script></body></html>`); return;
   }
   if (request.url === '/app.js' && request.method === 'GET') { response.setHeader('Content-Type', 'application/javascript'); response.end(js); return; }
   if (request.url !== '/rpc' || request.method !== 'POST' || request.headers['x-preview-token'] !== token) { response.writeHead(403).end(); return; }

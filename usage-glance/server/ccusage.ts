@@ -35,7 +35,7 @@ export function parseCcusage(raw: unknown, range: ConsumptionRange): Consumption
     else if (Array.isArray(day.modelBreakdowns)) models = day.modelBreakdowns.map(value => { const data = object(value); if (typeof data.modelName !== 'string') throw new Error('模型名称缺失'); return [data.modelName, data]; });
     else models = [];
     if (!models.length && dayTokens.input + dayTokens.output > 0) {
-      rows.push({ date, model: '未记录模型', inferredModel: true, ...dayTokens });
+      rows.push({ date, model: 'Unrecorded model', inferredModel: true, ...dayTokens });
       continue;
     }
     const summed = emptyTokens();

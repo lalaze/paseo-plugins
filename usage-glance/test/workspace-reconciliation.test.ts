@@ -102,7 +102,7 @@ test('unmatched, updating, mismatched and unreadable rows have separate categori
     row, { ...row, workspaceIssue: 'updating' }, { ...row, workspaceIssue: 'accounting-mismatch', workspaceNote: '会话明细 130；每日合计 120' }, { ...row, workspaceIssue: 'read-error' }, { ...row, workspace },
   ] });
   const groups = groupConsumption([source], 'workspace');
-  assert.deepEqual(groups.map(group => group.label), ['未归属 Workspace', '用量更新中', '待核对用量', '归属读取失败', '项目 A']);
+  assert.deepEqual(groups.map(group => group.label), ['No Workspace assigned', 'Usage updating', 'Usage needs review', 'Assignment read failed', '项目 A']);
   assert.equal(new Set(groups.map(group => group.id)).size, 5);
   assert.ok(groups.slice(0, 4).every(group => group.note));
   assert.equal(groups[2].models[0].workspaceNote, '会话明细 130；每日合计 120');

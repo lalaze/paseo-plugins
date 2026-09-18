@@ -58,11 +58,11 @@ test("concurrent submissions coalesce and retry after a lost response reuses the
   };
   const first = command.submit(context), duplicate = command.submit(context);
   const outcomes = Promise.allSettled([first, duplicate]);
-  await assert.rejects(command.submit({ ...context, args: "另一个目标" }), /仍在提交/);
+  await assert.rejects(command.submit({ ...context, args: "另一个目标" }), /still being submitted/);
   finish(); await outcomes;
   assert.equal(state.calls.filter(c => c.name === "director.conversation.open").length, 1);
   const failed = command.requests.get("workspace-a")!;
-  assert.equal(failed.status, "failed"); assert.match(failed.message!, /连接中断/);
+  assert.equal(failed.status, "failed"); assert.match(failed.message!, /Connection interrupted/);
   await command.submit(context);
   assert.equal(command.requests.get("workspace-a")?.requestId, failed.requestId);
   assert.equal(command.requests.get("workspace-a")?.conversationId, "one-run");
@@ -78,13 +78,13 @@ test("commands and navigation stay scoped to the workspace and plugin host", asy
   assert.equal(a.requests.get("different-workspace"), null);
   assert.equal(b.requests.get("workspace-a"), null);
   unsubscribe(); a.dispose(); assert.equal(a.requests.get("workspace-a"), null);
-  await assert.rejects(a.submit(context), /重新加载/);
+  await assert.rejects(a.submit(context), /was reloaded/);
 });
 
 test("invalid goal or workspace does not issue any RPC", async () => {
   const command = createDirectorCommand(), { state, context } = fixture();
   await assert.rejects(command.submit({ ...context, args: "a".repeat(32001) }), /32000/);
-  await assert.rejects(command.submit({ ...context, workspace: { ...context.workspace, directory: "" } }), /工作区/);
+  await assert.rejects(command.submit({ ...context, workspace: { ...context.workspace, directory: "" } }), /project workspace/);
   assert.equal(state.calls.length, 0);
 });
 
@@ -128,6 +128,6 @@ test("two tabs never coalesce takeover requests in the same workspace", async ()
   let finish!: () => void;
   state.create = async () => { await new Promise<void>(resolve => { finish = resolve; }); return { id: "c", agentId: "a", runId: undefined }; };
   const first = command.submit({ ...context, agent: { id: "a" } });
-  await assert.rejects(command.submit({ ...context, agent: { id: "b" } }), /仍在提交/);
+  await assert.rejects(command.submit({ ...context, agent: { id: "b" } }), /still being submitted/);
   await new Promise(resolve => setImmediate(resolve)); finish(); await first;
 });

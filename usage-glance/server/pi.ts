@@ -89,7 +89,7 @@ export async function runPi(range: ConsumptionRange, signal: AbortSignal, root =
             const usage = tokens(payload.usage), time = timestamp(payload.timestamp ?? entry.timestamp);
             const date = dateInZone(new Date(time), range.timezone);
             if (date < range.since || date > range.until) continue;
-            const model = typeof payload.model === 'string' && payload.model.trim() ? payload.model : '未记录模型';
+            const model = typeof payload.model === 'string' && payload.model.trim() ? payload.model : 'Unrecorded model';
             if (model.length > 256) throw new Error('模型名称过长');
             // Forks retain entry IDs and message timestamps. Include the payload hash:
             // old IDs are only 8 hex characters and can collide across unrelated sessions.
@@ -101,7 +101,7 @@ export async function runPi(range: ConsumptionRange, signal: AbortSignal, root =
             if (previous) {
               // Copies in different workspaces do not establish which spent the tokens.
               if (previous.workspace?.id !== workspace?.id) delete previous.workspace;
-            } else seen.set(identity, { ...usage, date, model, inferredModel: model === '未记录模型', ...(workspace ? { workspace } : {}) });
+            } else seen.set(identity, { ...usage, date, model, inferredModel: model === 'Unrecorded model', ...(workspace ? { workspace } : {}) });
           } catch { warnings++; }
         }
         if (!header && !lineNumber) warnings++;

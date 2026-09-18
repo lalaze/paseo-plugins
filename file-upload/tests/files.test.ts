@@ -17,15 +17,15 @@ async function setup(t: TestContext) {
 test('binary upload and chunked download preserve exact bytes, including Unicode names', async t => {
   const { root, service } = await setup(t);
   const data = randomBytes(CHUNK_SIZE * 2 + 17);
-  const { id } = await service.start(root, '图片 文件.bin', data.length);
+  const { id } = await service.start(root, 'image file.bin', data.length);
   for (let offset = 0; offset < data.length; offset += CHUNK_SIZE) await service.chunk(id, offset, data.subarray(offset, offset + CHUNK_SIZE).toString('base64'));
   assert.deepEqual(await service.list(root, ''), []);
   await service.finish(id);
-  assert.deepEqual(await readFile(path.join(root, '图片 文件.bin')), data);
+  assert.deepEqual(await readFile(path.join(root, 'image file.bin')), data);
   const parts: Buffer[] = [];
   let offset = 0, version: string | undefined;
   do {
-    const result = await service.download(root, '图片 文件.bin', offset, version);
+    const result = await service.download(root, 'image file.bin', offset, version);
     parts.push(Buffer.from(result.data, 'base64')); offset = result.nextOffset; version = result.version;
   } while (offset < data.length);
   assert.deepEqual(Buffer.concat(parts), data);
@@ -33,10 +33,10 @@ test('binary upload and chunked download preserve exact bytes, including Unicode
 
 test('zero byte files and nested directories', async t => {
   const { root, service } = await setup(t);
-  await mkdir(path.join(root, '子目录'));
-  const { id } = await service.start(root, '子目录/empty', 0);
+  await mkdir(path.join(root, 'subdirectory'));
+  const { id } = await service.start(root, 'subdirectory/empty', 0);
   await service.finish(id);
-  assert.equal((await service.download(root, '子目录/empty', 0)).size, 0);
+  assert.equal((await service.download(root, 'subdirectory/empty', 0)).size, 0);
   assert.equal((await service.list(root, ''))[0].directory, true);
 });
 
@@ -77,14 +77,14 @@ test('download detects file changes between chunks', async t => {
   await writeFile(path.join(root, 'changing'), randomBytes(CHUNK_SIZE + 20));
   const first = await service.download(root, 'changing', 0);
   await writeFile(path.join(root, 'changing'), 'changed');
-  await assert.rejects(service.download(root, 'changing', first.nextOffset, first.version), /变化/);
+  await assert.rejects(service.download(root, 'changing', first.nextOffset, first.version), /changed/);
 });
 
 test('limits file size, concurrent sessions, and cleans on shutdown', async t => {
   const { root, service } = await setup(t);
   await assert.rejects(service.start(root, 'huge', MAX_FILE_SIZE + 1));
   for (let i = 0; i < 8; i++) await service.start(root, `file-${i}`, 1);
-  await assert.rejects(service.start(root, 'extra', 1), /过多/);
+  await assert.rejects(service.start(root, 'extra', 1), /Too many/);
   await service.dispose();
   assert.deepEqual(await readdir(root), []);
 });

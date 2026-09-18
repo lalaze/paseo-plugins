@@ -12,16 +12,16 @@ export class FileService {
   private timer = setInterval(() => { void this.expire().catch(() => {}); }, 60_000);
   constructor() { this.timer.unref(); }
   async resolve(root: string, relative: string, missingLeaf = false) {
-    if (relative.includes('\\') || relative.includes('\0') || path.isAbsolute(relative) || relative.split('/').includes('..')) throw new Error('文件路径必须位于当前工作区内');
+    if (relative.includes('\\') || relative.includes('\0') || path.isAbsolute(relative) || relative.split('/').includes('..')) throw new Error('File paths must stay within the current workspace');
     const base = await realpath(root);
     const parts = relative.split('/').filter(p => p && p !== '.');
     let current = base;
     for (let i = 0; i < parts.length; i++) {
-      if (parts[i] === '.git' || parts[i].startsWith('.paseo-upload-')) throw new Error('不能访问内部文件');
+      if (parts[i] === '.git' || parts[i].startsWith('.paseo-upload-')) throw new Error('Internal files cannot be accessed');
       current = path.join(current, parts[i]);
       try {
         const info = await lstat(current);
-        if (info.isSymbolicLink()) throw new Error('暂不支持符号链接');
+        if (info.isSymbolicLink()) throw new Error('Symbolic links are not supported');
       } catch (e) {
         if (missingLeaf && i === parts.length - 1 && (e as NodeJS.ErrnoException).code === 'ENOENT') return current;
         throw e;
@@ -43,10 +43,10 @@ export class FileService {
     return result.sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name));
   }
   async start(root: string, relative: string, size: number) {
-    if (!Number.isSafeInteger(size) || size < 0 || size > MAX_FILE_SIZE) throw new Error('单文件最大 100 MiB');
-    if (this.uploads.size >= 8) throw new Error('上传任务过多，请稍后重试');
+    if (!Number.isSafeInteger(size) || size < 0 || size > MAX_FILE_SIZE) throw new Error('The maximum file size is 100 MiB');
+    if (this.uploads.size >= 8) throw new Error('Too many uploads are active; try again later');
     const target = await this.resolve(root, relative, true);
-    try { await lstat(target); throw new Error('同名文件已存在，请重命名后上传'); }
+    try { await lstat(target); throw new Error('A file with this name already exists; rename it before uploading'); }
     catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
     const id = randomUUID();
     const temp = path.join(path.dirname(target), `.paseo-upload-${id}`);
@@ -56,21 +56,21 @@ export class FileService {
   }
   private session(id: string) {
     const upload = this.uploads.get(id);
-    if (!upload) throw new Error('上传会话已过期，请重新上传');
-    if (upload.busy) throw new Error('上传正在处理中');
+    if (!upload) throw new Error('The upload session has expired; start the upload again');
+    if (upload.busy) throw new Error('The upload is being processed');
     upload.touched = Date.now();
     return upload;
   }
   async chunk(id: string, offset: number, data: string) {
     const upload = this.session(id);
     const bytes = Buffer.from(data, 'base64');
-    if (bytes.toString('base64') !== data || !bytes.length || bytes.length > CHUNK_SIZE || offset !== upload.offset || offset + bytes.length > upload.size) throw new Error('上传分块无效');
+    if (bytes.toString('base64') !== data || !bytes.length || bytes.length > CHUNK_SIZE || offset !== upload.offset || offset + bytes.length > upload.size) throw new Error('Invalid upload chunk');
     upload.busy = true;
     try {
       let written = 0;
       while (written < bytes.length) {
         const result = await upload.file.write(bytes, written, bytes.length - written, offset + written);
-        if (!result.bytesWritten) throw new Error('无法写入文件');
+        if (!result.bytesWritten) throw new Error('Unable to write the file');
         written += result.bytesWritten;
       }
       upload.offset += written;
@@ -79,10 +79,10 @@ export class FileService {
   }
   async finish(id: string) {
     const upload = this.session(id);
-    if (upload.offset !== upload.size) throw new Error('文件尚未上传完整');
+    if (upload.offset !== upload.size) throw new Error('The file upload is incomplete');
     upload.busy = true;
     try {
-      if (await this.resolve(upload.root, upload.relative, true) !== upload.target) throw new Error('目标目录已变化');
+      if (await this.resolve(upload.root, upload.relative, true) !== upload.target) throw new Error('The destination directory has changed');
       await upload.file.sync();
       await upload.file.close();
       // Hard-link publication is atomic and never replaces an existing destination.
@@ -95,7 +95,7 @@ export class FileService {
   async cancel(id: string) {
     const upload = this.uploads.get(id);
     if (upload) {
-      if (upload.busy) throw new Error('上传正在处理中');
+      if (upload.busy) throw new Error('The upload is being processed');
       this.uploads.delete(id);
       await upload.file.close().catch(() => {});
       await unlink(upload.temp).catch(e => { if (e.code !== 'ENOENT') throw e; });
@@ -107,14 +107,14 @@ export class FileService {
     const file = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const info = await file.stat();
-      if (!info.isFile() || info.size > MAX_FILE_SIZE) throw new Error('仅支持下载 100 MiB 以内的普通文件');
+      if (!info.isFile() || info.size > MAX_FILE_SIZE) throw new Error('Only regular files up to 100 MiB can be downloaded');
       const current = `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
-      if (version && version !== current) throw new Error('文件在下载期间发生变化，请重试');
-      if (!Number.isSafeInteger(offset) || offset < 0 || offset > info.size || (offset > 0 && !version)) throw new Error('下载偏移无效');
+      if (version && version !== current) throw new Error('The file changed during download; try again');
+      if (!Number.isSafeInteger(offset) || offset < 0 || offset > info.size || (offset > 0 && !version)) throw new Error('Invalid download offset');
       const buffer = Buffer.alloc(Math.min(CHUNK_SIZE, info.size - offset));
       const { bytesRead } = await file.read(buffer, 0, buffer.length, offset);
       const after = await file.stat();
-      if (`${after.dev}:${after.ino}:${after.size}:${after.mtimeMs}:${after.ctimeMs}` !== current) throw new Error('文件在下载期间发生变化，请重试');
+      if (`${after.dev}:${after.ino}:${after.size}:${after.mtimeMs}:${after.ctimeMs}` !== current) throw new Error('The file changed during download; try again');
       return { data: buffer.subarray(0, bytesRead).toString('base64'), size: info.size, version: current, nextOffset: offset + bytesRead };
     } finally { await file.close(); }
   }

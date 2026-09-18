@@ -3,6 +3,7 @@ import type { ConsumptionQuery } from './consumption-query';
 import type { ConsumptionRange, ConsumptionReport } from '../shared/consumption';
 import type { HostIdentity } from '../shared/hosts';
 import { coversConsumptionRange } from '../shared/consumption-cache';
+import { ui } from './i18n';
 
 export const rangeKey = (range: ConsumptionRange) => JSON.stringify([range.since, range.until, range.timezone]);
 export type HostRuntime = { consumption: ConsumptionQuery };
@@ -99,7 +100,7 @@ export function createHostRegistry(exactRanges = false) {
     const options = runtime.consumption.options(readRange), state = runtime.consumption.client.getQueryState<ConsumptionReport>(options.queryKey);
     if (!force && ((state?.data && !state.isInvalidated && !state.data.scanning && Date.now() - state.dataUpdatedAt < 60000) || Date.now() - (entry.errors.get(key) ?? 0) < 15000)) return Promise.resolve();
     let timer: ReturnType<typeof setTimeout>;
-    const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('主机响应超时')), 8000); });
+    const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(ui('Host response timed out', '主机响应超时'))), 8000); });
     const request = Promise.resolve().then(async () => {
       if (force) await runtime.consumption.refresh(readRange);
       else await runtime.consumption.client.fetchQuery({ ...options, staleTime: state?.data?.scanning ? 0 : 60000 });

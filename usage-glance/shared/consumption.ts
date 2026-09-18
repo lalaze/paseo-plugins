@@ -1,6 +1,7 @@
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
 import { hostIdentitySchema, type HostIdentity } from './hosts';
+import { localizeHostLabel, localizeModelLabel, ui, uiNumberLocale } from './i18n';
 
 export const sourceIds = ['codex', 'claude', 'kimi', 'grok', 'antigravity', 'pi'] as const;
 export type SourceId = typeof sourceIds[number];
@@ -32,13 +33,13 @@ export function addTokens(target: Tokens, value: Tokens) {
 export function validDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 }
-export const dateSchema = z.string().refine(validDate, '请输入有效日期（YYYY-MM-DD）');
+export const dateSchema = z.string().refine(validDate, ui('Enter a valid date (YYYY-MM-DD)', '请输入有效日期（YYYY-MM-DD）'));
 export const rangeSchema = z.object({
   since: dateSchema,
   until: dateSchema,
-  timezone: z.string().min(1).max(100).refine(value => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }, '时区无效'),
-}).refine(value => value.since <= value.until, '开始日期不能晚于结束日期')
-  .refine(value => Date.parse(value.until) - Date.parse(value.since) < 366 * 86400000, '一次最多查看 366 天');
+  timezone: z.string().min(1).max(100).refine(value => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }, ui('Invalid time zone', '时区无效')),
+}).refine(value => value.since <= value.until, ui('The start date cannot be after the end date', '开始日期不能晚于结束日期'))
+  .refine(value => Date.parse(value.until) - Date.parse(value.since) < 366 * 86400000, ui('You can view at most 366 days at a time', '一次最多查看 366 天'));
 export type ConsumptionRange = z.infer<typeof rangeSchema>;
 export const workspaceIdentitySchema = z.object({ id: z.string(), label: z.string(), directory: z.string() });
 export type WorkspaceIdentity = z.infer<typeof workspaceIdentitySchema>;
@@ -47,13 +48,13 @@ export type ConsumptionRow = z.infer<typeof consumptionRowSchema>;
 export const workspaceIssueSchema = z.enum(['unmatched', 'updating', 'accounting-mismatch', 'read-error']);
 export type WorkspaceIssue = z.infer<typeof workspaceIssueSchema>;
 export const workspaceIssueLabels: Record<WorkspaceIssue, string> = {
-  unmatched: '未归属 Workspace', updating: '用量更新中', 'accounting-mismatch': '待核对用量', 'read-error': '归属读取失败',
+  unmatched: ui('No Workspace assigned', '未归属 Workspace'), updating: ui('Usage updating', '用量更新中'), 'accounting-mismatch': ui('Usage needs review', '待核对用量'), 'read-error': ui('Assignment read failed', '归属读取失败'),
 };
 const workspaceIssueNotes: Record<WorkspaceIssue, string> = {
-  unmatched: '未找到唯一对应的工作区，可能缺少会话目录、工作区已移除或目录存在冲突。',
-  updating: '读取期间用量发生变化，重新核对后仍未对齐。暂按每日总量保留，下次刷新继续核对。',
-  'accounting-mismatch': '会话明细与每日总量仍有差异，暂未分配到工作区。展开可查看差异。',
-  'read-error': '工作区归属暂时无法读取，已保留每日总量，请稍后刷新。',
+  unmatched: ui('No unique matching workspace was found. The session directory may be missing, the workspace may have been removed, or directories may conflict.', '未找到唯一对应的工作区，可能缺少会话目录、工作区已移除或目录存在冲突。'),
+  updating: ui('Usage changed while it was being read and still did not reconcile. Daily totals are preserved for now and will be checked again on the next refresh.', '读取期间用量发生变化，重新核对后仍未对齐。暂按每日总量保留，下次刷新继续核对。'),
+  'accounting-mismatch': ui('Session details still differ from daily totals and have not been assigned to a workspace. Expand to inspect the difference.', '会话明细与每日总量仍有差异，暂未分配到工作区。展开可查看差异。'),
+  'read-error': ui('Workspace assignment is temporarily unavailable. Daily totals were preserved; refresh later.', '工作区归属暂时无法读取，已保留每日总量，请稍后刷新。'),
 };
 export const workspaceConsumptionRowSchema = consumptionRowSchema.omit({ date: true }).extend({
   workspaceIssue: workspaceIssueSchema.optional(), workspaceNote: z.string().max(1024).optional(),
@@ -92,12 +93,12 @@ export function modelVendor(model: string, source: SourceId): string {
   if (/^claude[ -]/.test(name)) return 'Anthropic';
   if (/^gemini[ -]/.test(name)) return 'Google';
   if (/^grok[ -]/.test(name)) return 'xAI';
-  if (/^(kimi|moonshot)/.test(name) || (source === 'kimi' && /^k\d(?:[.-]|$)/.test(name))) return '月之暗面';
-  if (/^glm[ -]/.test(name)) return '智谱';
+  if (/^(kimi|moonshot)/.test(name) || (source === 'kimi' && /^k\d(?:[.-]|$)/.test(name))) return ui('Moonshot AI', '月之暗面');
+  if (/^glm[ -]/.test(name)) return ui('Zhipu AI', '智谱');
   if (/^deepseek[ -]/.test(name)) return 'DeepSeek';
-  if (/^qwen[ -]|^qwen\d/.test(name)) return '阿里云';
+  if (/^qwen[ -]|^qwen\d/.test(name)) return ui('Alibaba Cloud', '阿里云');
   if (/^minimax[ -]/.test(name)) return 'MiniMax';
-  return '未识别供应商';
+  return ui('Unknown vendor', '未识别供应商');
 }
 export type ModelTotal = Tokens & { model: string; source: SourceId; inferredModel: boolean; host?: HostIdentity; workspaceNote?: string };
 export type ConsumptionGroup = Tokens & { id: string; label: string; detail?: string; note?: string; models: ModelTotal[] };
@@ -106,10 +107,10 @@ export function groupConsumption(sources: SourceReport[], by: ConsumptionGroupin
   const groups = new Map<string, ConsumptionGroup>();
   for (const report of sources) for (const row of (by === 'workspace' ? report.workspaceRows ?? report.rows : report.rows)) {
     const workspace = row.workspace, issue = (row as WorkspaceConsumptionRow).workspaceIssue ?? 'unmatched';
-    const label = by === 'workspace' ? workspace?.label ?? workspaceIssueLabels[issue] : by === 'host' ? report.host?.label ?? '本机' : by === 'source' ? sourceNames[report.source] : by === 'model' ? row.model : modelVendor(row.model, report.source);
+    const label = by === 'workspace' ? workspace?.label ?? workspaceIssueLabels[issue] : by === 'host' ? report.host ? localizeHostLabel(report.host.label) : ui('This host', '本机') : by === 'source' ? sourceNames[report.source] : by === 'model' ? localizeModelLabel(row.model) : modelVendor(row.model, report.source);
     const id = by === 'workspace' ? JSON.stringify([report.host?.id ?? 'local', workspace?.id ?? null, workspace ? null : issue]) : by === 'host' ? report.host?.id ?? 'local' : label;
     let group = groups.get(id);
-    if (!group) { group = { ...emptyTokens(), id, label, ...(by === 'workspace' ? { detail: [report.host?.label, workspace?.directory].filter(Boolean).join(' · '), ...(!workspace ? { note: workspaceIssueNotes[issue] } : {}) } : {}), models: [] }; groups.set(id, group); }
+    if (!group) { group = { ...emptyTokens(), id, label, ...(by === 'workspace' ? { detail: [report.host ? localizeHostLabel(report.host.label) : undefined, workspace?.directory].filter(Boolean).join(' · '), ...(!workspace ? { note: workspaceIssueNotes[issue] } : {}) } : {}), models: [] }; groups.set(id, group); }
     addTokens(group, row);
     let model = group.models.find(value => value.source === report.source && value.model === row.model && value.host?.id === report.host?.id);
     if (!model) { model = { ...emptyTokens(), source: report.source, model: row.model, inferredModel: false, ...(report.host ? { host: report.host } : {}) }; group.models.push(model); }
@@ -120,10 +121,11 @@ export function groupConsumption(sources: SourceReport[], by: ConsumptionGroupin
   return [...groups.values()].sort((a, b) => totalTokens(b) - totalTokens(a));
 }
 export function formatTokens(value: number): string {
-  return value.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+  return value.toLocaleString(uiNumberLocale(), { maximumFractionDigits: 0 });
 }
 export function compactTokens(value: number): string {
   if (value > 0 && value < 10000) return '<0.01M';
-  const divisor = value < 100000000 ? 1000000 : 100000000;
-  return `${Number((value / divisor).toFixed(2))}${divisor === 1000000 ? 'M' : '亿'}`;
+  const chinese = uiNumberLocale() === 'zh-CN';
+  const divisor = chinese && value >= 100000000 ? 100000000 : value >= 1000000000 ? 1000000000 : 1000000;
+  return `${Number((value / divisor).toFixed(2))}${divisor === 1000000 ? 'M' : divisor === 1000000000 ? 'B' : '亿'}`;
 }

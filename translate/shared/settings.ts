@@ -17,11 +17,11 @@ export type TranslationSettings = z.infer<typeof translationSettings.schema>;
 
 export function validateTranslationSettings(settings: TranslationSettings): TranslationSettings {
   const parsed = translationSettings.schema.parse(settings);
-  if (!parsed.apiUrl) throw new Error('请先填写翻译 API 地址');
+  if (!parsed.apiUrl) throw new Error('Enter the Translation API URL first');
   let url: URL;
   try { url = new URL(parsed.apiUrl); }
-  catch { throw new Error('翻译 API 地址格式不正确'); }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('翻译 API 地址只支持 HTTP 或 HTTPS');
-  if (!parsed.model) throw new Error('请先填写翻译模型名');
+  catch { throw new Error('The Translation API URL is invalid'); }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('The Translation API URL must use HTTP or HTTPS');
+  if (!parsed.model) throw new Error('Enter a translation model first');
   return parsed;
 }

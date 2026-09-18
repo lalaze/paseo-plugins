@@ -10,7 +10,7 @@ test("selected reviewer owns unified review and rework; user feedback returns to
   const h = await harness({ ...reviewerSettings(), requirePlanApproval: true }); t.after(() => h.cleanup());
   const designer = await h.until("plan");
   const card = readDirectorPrompt(designer.prompt)!;
-  assert.equal(card.actor, "设计 AI"); assert.equal(card.team.length, 3); assert.equal(card.team[2].name, "审核 AI · vendor-c/model-c");
+  assert.equal(card.actor, "Planning AI"); assert.equal(card.team.length, 3); assert.equal(card.team[2].name, "审核 AI · vendor-c/model-c");
   await h.complete(plan); await h.engine.control(h.id, "approve_plan");
   const worker = await h.until("execute"); await h.complete(result);
   const auditor = await h.until("final");
@@ -19,7 +19,7 @@ test("selected reviewer owns unified review and rework; user feedback returns to
   assert.deepEqual(evidence.plan, plan); assert.deepEqual(evidence.taskResults[0].result, result); assert.equal(evidence.evidence.id, "artifact-v1");
   assert.ok(evidence.workflowEvidence.planApproval.userApprovedAt);
   assert.deepEqual(evidence.reviewer, { profileId: "audit", separateSession: true });
-  assert.match(auditor.prompt, /只审核，不修改源代码/); assert.equal(readDirectorPrompt(auditor.prompt)!.actor, "审核 AI");
+  assert.match(auditor.prompt, /只审核，不修改源代码/); assert.equal(readDirectorPrompt(auditor.prompt)!.actor, "review AI");
   assert.deepEqual(h.agents.created[2].profile, reviewerSettings().profiles[2]);
   await assert.rejects(h.engine.submit(h.id, "director", auditor.id, review(true)), /角色无权/);
   await assert.rejects(h.engine.submit(h.id, plan.tasks[0].id, auditor.id, review(true)), /角色无权/);
@@ -27,7 +27,7 @@ test("selected reviewer owns unified review and rework; user feedback returns to
   const redo = await h.until("execute"); assert.equal(redo.agentId, worker.agentId); assert.match(redo.prompt, /增加空值处理/);
   await h.complete(result);
   const final = await h.until("final"); assert.equal(final.agentId, auditor.agentId);
-  assert.equal(readDirectorPrompt(final.prompt)!.actor, "审核 AI");
+  assert.equal(readDirectorPrompt(final.prompt)!.actor, "review AI");
   await h.complete(review(true)); assert.equal(h.run().phase, "awaiting_acceptance"); assert.equal(h.run().userAcceptance, undefined);
   const completed = h.run();
   await h.engine.control(h.id, "request_changes", undefined, { feedback: "补充一个重试入口", artifactId: completed.finalEvidence!.id, expectedRevision: completed.revision });

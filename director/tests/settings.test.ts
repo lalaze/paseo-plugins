@@ -18,9 +18,9 @@ test("check command input rejects shell operators, expansion and malformed input
 
 test("check editing preserves timeouts and provides useful validation", () => {
   assert.deepEqual(makeCheck("python -m pytest", "", "5"), { label: "python -m pytest", command: "python", args: ["-m", "pytest"], timeoutMs: 300000 });
-  assert.throws(() => makeCheck("npm test", "test", "0"), /时限/);
-  assert.throws(() => makeCheck("npm test", "test", "11"), /时限/);
-  assert.throws(() => validateSettings({}), /请选择负责设计总纲的 AI/);
+  assert.throws(() => makeCheck("npm test", "test", "0"), /timeout/);
+  assert.throws(() => makeCheck("npm test", "test", "11"), /timeout/);
+  assert.throws(() => validateSettings({}), /Choose the AI responsible for planning/);
 });
 
 test("choosing the two roles is enough to save; previous optional checks remain intact", () => {

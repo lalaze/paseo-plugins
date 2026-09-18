@@ -12,6 +12,7 @@ import { getHostRegistry } from './client/hosts';
 import { readHostIdentity } from './shared/hosts';
 import { readWorkspaceConsumption } from './shared/consumption';
 import { headerSummary, isStale } from './shared/usage';
+import { ui } from './client/i18n';
 
 export default function contribute(client: PluginClientContext) {
   const query = createUsageQuery(client.paseo);
@@ -38,15 +39,15 @@ export default function contribute(client: PluginClientContext) {
   const HeaderContent = (props: PluginButtonContentProps) => <Overview {...props} query={query} preference={preference} popover />;
   const ConsumptionSurface = (props: PluginSurfaceProps) => <ConsumptionPage {...props} fleet={fleet} />;
   const removeSurface = client.addSurface('consumption', ConsumptionSurface);
-  const removeSidebar = client.addSidebarItem({ id: 'consumption', title: 'Token 消耗', icon: 'ChartColumn', surface: 'consumption' });
-  const removeCommand = client.addCommandCenterItem({ id: 'open-consumption', title: '查看 Token 消耗', icon: 'ChartColumn', context: 'global', keywords: ['token', 'usage', '消耗', '热力图'], onSelect: () => client.openSurface('consumption') });
+  const removeSidebar = client.addSidebarItem({ id: 'consumption', title: ui('Token Usage', 'Token 消耗'), icon: 'ChartColumn', surface: 'consumption' });
+  const removeCommand = client.addCommandCenterItem({ id: 'open-consumption', title: ui('View Token Usage', '查看 Token 消耗'), icon: 'ChartColumn', context: 'global', keywords: ['token', 'usage', 'consumption', 'heatmap', '消耗', '热力图'], onSelect: () => client.openSurface('consumption') });
 
   function sync() {
     const result = observer.getCurrentResult();
     const stale = result.isError || isStale(result.data);
     const header = headerSummary(result.data?.providers ?? [], preference.get());
-    const headerLabel = result.isPending ? '额度 · 读取中…' : stale ? '额度 · 待更新' : header.label;
-    const headerTitle = stale ? '额度待更新，点击查看上次数据并重试' : result.isPending ? '正在读取额度' : header.detail;
+    const headerLabel = result.isPending ? ui('Quota · Loading…', '额度 · 读取中…') : stale ? ui('Quota · Update needed', '额度 · 待更新') : header.label;
+    const headerTitle = stale ? ui('Quota needs updating. Click to view the previous data and retry.', '额度待更新，点击查看上次数据并重试') : result.isPending ? ui('Loading quota', '正在读取额度') : header.detail;
     for (const [id, registration] of headers) {
       if (!workspaces.has(id)) { registration.remove(); headers.delete(id); }
     }

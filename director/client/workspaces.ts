@@ -14,7 +14,7 @@ export async function listLaunchWorkspaces(workspaces: Pick<PaseoApi["workspaces
       entries.set(workspace.id, { id: workspace.id, name: workspace.name, directory: workspace.workspaceDirectory });
     }
     cursor = page.pageInfo.hasMore ? page.pageInfo.nextCursor ?? undefined : undefined;
-    if (page.pageInfo.hasMore && (!cursor || cursors.has(cursor))) throw new Error("工作区列表读取不完整，请刷新后重试");
+    if (page.pageInfo.hasMore && (!cursor || cursors.has(cursor))) throw new Error("The workspace list was incomplete. Refresh and try again.");
     if (cursor) cursors.add(cursor);
   } while (cursor);
   return [...entries.values()];

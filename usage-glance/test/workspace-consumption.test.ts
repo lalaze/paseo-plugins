@@ -57,10 +57,10 @@ test('workspace groups preserve unknown usage, separate identical workspace IDs 
   const sources = [{ ...source, host: { id: 'mac', label: 'Mac' } }, { ...source, host: { id: 'linux', label: 'Linux' } }];
   const groups = groupConsumption(sources, 'workspace');
   assert.equal(groups.length, 4);
-  assert.equal(groups.filter(group => group.label === '未归属 Workspace').length, 2);
+  assert.equal(groups.filter(group => group.label === 'No Workspace assigned').length, 2);
   assert.equal(new Set(groups.map(group => group.id)).size, 4);
   for (const by of ['workspace', 'source', 'model', 'vendor', 'host'] as const) assert.equal(groupConsumption(sources, by).reduce((sum, group) => sum + totalTokens(group), 0), 480);
-  assert.equal(groupConsumption([{ ...source, workspaceRows: undefined }], 'workspace')[0].label, '未归属 Workspace');
+  assert.equal(groupConsumption([{ ...source, workspaceRows: undefined }], 'workspace')[0].label, 'No Workspace assigned');
 });
 
 test('workspace ranges are exact in service, host lookup and multi-host aggregation', async () => {

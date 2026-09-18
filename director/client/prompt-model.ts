@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PlanSchema, ProfileSchema, TaskSchema } from "../shared/schema";
+import { ui } from "./i18n";
 
 export const PromptCardSchema = z.object({
   stage: z.enum(["plan", "execute", "review", "final"]),
@@ -48,20 +49,20 @@ export function readDirectorPrompt(raw: string): PromptCardData | undefined {
   if (!raw.slice(contextEnd).startsWith(`\n\n本轮 operationId=${marker[1]}。如果有 ${tool} 工具，`)) return;
   const team: PromptCardData["team"] = [];
   if (stage === "plan") {
-    for (const [role, id] of [[context.bindings!.reviewer ? "设计 AI" : "总 AI · 设计与审核", context.bindings!.director], ["默认执行 AI", context.bindings!.worker], ...(context.bindings!.reviewer ? [["审核 AI · 独立会话", context.bindings!.reviewer]] : [])]) {
+    for (const [role, id] of [[context.bindings!.reviewer ? ui("Planning AI", "设计 AI") : ui("Lead AI · planning and review", "总 AI · 设计与审核"), context.bindings!.director], [ui("Default implementation AI", "默认执行 AI"), context.bindings!.worker], ...(context.bindings!.reviewer ? [[ui("Review AI · separate session", "审核 AI · 独立会话"), context.bindings!.reviewer]] : [])]) {
       const profile = context.profiles!.find(p => p.id === id);
       if (!profile) return;
       team.push({ role, name: `${profile.label} · ${profile.provider}` });
     }
   }
-  const reviewer = context.reviewer?.separateSession ? "审核 AI" : "总 AI";
+  const reviewer = context.reviewer?.separateSession ? ui("review AI", "审核 AI") : ui("lead AI", "总 AI");
   const next = stage === "plan"
-    ? context.requirePlanApproval ? `总纲完成后等你确认，再按依赖串行执行全部任务，完成后交给${reviewer}统一审核。` : context.requirePlanApproval === false ? `总纲完成后自动串行执行全部任务，再交给${reviewer}统一审核。` : "总纲提交后按已保存的协作设置进入执行，完成后交回总 AI 审核。"
-    : stage === "execute" ? `本项完成后继续串行执行后续任务，全部完成后交给${reviewer}统一审核；有问题再安排返工。`
-      : stage === "review" ? "通过后自动进入下一项任务；有问题则交回执行 AI 修改。"
-        : `${reviewer}审核通过后等你验收；你可以确认完成、提出修改意见，或不采纳并结束任务。`;
+    ? context.requirePlanApproval ? ui(`After the plan is ready, it waits for your approval. Tasks then run serially by dependency, followed by a final review from the ${reviewer}.`, `总纲完成后等你确认，再按依赖串行执行全部任务，完成后交给${reviewer}统一审核。`) : context.requirePlanApproval === false ? ui(`After the plan is ready, tasks run serially by dependency, followed by a final review from the ${reviewer}.`, `总纲完成后自动串行执行全部任务，再交给${reviewer}统一审核。`) : ui("After submission, implementation follows the saved collaboration settings and returns to the lead AI for review.", "总纲提交后按已保存的协作设置进入执行，完成后交回总 AI 审核。")
+    : stage === "execute" ? ui(`After this task, remaining tasks run serially. The ${reviewer} performs a final review and requests rework if needed.`, `本项完成后继续串行执行后续任务，全部完成后交给${reviewer}统一审核；有问题再安排返工。`)
+      : stage === "review" ? ui("Approval starts the next task automatically; issues return to the implementation AI for changes.", "通过后自动进入下一项任务；有问题则交回执行 AI 修改。")
+        : ui(`After the ${reviewer} approves the result, it waits for your acceptance. You can accept, request changes, or reject and end the task.`, `${reviewer}审核通过后等你验收；你可以确认完成、提出修改意见，或不采纳并结束任务。`);
   return {
-    stage, actor: stage === "execute" ? "执行 AI" : stage === "plan" ? context.reviewer?.separateSession ? "设计 AI" : "总 AI" : reviewer, goal: context.goal, cwd: context.cwd, ...(context.branch ? { branch: context.branch } : {}), team,
+    stage, actor: stage === "execute" ? ui("Implementation AI", "执行 AI") : stage === "plan" ? context.reviewer?.separateSession ? ui("Planning AI", "设计 AI") : ui("Lead AI", "总 AI") : reviewer, goal: context.goal, cwd: context.cwd, ...(context.branch ? { branch: context.branch } : {}), team,
     ...(context.task ? { task: context.task.title, description: context.task.description } : {}),
     ...(context.userChangeRequests?.length ? { changes: context.userChangeRequests.map(change => change.feedback) } : {}),
     ...(context.preInstructions?.length ? { preInstructions: context.preInstructions } : {}),

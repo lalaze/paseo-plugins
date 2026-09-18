@@ -23,6 +23,6 @@ test("workspace choices preserve exact checkout identities across pages", async 
 });
 
 test("workspace listing fails clearly instead of silently returning an incomplete selection", async () => {
-  for (const cursor of [null, "repeated-cursor"]) await assert.rejects(listLaunchWorkspaces({ list: async () => ({ requestId: "test", entries: [], pageInfo: { hasMore: true, nextCursor: cursor, prevCursor: null } }) }), /读取不完整/);
+  for (const cursor of [null, "repeated-cursor"]) await assert.rejects(listLaunchWorkspaces({ list: async () => ({ requestId: "test", entries: [], pageInfo: { hasMore: true, nextCursor: cursor, prevCursor: null } }) }), /workspace list was incomplete/);
   await assert.rejects(listLaunchWorkspaces({ list: async () => { throw new Error("主机已断开"); } }), /主机已断开/);
 });

@@ -32,21 +32,21 @@ test('ccusage cache buckets are normalized once, reasoning is a subset and daily
 
 test('malformed or inconsistent usage fails visibly instead of silently becoming zero', () => {
   assert.throws(() => parseCcusage({}, range));
-  assert.throws(() => parseCcusage({ daily: [{ date: row.date, ...rawTokens, models: { test: { ...rawTokens, outputTokens: 31 } } }] }, range), /不一致/);
+  assert.throws(() => parseCcusage({ daily: [{ date: row.date, ...rawTokens, models: { test: { ...rawTokens, outputTokens: 31 } } }] }, range), /does not match|不一致/);
   assert.throws(() => parseCcusage({ daily: [{ date: row.date, ...rawTokens, outputTokens: -1 }] }, range));
   assert.throws(() => parseCcusage({ daily: [{ date: row.date, ...rawTokens, totalTokens: 290 }] }, range));
   const rows = parseCcusage({ daily: [{ date: row.date, ...rawTokens }] }, range);
-  assert.equal(rows[0].model, '未记录模型');
+  assert.equal(rows[0].model, 'Unrecorded model');
   assert.equal(rows[0].input, 190);
 });
 
 test('supplier grouping follows model, keeping CLI origins and unknown models visible', () => {
   const sources = [source(), source({ source: 'claude', rows: [{ ...row, model: 'glm-5.3-flash-free' }] }), source({ source: 'antigravity', rows: [{ ...row, model: 'Claude Sonnet 4.6' }, { ...row, model: 'gemini-3.8-flash' }] })];
-  assert.deepEqual(groupConsumption(sources, 'vendor').map(value => value.label).sort(), ['Anthropic', 'Google', 'OpenAI', '智谱'].sort());
+  assert.deepEqual(groupConsumption(sources, 'vendor').map(value => value.label).sort(), ['Anthropic', 'Google', 'OpenAI', 'Zhipu AI'].sort());
   assert.equal(groupConsumption(sources, 'source').length, 3);
-  assert.equal(groupConsumption(sources, 'vendor').find(value => value.label === '智谱')?.models[0].source, 'claude');
-  assert.equal(modelVendor('opaque-model', 'claude'), '未识别供应商');
-  assert.equal(modelVendor('k3-256k', 'kimi'), '月之暗面');
+  assert.equal(groupConsumption(sources, 'vendor').find(value => value.label === 'Zhipu AI')?.models[0].source, 'claude');
+  assert.equal(modelVendor('opaque-model', 'claude'), 'Unknown vendor');
+  assert.equal(modelVendor('k3-256k', 'kimi'), 'Moonshot AI');
   assert.equal(modelVendor('grok-4.6-build', 'grok'), 'xAI');
 });
 
@@ -55,10 +55,10 @@ test('model grouping combines exact names across days, Providers and hosts witho
   const sources = [
     source({ host: code, rows: [row, { ...row, date: '2026-09-11', inferredModel: true }] }),
     source({ host: mac }),
-    source({ source: 'antigravity', host: mac, rows: [row, { ...row, model: 'gpt-5.6-sol-fast' }, { ...row, model: '未记录模型', inferredModel: true }] }),
+    source({ source: 'antigravity', host: mac, rows: [row, { ...row, model: 'gpt-5.6-sol-fast' }, { ...row, model: 'Unrecorded model', inferredModel: true }] }),
   ];
   const original = structuredClone(sources), groups = groupConsumption(sources, 'model');
-  assert.deepEqual(groups.map(group => [group.label, totalTokens(group)]), [['gpt-5.6-sol', 880], ['gpt-5.6-sol-fast', 220], ['未记录模型', 220]]);
+  assert.deepEqual(groups.map(group => [group.label, totalTokens(group)]), [['gpt-5.6-sol', 880], ['gpt-5.6-sol-fast', 220], ['Unrecorded model', 220]]);
   const merged = groups[0];
   assert.deepEqual(merged.models.map(model => [model.host?.id, model.source, totalTokens(model), model.inferredModel]), [['code', 'codex', 440, true], ['mac', 'codex', 220, false], ['mac', 'antigravity', 220, false]]);
   assert.equal(merged.cacheRead, 280); assert.equal(merged.cacheWrite, 80); assert.equal(merged.reasoning, null);

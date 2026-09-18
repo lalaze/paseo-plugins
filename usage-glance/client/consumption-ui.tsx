@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import type { PluginHostProps } from '@getpaseo/plugin/client';
 import { compactTokens, formatTokens } from '../shared/consumption';
+import { ui } from './i18n';
 
 export type Theme = PluginHostProps['theme'];
 
@@ -25,10 +26,10 @@ export function TotalCard({ label, total, accessibilityLabel, partial, theme, ch
     <View style={{ gap: 4 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{label}</Text>
-        {partial ? <Text style={{ color: theme.colors.statusWarning, fontSize: 10, fontWeight: '500' }}>部分记录</Text> : null}
+        {partial ? <Text style={{ color: theme.colors.statusWarning, fontSize: 10, fontWeight: '500' }}>{ui('Partial records', '部分记录')}</Text> : null}
       </View>
       <Text accessibilityLabel={accessibilityLabel} numberOfLines={1} adjustsFontSizeToFit style={{ color: theme.colors.foreground, fontSize: 36, lineHeight: 44, fontWeight: '700', letterSpacing: -1, fontVariant: ['tabular-nums'] }}>{total === null ? '—' : compactTokens(total)}<Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, fontWeight: '400', letterSpacing: 0 }}>  token</Text></Text>
-      <Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontVariant: ['tabular-nums'] }}>{total === null ? '等待完整记录' : `${formatTokens(total)} tokens`}</Text>
+      <Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontVariant: ['tabular-nums'] }}>{total === null ? ui('Waiting for complete records', '等待完整记录') : `${formatTokens(total)} tokens`}</Text>
     </View>
     <View style={{ flexDirection: 'row', gap: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.colors.border }}>{children}</View>
   </View>;

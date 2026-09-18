@@ -6,6 +6,7 @@ import { button, style } from './dom';
 import { isEnglishCompatibleDraft, matchesEnglishLockModel, normalizeComposerModelLabel, parseEnglishLockModels } from './english';
 import { translateSelectionRpc, type TargetLanguage, type TranslationResult } from '../shared/rpc';
 import { translationSettings, validateTranslationSettings } from '../shared/settings';
+import { localizeTranslationError, ui } from './i18n';
 
 type Runtime = {
   translate(text: string, target: TargetLanguage): Promise<TranslationResult>;
@@ -219,7 +220,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
       style(source, { flex: '0 1 auto', maxWidth: 'min(100%, 20em)', padding: '0 5px', borderRadius: '4px', background: 'rgba(59,130,246,.32)', color: '#dbeafe', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' });
       const arrow = document.createElement('span'); arrow.textContent = '→'; arrow.setAttribute('aria-hidden', 'true'); style(arrow, { color: '#93c5fd' });
       const output = document.createElement('span'); output.dataset.paseoTranslateOutput = ''; style(output, { flex: '1 1 14em', minWidth: '0', overflowWrap: 'anywhere' });
-      const remove = button('×', '移除这条翻译'); style(remove, { flex: '0 0 auto', padding: '0 5px', border: '0', background: 'transparent', color: '#a1a1aa', fontSize: '15px', lineHeight: '1.3' });
+      const remove = button('×', ui('Remove this translation', '移除这条翻译')); style(remove, { flex: '0 0 auto', padding: '0 5px', border: '0', background: 'transparent', color: '#a1a1aa', fontSize: '15px', lineHeight: '1.3' });
       remove.addEventListener('click', () => {
         const group = annotation.parentElement; highlightedRanges.delete(annotation); annotation.remove();
         if (group?.matches('[data-paseo-translate-group]') && !group.childElementCount) group.remove();
@@ -247,7 +248,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
 
   async function translateInline(snapshot: SelectionSnapshot, runtime: Runtime) {
     const sequence = String(++inlineRequest);
-    const annotation = persistAnnotation(snapshot, '正在翻译…');
+    const annotation = persistAnnotation(snapshot, ui('Translating…', '正在翻译…'));
     if (!annotation) return;
     annotation.dataset.paseoTranslateRequest = sequence;
     try {
@@ -256,7 +257,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
       persistAnnotation(snapshot, result.translation);
     } catch (error) {
       if (!annotation.isConnected || annotation.dataset.paseoTranslateRequest !== sequence) return;
-      persistAnnotation(snapshot, error instanceof Error ? error.message : String(error), true);
+      persistAnnotation(snapshot, localizeTranslationError(error), true);
     }
   }
 
@@ -341,7 +342,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   }
 
   function resetLauncher() {
-    clearLauncherTimer(); setLauncherState('译', '翻译当前聊天输入并替换原文（Alt/Option + T）');
+    clearLauncherTimer(); setLauncherState(ui('Translate', '译'), ui('Translate the current chat draft and replace the original (Alt/Option + T)', '翻译当前聊天输入并替换原文（Alt/Option + T）'));
   }
 
   function temporaryLauncherState(label: string, title: string) {
@@ -352,10 +353,10 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   function updateEnglishGuard() {
     if (!englishGuard) return;
     const enabled = strictEnglishEnabled();
-    englishGuard.textContent = enabled ? 'EN锁' : 'EN';
+    englishGuard.textContent = enabled ? ui('EN lock', 'EN锁') : 'EN';
     englishGuard.title = automaticEnglishLock
-      ? `当前模型 ${activeModelDescriptor ?? ''} 命中自动 EN 锁规则，切换模型或修改设置后解除`
-      : enabled ? '严格英文模式已开启：点击关闭' : '严格英文模式已关闭：点击开启';
+      ? ui(`The current model ${activeModelDescriptor ?? ''} matches an automatic EN-lock rule. Switch models or update the settings to release it.`, `当前模型 ${activeModelDescriptor ?? ''} 命中自动 EN 锁规则，切换模型或修改设置后解除`)
+      : enabled ? ui('Strict English mode is on; click to turn it off', '严格英文模式已开启：点击关闭') : ui('Strict English mode is off; click to turn it on', '严格英文模式已关闭：点击开启');
     englishGuard.disabled = automaticEnglishLock;
     englishGuard.setAttribute('aria-pressed', String(enabled));
     englishGuard.setAttribute('aria-disabled', String(automaticEnglishLock));
@@ -368,7 +369,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
 
   function flashEnglishGuard(message: string) {
     if (!englishGuard) return;
-    clearGuardTimer(); englishGuard.textContent = '仅英文'; englishGuard.title = message;
+    clearGuardTimer(); englishGuard.textContent = ui('English only', '仅英文'); englishGuard.title = message;
     style(englishGuard, { borderColor: '#f87171', background: '#7f1d1d', color: '#fee2e2' });
     guardTimer = window.setTimeout(() => { guardTimer = undefined; updateEnglishGuard(); }, 1800);
   }
@@ -378,7 +379,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     const editor = findComposer(), text = editor ? editorText(editor).trim() : '';
     if (!editor || !text || isEnglishCompatibleDraft(text)) return false;
     event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation(); editor.focus();
-    flashEnglishGuard('检测到非英文内容，请先点击“译”转换后再发送');
+    flashEnglishGuard(ui('Non-English content detected. Click Translate before sending.', '检测到非英文内容，请先点击“译”转换后再发送'));
     return true;
   }
 
@@ -410,32 +411,32 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   async function translateComposer() {
     if (composerBusy) return;
     const editor = findComposer();
-    if (!editor) { temporaryLauncherState('未找到', '没有找到当前聊天输入框'); return; }
+    if (!editor) { temporaryLauncherState(ui('Not found', '未找到'), ui('The current chat input was not found', '没有找到当前聊天输入框')); return; }
     if (draftUndo?.editor === editor && editorText(editor) === draftUndo.after) {
       writingComposer = true;
       try { replaceEditorText(editor, draftUndo.before); }
       finally { writingComposer = false; draftUndo = null; }
-      temporaryLauncherState('已撤销', '已恢复翻译前的草稿');
+      temporaryLauncherState(ui('Undone', '已撤销'), ui('Restored the draft from before translation', '已恢复翻译前的草稿'));
       return;
     }
     draftUndo = null;
     const route = currentRoute(), runtime = route ? runtimes.get(route.serverId) : undefined;
-    if (!runtime) { temporaryLauncherState('不可用', '当前对话没有可用的翻译服务'); return; }
+    if (!runtime) { temporaryLauncherState(ui('Unavailable', '不可用'), ui('No translation service is available for this conversation', '当前对话没有可用的翻译服务')); return; }
     const original = editorText(editor), source = original.trim();
-    if (!source) { temporaryLauncherState('空', '请先在聊天输入框中输入文字'); return; }
-    if (source.length > 5000) { temporaryLauncherState('过长', '输入内容超过 5000 字符'); return; }
-    const sequence = ++composerRequest; composerBusy = true; clearLauncherTimer(); setLauncherState('翻译中…', '正在翻译当前草稿', true);
+    if (!source) { temporaryLauncherState(ui('Empty', '空'), ui('Enter text in the chat input first', '请先在聊天输入框中输入文字')); return; }
+    if (source.length > 5000) { temporaryLauncherState(ui('Too long', '过长'), ui('The input exceeds 5,000 characters', '输入内容超过 5000 字符')); return; }
+    const sequence = ++composerRequest; composerBusy = true; clearLauncherTimer(); setLauncherState(ui('Translating…', '翻译中…'), ui('Translating the current draft', '正在翻译当前草稿'), true);
     try {
       const result = await runtime.translate(source, 'auto');
       if (sequence !== composerRequest || !editor.isConnected) return;
-      if (editorText(editor) !== original) { temporaryLauncherState('已取消', '翻译期间草稿发生变化，未覆盖新内容'); return; }
+      if (editorText(editor) !== original) { temporaryLauncherState(ui('Canceled', '已取消'), ui('The draft changed during translation, so the new content was not overwritten', '翻译期间草稿发生变化，未覆盖新内容')); return; }
       writingComposer = true;
       try { replaceEditorText(editor, result.translation); }
       finally { writingComposer = false; }
       draftUndo = { editor, before: original, after: result.translation };
-      setLauncherState('撤销', '恢复翻译前的草稿');
+      setLauncherState(ui('Undo', '撤销'), ui('Restore the draft from before translation', '恢复翻译前的草稿'));
     } catch (error) {
-      if (sequence === composerRequest) temporaryLauncherState('失败', error instanceof Error ? error.message : String(error));
+      if (sequence === composerRequest) temporaryLauncherState(ui('Failed', '失败'), localizeTranslationError(error));
     } finally {
       if (sequence === composerRequest) composerBusy = false;
     }
@@ -445,19 +446,19 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     const route = currentRoute();
     if (!route || !runtimes.has(route.serverId)) { activePolicyKey = null; modelRequest++; applyAutomaticEnglishLock(null, []); removeLauncher(); return; }
     if (!launcher) {
-      launcher = button('译', '翻译当前聊天输入并替换原文（Alt/Option + T）'); launcher.dataset.paseoTranslate = 'launcher';
+      launcher = button(ui('Translate', '译'), ui('Translate the current chat draft and replace the original (Alt/Option + T)', '翻译当前聊天输入并替换原文（Alt/Option + T）')); launcher.dataset.paseoTranslate = 'launcher';
       style(launcher, { position: 'fixed', zIndex: '2147482999', minWidth: '34px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
       launcher.addEventListener('pointerdown', event => event.preventDefault());
       launcher.addEventListener('click', () => { void translateComposer(); });
       document.body.append(launcher);
     }
     if (!englishGuard) {
-      englishGuard = button('EN', '开启严格英文模式'); englishGuard.dataset.paseoTranslate = 'english-guard';
+      englishGuard = button('EN', ui('Turn on strict English mode', '开启严格英文模式')); englishGuard.dataset.paseoTranslate = 'english-guard';
       style(englishGuard, { position: 'fixed', zIndex: '2147482999', minWidth: '38px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
       englishGuard.addEventListener('pointerdown', event => event.preventDefault());
       englishGuard.addEventListener('click', () => {
         clearGuardTimer();
-        if (automaticEnglishLock) flashEnglishGuard('当前模型命中自动 EN 锁规则；请切换模型或在插件设置中修改关键词');
+        if (automaticEnglishLock) flashEnglishGuard(ui('The current model matches an automatic EN-lock rule. Switch models or change the keywords in plugin settings.', '当前模型命中自动 EN 锁规则；请切换模型或在插件设置中修改关键词'));
         else { manualStrictEnglish = !manualStrictEnglish; saveStrictEnglishMode(manualStrictEnglish); updateEnglishGuard(); }
         findComposer()?.focus();
       });
@@ -471,7 +472,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     removeTrigger();
     const runtime = runtimes.get(snapshot.route.serverId);
     if (!runtime) return;
-    trigger = button('翻译', '翻译选中的文字');
+    trigger = button(ui('Translate', '翻译'), ui('Translate the selected text', '翻译选中的文字'));
     trigger.dataset.paseoTranslate = 'trigger';
     style(trigger, { position: 'fixed', zIndex: '2147483000', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
     trigger.addEventListener('pointerdown', event => event.preventDefault());
@@ -559,10 +560,10 @@ export function registerTranslationClient(serverId: string, client: PluginClient
   return registry.register(serverId, {
     translate: async (text, target) => {
       const saved = await client.rpc(contracts.read, {});
-      if (saved.status !== 'ready') throw new Error(`翻译 API 设置无法读取：${saved.error}`);
+      if (saved.status !== 'ready') throw new Error(ui(`Unable to read Translation API settings: ${saved.error}`, `翻译 API 设置无法读取：${saved.error}`));
       let settings;
       try { settings = validateTranslationSettings(translationSettings.schema.parse(saved.values)); }
-      catch (error) { throw new Error(`${error instanceof Error ? error.message : String(error)}；请点击“设置”完成配置`); }
+      catch (error) { throw new Error(ui(`${error instanceof Error ? error.message : String(error)}; open Settings to complete the configuration`, `${error instanceof Error ? error.message : String(error)}；请点击“设置”完成配置`)); }
       return client.rpc(translateSelectionRpc, { text, target, settings });
     },
     agentModel: async agentId => {

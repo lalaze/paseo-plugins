@@ -1,53 +1,53 @@
-# Paseo 文件传输
+# Paseo File Transfer
 
-为 **Paseo 0.8.0 / 0.8.x** 提供独立的「文件传输」工作区面板。文件位于当前工作区所属的 daemon 主机，上传来源和下载目的地是你正在使用的桌面端或浏览器。
+An independent **File Transfer** workspace panel for **Paseo 0.8.0 / 0.8.x**. Files reside on the daemon host that owns the current workspace; uploads originate from, and downloads are saved to, the desktop app or browser you are using.
 
-本插件位于多插件仓库 [`lalaze/paseo-plugins`](https://github.com/lalaze/paseo-plugins) 的 [`file-upload/`](.) 目录。如果只是换电脑连接同一个 Paseo daemon，无需重复安装。
+This plugin lives in the [`file-upload/`](.) directory of the [`lalaze/paseo-plugins`](https://github.com/lalaze/paseo-plugins) multi-plugin repository. You do not need to reinstall it when switching computers that connect to the same Paseo daemon.
 
-## 功能
+## Features
 
-- 以可展开、折叠的目录树浏览工作区，按需加载子目录；顶部显示实际路径。
-- 从 Finder / 文件管理器拖入一个或多个文件；拖到文件夹行上传到该目录，目标行高亮；拖到文件行则上传到其所在目录。
-- 点击「上传文件」选择文件，点击文件行「下载」保存到本机。
-- 分块传输、进度、取消、多文件上传结果；同名文件报错，绝不自动覆盖。
-- 上传完成后原子发布文件；取消或过期会话清理临时文件。
-- RPC 通过现有 Paseo 连接传输，不需要额外服务或端口。
+- Browse the workspace in an expandable directory tree that loads subdirectories on demand and shows the actual path at the top.
+- Drag one or more files from Finder or a file manager. Drop them on a folder row to upload there, or on a file row to upload to its containing folder; the destination row is highlighted.
+- Click **Upload Files** to choose files, or click **Download** on a file row to save it locally.
+- Chunked transfers, progress, cancellation, and per-file results for multiple uploads. Duplicate names produce an error and are never overwritten automatically.
+- Files are published atomically after upload; canceled or expired sessions clean up temporary files.
+- RPC traffic uses the existing Paseo connection, with no additional service or port.
 
-这是独立面板，不修改 Paseo 内置的「文件」「更改」列表。当前没有拖出到 Finder 的原生文件拖放接口，下载使用按钮。
+This is a standalone panel and does not modify Paseo's built-in **Files** or **Changes** lists. Native drag-out to Finder is not currently available, so downloads use a button.
 
-打开一个工作区，按 **⌘K**（Windows / Linux 为 **Ctrl+K**），搜索 **文件传输：上传与下载**，默认在右侧 Explorer 面板打开。也可以在 Explorer 面板配置中添加 **文件传输**。插件仅在右侧 Explorer 承载，因此不会出现在中间标签栏的「＋」菜单中。
+Open a workspace, press **⌘K** (**Ctrl+K** on Windows or Linux), and search for **File Transfer: Upload and Download**. It opens in the right-hand Explorer panel by default. You can also add **File Transfer** from the Explorer panel settings. Because the plugin is hosted only in the right-hand Explorer, it does not appear in the **+** menu of the center tab bar.
 
-## 安装
+## Installation
 
-每个独立 daemon 需要单独安装，daemon 和客户端均需为 **0.8.x**。插件 ID 为 `paseo-file-upload`。
+Install the plugin separately on each daemon. Both daemon and client must be **0.8.x**. The plugin ID is `paseo-file-upload`.
 
-在目标主机的 Paseo **Settings → Plugins** 开启插件，并确保该主机安装了 Git、npm，且运行 daemon 的用户有本仓库的 GitHub SSH 读取权限。然后在该主机执行：
+Enable plugins under Paseo **Settings → Plugins** on the target host. Make sure Git and npm are installed and that the daemon user has GitHub SSH read access to this repository, then run on that host:
 
 ```bash
 paseo plugin add lalaze/paseo-plugins --path file-upload
 paseo plugin ls paseo-file-upload --json
 ```
 
-SSH 源：
+SSH source:
 
 ```bash
 paseo plugin install git@github.com:lalaze/paseo-plugins.git:file-upload --ref main
 ```
 
-`--path file-upload` 或 `:file-upload` 指定本多插件仓库中的插件子目录。安装会自动运行锁定依赖的 `npm ci --include=dev --ignore-scripts` 和类型检查，再由 Paseo 编译加载。
+`--path file-upload` or `:file-upload` selects the plugin subdirectory in this multi-plugin repository. Installation automatically runs `npm ci --include=dev --ignore-scripts` with locked dependencies and a type check before Paseo compiles and loads the plugin.
 
-显示 `running` 后，打开一个工作区，按 **⌘K** 搜索 **文件传输：上传与下载**。
+After the status becomes `running`, open a workspace, press **⌘K**, and search for **File Transfer: Upload and Download**.
 
-## 更新
+## Updating
 
-GitHub 源安装：
+For a GitHub-source installation:
 
 ```bash
 paseo plugin update paseo-file-upload
 paseo plugin ls paseo-file-upload --json
 ```
 
-本地目录安装不能使用 `paseo plugin update`。覆盖源码后：
+A local-directory installation cannot use `paseo plugin update`. After replacing the source, run:
 
 ```bash
 npm ci --include=dev --ignore-scripts
@@ -55,7 +55,7 @@ npm run check
 paseo plugin reload paseo-file-upload
 ```
 
-如果之前通过本地目录或旧仓库 `paseo-file-upload` 安装，请先卸载再从本仓库安装：
+If you previously installed from a local directory or the old `paseo-file-upload` repository, remove it before installing from this repository:
 
 ```bash
 paseo plugin remove paseo-file-upload
@@ -63,21 +63,21 @@ paseo plugin add lalaze/paseo-plugins --path file-upload
 paseo plugin ls paseo-file-upload --json
 ```
 
-## 卸载
+## Uninstallation
 
 ```bash
 paseo plugin remove paseo-file-upload
 ```
 
-Paseo 0.8.0 的移除操作不会删除工作区里的文件。传输会话在插件退出时清理；daemon 被强制杀死时可能留下 `.paseo-upload-*` 临时文件，可确认无传输后手动删除。失败时查看：
+Removing the plugin in Paseo 0.8.0 does not delete workspace files. Transfer sessions are cleaned up when the plugin exits. If the daemon is force-killed, `.paseo-upload-*` temporary files may remain; delete them manually after confirming that no transfer is active. For failures, inspect:
 
 ```bash
 paseo plugin logs paseo-file-upload
 ```
 
-## 本地目录开发
+## Local-directory development
 
-如果已经克隆仓库，在 `file-upload` 目录运行：
+If the repository is already cloned, run the following in `file-upload`:
 
 ```bash
 npm ci --include=dev --ignore-scripts
@@ -86,19 +86,19 @@ paseo plugin install "$PWD"
 paseo plugin ls paseo-file-upload --json
 ```
 
-`paseo plugin install` 会记录目录路径。移动本仓库后，需要重新安装从该路径装过的插件。
+`paseo plugin install` records the directory path. If you move this repository, reinstall any plugin installed from that path.
 
-## 兼容性与限制
+## Compatibility and limitations
 
-- 针对本机官方 SDK **0.8.0** 开发和编译验证，使用独立客户端、服务端入口；不兼容旧版 0.7。
-- 桌面端 / Web 提供传输功能；iOS / Android 原生客户端显示使用提示。
-- 单文件上限 **100 MiB**；下载在客户端内存中汇总后交给浏览器保存。浏览器设置决定保存位置。
-- 当前只传输普通文件；文件夹请先压缩为 ZIP。符号链接、`.git`、插件临时文件不显示也不允许操作。
-- 上传不会自动创建缺失目录，不支持覆盖、断点续传、目录打包下载或工作区内移动文件。
-- 路径由服务端根据 workspace ID 获取，客户端不能指定任意根目录。对路径遍历和符号链接进行检查；这不是防御同机恶意进程并发替换目录的 OS 沙箱。
-- 上传会话闲置 15 分钟后自动清理。正常插件退出也清理会话；daemon 被强制杀死时可能留下 `.paseo-upload-*` 临时文件，可确认无传输后手动删除。
+- Developed and compile-tested against the local official **0.8.0** SDK, using separate client and server entry points. It is not compatible with the older 0.7 release.
+- Transfer features are available in the desktop app and on the web. Native iOS and Android clients display usage guidance.
+- Each file is limited to **100 MiB**. Downloads are assembled in client memory and then passed to the browser for saving; browser settings determine the destination.
+- Only regular files are transferred. Compress folders into ZIP archives first. Symbolic links, `.git`, and plugin temporary files are hidden and cannot be accessed.
+- Uploads do not create missing directories automatically. Overwriting, resuming, downloading folders as archives, and moving files inside the workspace are unsupported.
+- The server obtains the path from the workspace ID; clients cannot specify an arbitrary root. Path traversal and symbolic links are checked, but this is not an OS sandbox against a malicious local process that replaces directories concurrently.
+- Idle upload sessions are cleaned up after 15 minutes, and normal plugin shutdown also cleans up sessions. A force-killed daemon may leave `.paseo-upload-*` temporary files; delete them manually after confirming no transfer is active.
 
-## 开发与验证
+## Development and verification
 
 ```bash
 npm ci --include=dev --ignore-scripts
@@ -107,10 +107,10 @@ npm test
 npm run preview
 ```
 
-预览使用真实文件传输后端和模拟 Paseo hooks，只操作自动创建的临时目录，不操作真实项目。退出预览时删除临时目录。默认绑定 `0.0.0.0:4173`，可使用 `PORT=4198 npm run preview` 更换端口。
+The preview uses the real file-transfer backend with simulated Paseo hooks. It operates only on an automatically created temporary directory, never on a real project, and removes that directory on exit. It binds to `0.0.0.0:4173` by default; use `PORT=4198 npm run preview` to choose another port.
 
-验证范围：类型检查；二进制分块往返、空文件、路径限制、同名竞争、取消、文件变更检测、会话资源限制；浏览器拖到文件夹上传和下载字节比对。独立预览模拟宿主 hooks，不能替代安装到真实 daemon 后的验收。
+Verification covers type checking; binary chunk round trips, empty files, path restrictions, duplicate-name races, cancellation, file-change detection, and session resource limits; plus browser drag-to-folder uploads and byte-for-byte download comparison. The standalone preview simulates host hooks and does not replace acceptance testing on a real daemon.
 
-目录：`index.client.tsx` / `index.server.ts` 注册贡献，`client/` 为面板，`shared/` 定义 RPC，`server/` 负责文件操作，`dev/` 为隔离预览，`tests/` 为回归测试。
+Layout: `index.client.tsx` / `index.server.ts` register contributions, `client/` contains the panel, `shared/` defines RPC contracts, `server/` handles file operations, `dev/` provides the isolated preview, and `tests/` contains regression tests.
 
-接口依据：[Paseo 官方 v0.8 插件参考](https://github.com/getpaseo/paseo/blob/v0.8.0/public-docs/plugins/v0.8/reference.md)。
+API reference: [official Paseo v0.8 plugin reference](https://github.com/getpaseo/paseo/blob/v0.8.0/public-docs/plugins/v0.8/reference.md).

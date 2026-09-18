@@ -54,7 +54,7 @@ test('Pi counts all branches once, deduplicates copies and forks, and preserves 
     assert.equal(JSON.stringify(result).includes('PRIVATE'), false);
     assert.equal((await read(root, { ...range, timezone: 'Asia/Shanghai' })).rows.length, 0);
     assert.equal((await read(root, { ...range, since: '2026-09-11', until: '2026-09-11', timezone: 'Asia/Shanghai' })).rows.length, 2);
-    assert.deepEqual(groupConsumption([{ source: 'pi', status: 'ready', updatedAt: null, ...result }], 'vendor').map(group => group.label), ['智谱', 'OpenAI']);
+    assert.deepEqual(groupConsumption([{ source: 'pi', status: 'ready', updatedAt: null, ...result }], 'vendor').map(group => group.label), ['Zhipu AI', 'OpenAI']);
   });
 });
 
@@ -69,7 +69,7 @@ test('Pi includes recorded summary usage without counting context size or inferr
   ] }, async root => {
     const result = await read(root);
     assert.equal(result.message, null);
-    assert.deepEqual(result.rows, [{ date: range.since, model: '未记录模型', inferredModel: true, input: 570, output: 90, cacheRead: 210, cacheWrite: 60, reasoning: null }]);
+    assert.deepEqual(result.rows, [{ date: range.since, model: 'Unrecorded model', inferredModel: true, input: 570, output: 90, cacheRead: 210, cacheWrite: 60, reasoning: null }]);
   });
 });
 

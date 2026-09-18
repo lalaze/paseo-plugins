@@ -1,6 +1,7 @@
 import type { TargetLanguage, TranslationResult } from '../shared/rpc';
 import { parseConversationRoute } from './route';
 import { button, style } from './dom';
+import { localizeTranslationError, ui } from './i18n';
 
 type Runtime = { translate(text: string, target: TargetLanguage): Promise<TranslationResult> };
 type BlockTranslator = { dispose(): void };
@@ -68,7 +69,7 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
       style(panel, { display: 'flex', alignItems: 'flex-start', gap: '6px', margin: '6px 0', padding: '6px 10px', borderLeft: '3px solid rgba(96,165,250,.55)', borderRadius: '0 6px 6px 0', background: 'rgba(59,130,246,.08)', color: '#e4e4e7', fontSize: '.95em', lineHeight: '1.6' });
       const body = document.createElement('div'); body.dataset.paseoTranslateBlockText = '';
       style(body, { flex: '1 1 auto', minWidth: '0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' });
-      const remove = button('×', '移除这段译文');
+      const remove = button('×', ui('Remove this translation', '移除这段译文'));
       style(remove, { flex: '0 0 auto', padding: '0 5px', border: '0', background: 'transparent', color: '#a1a1aa', fontSize: '15px', lineHeight: '1.3' });
       remove.addEventListener('click', () => { panel?.remove(); if (hovered === block) syncTrigger(block); });
       panel.append(body, remove);
@@ -86,7 +87,7 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
     const text = blockText(block).slice(0, MAX_BLOCK_CHARS);
     if (!text) return;
     const sequence = String(++request);
-    const panel = renderTranslation(block, '正在翻译…');
+    const panel = renderTranslation(block, ui('Translating…', '正在翻译…'));
     panel.dataset.paseoTranslateRequest = sequence;
     try {
       const result = await runtime.translate(text, 'auto');
@@ -94,7 +95,7 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
       renderTranslation(block, result.translation);
     } catch (error) {
       if (!panel.isConnected || panel.dataset.paseoTranslateRequest !== sequence) return;
-      renderTranslation(block, error instanceof Error ? error.message : String(error), true);
+      renderTranslation(block, localizeTranslationError(error), true);
     }
   }
 
@@ -102,8 +103,8 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
     if (!trigger) return;
     const panel = existingTranslation(block);
     const state = !panel || 'paseoTranslateError' in panel.dataset ? 'translate' : isCollapsed(panel) ? 'expand' : 'collapse';
-    trigger.textContent = state === 'translate' ? '译' : state === 'expand' ? '展开' : '收起';
-    trigger.title = state === 'translate' ? '翻译这一段' : state === 'expand' ? '展开译文' : '收起译文';
+    trigger.textContent = state === 'translate' ? ui('Translate', '译') : state === 'expand' ? ui('Expand', '展开') : ui('Collapse', '收起');
+    trigger.title = state === 'translate' ? ui('Translate this block', '翻译这一段') : state === 'expand' ? ui('Expand translation', '展开译文') : ui('Collapse translation', '收起译文');
   }
 
   function position(block: Element) {
@@ -124,7 +125,7 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
   function show(block: Element) {
     if (!currentRuntime()) { hide(); return; }
     if (!trigger) {
-      trigger = button('译', '翻译这一段');
+      trigger = button(ui('Translate', '译'), ui('Translate this block', '翻译这一段'));
       trigger.dataset.paseoTranslate = 'block-trigger';
       style(trigger, { position: 'fixed', zIndex: '2147483000', padding: '2px 7px', boxShadow: '0 4px 14px rgba(0,0,0,.28)' });
       trigger.addEventListener('pointerdown', event => event.preventDefault());

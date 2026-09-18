@@ -7,12 +7,13 @@ import { randomUUID } from 'node:crypto';
 import { rpc, updates, stopHub } from './runtime.mjs';
 import { mcpSpec, promptContent } from './content.mjs';
 import { markdownSnapshot, toolPresentation, questionPresentation, questionOptionText, PLAN_MODE_INJECTION, isPlanConfirmation, isPlanFile, planEntries } from './presentation.mjs';
+import { resolveUiLocale, ui } from './i18n.mjs';
 
 if (process.argv.includes('--version')) { console.log('agy-hub-acp 0.3.0'); process.exit(0); }
 
 const sessions = new Map(), pending = new Map();
 const stateDir = process.env.AGY_HUB_STATE_DIR || join(homedir(), '.local/state/agy-hub-acp');
-let nextId = 0, closing = false;
+let nextId = 0, closing = false, clientLocale = resolveUiLocale();
 const send = obj => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...obj }) + '\n');
 const notify = (sid, update) => send({ method: 'session/update', params: { sessionId: sid, update } });
 function requestClient(method, params, signal) {
@@ -32,17 +33,18 @@ async function models() {
   const data = await rpc('GetCascadeModelConfigData', {});
   return (data.clientModelConfigs || []).filter(m => m.modelId && m.modelOrAlias?.model);
 }
-const AVAILABLE_MODES = [
-  { id: 'default', name: 'Ask when required', description: 'Forward Hub approval requests to Paseo; no permission bypass.' },
-  { id: 'plan', name: 'Plan', description: 'Explore and write an implementation plan. Click Proceed or reply to confirm before making changes.' },
+const availableModes = locale => [
+  { id: 'default', name: ui(locale, 'Ask when required', '需要时询问'), description: ui(locale, 'Forward Hub approval requests to Paseo; no permission bypass.', '将 Hub 的授权请求转发给 Paseo，不绕过权限检查。') },
+  { id: 'plan', name: ui(locale, 'Plan', '规划'), description: ui(locale, 'Explore and write an implementation plan. Click Proceed or reply to confirm before making changes.', '先探索并编写实现计划，点击“继续”或回复确认后再进行修改。') },
 ];
 const INTERACTION_TYPES = ['permission', 'runCommand', 'filePermission', 'mcp', 'readUrlContent', 'openBrowserUrl', 'captureBrowserScreenshot', 'executeBrowserJavascript', 'approvalInteraction', 'askQuestion', 'elicitation'];
 function sessionInfo(s) {
-  return { sessionId: s.id, modes: { currentModeId: s.mode, availableModes: AVAILABLE_MODES },
+  const modes = availableModes(s.locale);
+  return { sessionId: s.id, modes: { currentModeId: s.mode, availableModes: modes },
     models: { currentModelId: s.model, availableModels: s.catalog.map(m => ({ modelId: m.modelId, name: m.label })) },
     configOptions: [
-      { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: s.model, options: s.catalog.map(m => ({ value: m.modelId, name: m.label })) },
-      { id: 'mode', name: 'Mode', category: 'mode', type: 'select', currentValue: s.mode, options: AVAILABLE_MODES.map(m => ({ value: m.id, name: m.name, description: m.description })) },
+      { id: 'model', name: ui(s.locale, 'Model', '模型'), category: 'model', type: 'select', currentValue: s.model, options: s.catalog.map(m => ({ value: m.modelId, name: m.label })) },
+      { id: 'mode', name: ui(s.locale, 'Mode', '模式'), category: 'mode', type: 'select', currentValue: s.mode, options: modes.map(m => ({ value: m.id, name: m.name, description: m.description })) },
     ] };
 }
 async function save(s) {
@@ -66,14 +68,14 @@ async function makeSession(params, load = false) {
   const chosen = (catalog.some(m => m.modelId === saved?.model) ? saved.model : null) || catalog.find(m => m.modelId === 'gemini-3.8-flash-high')?.modelId || catalog[0]?.modelId;
   if (!chosen) throw new Error('Hub returned no models; sign in through the Antigravity extension first.');
   customAgentSpec.builtinAgent.model = catalog.find(m => m.modelId === chosen).modelOrAlias.model;
-  const s = { id: saved?.id || randomUUID(), cwd: params.cwd, model: chosen, mode: saved?.mode === 'plan' ? 'plan' : 'default', catalog, customAgentSpec, texts: new Map(), assistantTexts: new Map(), tools: new Map(), permissions: new Set(), pendingPermissions: new Set(), controller: null, planText: '', proceedAsked: false };
+  const s = { id: saved?.id || randomUUID(), cwd: params.cwd, model: chosen, mode: saved?.mode === 'plan' ? 'plan' : 'default', locale: resolveUiLocale(params.locale || clientLocale), catalog, customAgentSpec, texts: new Map(), assistantTexts: new Map(), tools: new Map(), permissions: new Set(), pendingPermissions: new Set(), controller: null, planText: '', proceedAsked: false };
   if (!load) await rpc('StartCascade', { cascadeId: s.id, source: 'CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT', requestedModel: customAgentSpec.builtinAgent.model, workspaceUris: [pathToFileURL(s.cwd).href], customAgentSpec });
   sessions.set(s.id, s); await save(s);
   if (load) await replay(s);
   return sessionInfo(s);
 }
 async function applyMode(s, mode) {
-  if (!AVAILABLE_MODES.some(m => m.id === mode)) throw new Error(`Unknown session mode: ${mode}`);
+  if (!availableModes(s.locale).some(m => m.id === mode)) throw new Error(`Unknown session mode: ${mode}`);
   if (s.mode === mode) return;
   s.mode = mode;
   await save(s);
@@ -101,7 +103,7 @@ function toolUpdate(s, step, index, u) {
   let input = step.generic?.args || {};
   try { if (call?.argumentsJson) input = { ...input, ...JSON.parse(call.argumentsJson) }; } catch {}
   const status = step.status?.endsWith('_DONE') ? 'completed' : step.status?.endsWith('_ERROR') ? 'failed' : step.status?.endsWith('_WAITING') ? 'pending' : 'in_progress';
-  const payload = { toolCallId: id, status, ...toolPresentation(step, call, input) };
+  const payload = { toolCallId: id, status, ...toolPresentation(step, call, input, s.locale) };
   const serialized = JSON.stringify(payload), previous = s.tools.get(id);
   if (previous !== serialized) { notify(s.id, { sessionUpdate: previous ? 'tool_call_update' : 'tool_call', ...payload }); s.tools.set(id, serialized); }
   const planPath = input.TargetFile || input.targetFile || input.path || payload.locations?.[0]?.path;
@@ -109,10 +111,10 @@ function toolUpdate(s, step, index, u) {
   if ((payload.kind === 'think' || isPlanFile(planPath) || payload.title === 'Implementation Plan') && typeof body === 'string' && body && status === 'completed') emitPlan(s, body);
   return payload;
 }
-function permissionOptions(switchMode) {
+function permissionOptions(switchMode, locale) {
   return switchMode
-    ? [{ optionId: 'default', name: 'Proceed', kind: 'allow_once' }, { optionId: 'plan', name: 'Stay in plan', kind: 'reject_once' }]
-    : [{ optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' }, { optionId: 'reject_once', name: 'Reject', kind: 'reject_once' }];
+    ? [{ optionId: 'default', name: ui(locale, 'Proceed', '继续'), kind: 'allow_once' }, { optionId: 'plan', name: ui(locale, 'Stay in plan', '继续规划'), kind: 'reject_once' }]
+    : [{ optionId: 'allow_once', name: ui(locale, 'Allow once', '允许一次'), kind: 'allow_once' }, { optionId: 'reject_once', name: ui(locale, 'Reject', '拒绝'), kind: 'reject_once' }];
 }
 function selectedAllow(result, options) {
   if (result?.outcome?.outcome !== 'selected') return { allow: false, optionId: null };
@@ -131,11 +133,11 @@ async function answerQuestions(s, request, tool, key, signal) {
     while (true) {
       // ACP permission responses contain one option ID. For multiple selection,
       // offer toggles until the user explicitly submits the selected set.
-      const options = choices.map((choice, i) => ({ optionId: `answer:${i}`, name: `${question.isMultiSelect ? (selected.has(choice.id) ? '☑ ' : '☐ ') : '选择 '}${i + 1}${questionOptionText(choice).recommended ? ' · 推荐' : ''}`, kind: 'allow_once' }));
-      if (question.isMultiSelect && selected.size) options.push({ optionId: 'submit', name: '提交所选答案', kind: 'allow_once' });
-      options.push({ optionId: 'skip', name: '跳过此题', kind: 'reject_once' }, { optionId: 'cancel', name: '取消回答', kind: 'reject_once' });
+      const options = choices.map((choice, i) => ({ optionId: `answer:${i}`, name: `${question.isMultiSelect ? (selected.has(choice.id) ? '☑ ' : '☐ ') : ui(s.locale, 'Choose ', '选择 ')}${i + 1}${questionOptionText(choice).recommended ? ui(s.locale, ' · Recommended', ' · 推荐') : ''}`, kind: 'allow_once' }));
+      if (question.isMultiSelect && selected.size) options.push({ optionId: 'submit', name: ui(s.locale, 'Submit selected answers', '提交所选答案'), kind: 'allow_once' });
+      options.push({ optionId: 'skip', name: ui(s.locale, 'Skip this question', '跳过此题'), kind: 'reject_once' }, { optionId: 'cancel', name: ui(s.locale, 'Cancel answering', '取消回答'), kind: 'reject_once' });
       const toolCall = { toolCallId: tool?.toolCallId || key, status: 'pending',
-        ...questionPresentation([question], { index, total: questions.length, selected }) };
+        ...questionPresentation([question], { index, total: questions.length, selected, locale: s.locale }) };
       // Paseo can use its cached tool snapshot for permission details. Refresh
       // it before every question/toggle so that clients show the current choice.
       notify(s.id, { sessionUpdate: s.tools.has(toolCall.toolCallId) ? 'tool_call_update' : 'tool_call', ...toolCall });
@@ -177,10 +179,10 @@ async function handlePermission(s, step, tool, signal) {
   }
   const path = tool?.locations?.[0]?.path || tool?.rawInput?.TargetFile || tool?.rawInput?.targetFile;
   const switchMode = type === 'approvalInteraction' || s.mode === 'plan' && (tool?.kind === 'think' || isPlanFile(path));
-  const options = permissionOptions(switchMode);
+  const options = permissionOptions(switchMode, s.locale);
   const planText = s.planText || tool?.content?.[0]?.content?.text || '';
   const toolCall = switchMode
-    ? { ...(tool || { toolCallId: key, status: 'pending', rawInput: request }), kind: 'switch_mode', title: tool?.title && isPlanFile(path) ? tool.title : '请查阅实现计划', ...(planText ? { content: [{ type: 'content', content: { type: 'text', text: planText } }] } : {}) }
+    ? { ...(tool || { toolCallId: key, status: 'pending', rawInput: request }), kind: 'switch_mode', title: tool?.title && isPlanFile(path) ? tool.title : ui(s.locale, 'Review the implementation plan', '请查阅实现计划'), ...(planText ? { content: [{ type: 'content', content: { type: 'text', text: planText } }] } : {}) }
     : (tool || { toolCallId: key, title: request.permission?.actionDescription || request.askQuestion?.questions?.[0]?.question || 'Hub approval', kind: 'other', status: 'pending', rawInput: request });
   s.pendingPermissions.add(key);
   try {
@@ -203,10 +205,10 @@ async function requestPlanProceed(s, signal) {
   if (s.proceedAsked || s.mode !== 'plan') return false;
   s.proceedAsked = true;
   const planText = s.planText || s.lastAssistant || '';
-  const options = permissionOptions(true);
+  const options = permissionOptions(true, s.locale);
   const result = await requestClient('session/request_permission', {
     sessionId: s.id,
-    toolCall: { toolCallId: `plan-proceed:${s.id}`, title: '请查阅实现计划', kind: 'switch_mode', status: 'pending', rawInput: { mode: 'plan' }, ...(planText ? { content: [{ type: 'content', content: { type: 'text', text: planText } }] } : {}) },
+    toolCall: { toolCallId: `plan-proceed:${s.id}`, title: ui(s.locale, 'Review the implementation plan', '请查阅实现计划'), kind: 'switch_mode', status: 'pending', rawInput: { mode: 'plan' }, ...(planText ? { content: [{ type: 'content', content: { type: 'text', text: planText } }] } : {}) },
     options,
   }, signal);
   const { allow } = selectedAllow(result, options);
@@ -315,21 +317,21 @@ async function prompt(params) {
 }
 async function dispatch(method, params = {}) {
   switch (method) {
-    case 'initialize': return { protocolVersion: 1, agentInfo: { name: 'agy-hub-acp', version: '0.3.0' }, agentCapabilities: { loadSession: true, promptCapabilities: { image: true, audio: false, embeddedContext: false }, mcpCapabilities: { http: true, sse: true } }, authMethods: [] };
+    case 'initialize': clientLocale = resolveUiLocale(params.locale || params.clientInfo?.locale || params._meta?.locale); return { protocolVersion: 1, agentInfo: { name: 'agy-hub-acp', version: '0.3.0' }, agentCapabilities: { loadSession: true, promptCapabilities: { image: true, audio: false, embeddedContext: false }, mcpCapabilities: { http: true, sse: true } }, authMethods: [] };
     case 'session/new': return makeSession(params);
     case 'session/load': return makeSession(params, true);
     case 'session/prompt': return prompt(params);
     case 'session/cancel': { const s = sessions.get(params.sessionId); if (s?.controller) { s.cancelled = true; s.pendingPermissions = new Set(); s.controller.abort(); } return {}; }
     case 'session/set_mode': {
       const s = sessions.get(params.sessionId); if (!s) throw new Error('Unknown session');
-      if (!AVAILABLE_MODES.some(m => m.id === params.modeId)) throw new Error('Unknown session mode');
+      if (!availableModes(s.locale).some(m => m.id === params.modeId)) throw new Error('Unknown session mode');
       s.mode = params.modeId; await save(s); return {};
     }
     case 'session/set_model':
     case 'session/set_config_option': {
       const s = sessions.get(params.sessionId); if (!s) throw new Error('Unknown session');
       if (method === 'session/set_config_option' && params.configId === 'mode') {
-        if (!AVAILABLE_MODES.some(m => m.id === params.value)) throw new Error('Unknown session mode');
+        if (!availableModes(s.locale).some(m => m.id === params.value)) throw new Error('Unknown session mode');
         s.mode = params.value; await save(s); return { configOptions: sessionInfo(s).configOptions };
       }
       if (method === 'session/set_config_option' && params.configId !== 'model') throw new Error('Unsupported config option');

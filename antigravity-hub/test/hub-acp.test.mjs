@@ -106,7 +106,7 @@ test('Hub ACP plan mode shows Proceed, starts execution, and restores the saved 
     const running = c.request('session/prompt', { sessionId: session.sessionId, prompt: [{ type: 'text', text: 'plan-turn' }] });
     const proceed = await c.permission();
     assert.equal(proceed.params.toolCall.kind, 'switch_mode');
-    assert.equal(proceed.params.toolCall.title, '请查阅实现计划');
+    assert.equal(proceed.params.toolCall.title, 'Review the implementation plan');
     assert.match(proceed.params.toolCall.content[0].content.text, /Inspect the renderer/);
     assert.deepEqual(proceed.params.options.map(o => o.optionId), ['default', 'plan']);
     const updates = c.notifications.filter(n => n.sessionId === session.sessionId).map(n => n.update);
@@ -165,10 +165,10 @@ test('Hub ACP submits structured question answers with actual option IDs, multi-
     for (const name of ['question', 'question-native']) {
       const { sessionId, running } = await start(name);
       const request = await c.permission();
-      assert.equal(request.params.toolCall.title, '需要你确认');
+      assert.equal(request.params.toolCall.title, 'Your input is needed');
       assert.equal(typeof request.params.toolCall.rawInput, 'string');
       assert.doesNotMatch(request.params.toolCall.rawInput, /toolSummary|is_multi_select|toolAction/);
-      assert.deepEqual(request.params.options.map(o => o.name), ['选择 1', '选择 2', '选择 3', '跳过此题', '取消回答']);
+      assert.deepEqual(request.params.options.map(o => o.name), ['Choose 1', 'Choose 2', 'Choose 3', 'Skip this question', 'Cancel answering']);
       assert.match(request.params.toolCall.content[0].content.text, /2\. 同时更新用户管理/);
       const snapshot = c.notifications.filter(n => n.sessionId === sessionId && n.update.toolCallId === request.params.toolCall.toolCallId).at(-1).update;
       assert.deepEqual(snapshot.content, request.params.toolCall.content);

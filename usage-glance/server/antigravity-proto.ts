@@ -97,7 +97,7 @@ export function dedupeAgy(events: AgyEvent[]): AgyEvent[] {
     if (target.workspace?.id !== other.workspace?.id) delete target.workspace;
     for (const key of ['fresh', 'cacheRead', 'cacheWrite', 'output', 'reasoning'] as const) target[key] = Math.max(target[key], other[key]);
     target.output = Math.max(target.output, target.reasoning);
-    if (target.model === '未记录模型' || /^antigravity-model-/.test(target.model)) target.model = other.model;
+    if (target.model === 'Unrecorded model' || /^antigravity-model-/.test(target.model)) target.model = other.model;
     if (other.time !== undefined && (target.time === undefined || other.timeRank > target.timeRank || (other.timeRank === target.timeRank && other.time < target.time))) { target.time = other.time; target.timeRank = other.timeRank; }
     target.identities = [...new Set([...target.identities, ...other.identities])];
   };
