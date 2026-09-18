@@ -1,9 +1,11 @@
 import type { PluginClientContext } from '@getpaseo/plugin/client';
+import { settingsRpc } from '@getpaseo/plugin';
 import { parseConversationRoute } from './route';
 import { translateSelectionRpc, type TargetLanguage, type TranslationResult } from '../shared/rpc';
+import { translationSettings, validateTranslationSettings } from '../shared/settings';
 
-type Runtime = { translate(text: string, target: TargetLanguage, agentId?: string): Promise<TranslationResult> };
-type SelectionSnapshot = { text: string; rect: DOMRect; route: { serverId: string; agentId?: string }; tooLong: boolean };
+type Runtime = { translate(text: string, target: TargetLanguage): Promise<TranslationResult>; configure(): void };
+type SelectionSnapshot = { text: string; rect: DOMRect; route: { serverId: string }; tooLong: boolean };
 type OverlayController = { refresh(): void; dispose(): void };
 type Registry = { readonly closed: boolean; register(serverId: string, runtime: Runtime): () => void };
 
@@ -82,8 +84,9 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     const select = document.createElement('select'); select.setAttribute('aria-label', '目标语言');
     style(select, { background: '#27272a', color: '#fafafa', border: '1px solid #3f3f46', borderRadius: '7px', padding: '5px 7px', font: '12px system-ui, sans-serif' });
     for (const option of languageOptions) { const node = document.createElement('option'); node.value = option.value; node.textContent = option.label; select.append(node); }
+    const configure = button('设置', '配置翻译 API'); configure.addEventListener('click', () => { closeCard(); runtime.configure(); });
     const close = button('×', '关闭'); style(close, { padding: '4px 8px', fontSize: '16px', lineHeight: '1' }); close.addEventListener('click', closeCard);
-    header.append(title, select, close);
+    header.append(title, select, configure, close);
     const original = document.createElement('div'); original.textContent = snapshot.text;
     style(original, { marginTop: '10px', padding: '8px', maxHeight: '74px', overflow: 'auto', borderRadius: '7px', background: '#27272a', color: '#d4d4d8', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: '12px' });
     const status = document.createElement('div'); status.setAttribute('role', 'status'); style(status, { marginTop: '10px', color: '#a1a1aa' });
@@ -103,7 +106,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
       output.textContent = ''; note.textContent = ''; style(footer, { display: 'none' });
       if (snapshot.tooLong) { status.style.color = '#fbbf24'; return; }
       try {
-        const result = await runtime.translate(snapshot.text, select.value as TargetLanguage, snapshot.route.agentId);
+        const result = await runtime.translate(snapshot.text, select.value as TargetLanguage);
         if (sequence !== request || !card) return;
         status.textContent = `${result.detectedLanguage ? `${result.detectedLanguage} → ` : ''}${languageOptions.find(option => option.value === result.target)?.label ?? result.target}`;
         status.style.color = '#a1a1aa'; output.textContent = result.translation; note.textContent = result.note || ''; model.textContent = result.model; model.title = result.model; style(footer, { display: 'flex' });
@@ -154,5 +157,16 @@ function createRegistry(): Registry {
 export function registerTranslationClient(serverId: string, client: PluginClientContext) {
   const shared = globalThis as typeof globalThis & { [REGISTRY_KEY]?: Registry };
   const registry = !shared[REGISTRY_KEY] || shared[REGISTRY_KEY].closed ? shared[REGISTRY_KEY] = createRegistry() : shared[REGISTRY_KEY];
-  return registry.register(serverId, { translate: (text, target, agentId) => client.rpc(translateSelectionRpc, { text, target, ...(agentId ? { agentId } : {}) }) });
+  const contracts = settingsRpc(translationSettings.id);
+  return registry.register(serverId, {
+    configure: () => client.openSettings('translate-settings'),
+    translate: async (text, target) => {
+      const saved = await client.rpc(contracts.read, {});
+      if (saved.status !== 'ready') throw new Error(`翻译 API 设置无法读取：${saved.error}`);
+      let settings;
+      try { settings = validateTranslationSettings(translationSettings.schema.parse(saved.values)); }
+      catch (error) { throw new Error(`${error instanceof Error ? error.message : String(error)}；请点击“设置”完成配置`); }
+      return client.rpc(translateSelectionRpc, { text, target, settings });
+    },
+  });
 }

@@ -1,5 +1,6 @@
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
+import { translationSettings } from './settings';
 
 export const targetLanguageSchema = z.enum(['auto', 'zh-CN', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru']);
 export type TargetLanguage = z.infer<typeof targetLanguageSchema>;
@@ -15,7 +16,7 @@ export const translateSelectionRpc = defineRpc({
   input: z.object({
     text: z.string().trim().min(1).max(5000),
     target: targetLanguageSchema.default('auto'),
-    agentId: z.string().trim().min(1).max(200).optional(),
+    settings: translationSettings.schema,
   }),
   output: z.object({
     translation: z.string().min(1).max(20000),

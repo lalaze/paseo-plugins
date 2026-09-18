@@ -68,7 +68,7 @@ paseo plugin add lalaze/paseo-plugins --path file-upload
 
 ## [划词翻译](translate)
 
-在 AI 对话的用户消息或回复中选中文字，原地翻译并复制结果；默认复用当前对话的 AI，不污染聊天记录。插件 ID：`paseo-translate`。
+在 AI 对话的用户消息或回复中选中文字，使用自定义 OpenAI 兼容翻译 API 原地翻译并复制结果；不创建本地 Agent，也不污染聊天记录。插件 ID：`paseo-translate`。
 
 ```bash
 paseo plugin add lalaze/paseo-plugins --path translate
