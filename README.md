@@ -78,7 +78,7 @@ Details: [file-upload/README.md](file-upload/README.md)
 
 ## [Selection Translate](translate)
 
-Select text in a user message or AI reply and translate it in place through a custom OpenAI-compatible translation API, with the result copied; no local agent is created and the chat history is left untouched. Plugin ID: `paseo-translate`.
+Select text in a user message or AI reply and translate it in place through a custom OpenAI-compatible translation API, with the result copied; no local agent is created and the chat history is left untouched. On iOS/Android a native "Translate" pill next to the composer translates a draft and sends it, or translates the latest AI reply. Plugin ID: `paseo-translate`.
 
 ```bash
 paseo plugin add lalaze/paseo-plugins --path translate
