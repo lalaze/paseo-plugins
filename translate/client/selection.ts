@@ -5,7 +5,7 @@ import { translateSelectionRpc, type TargetLanguage, type TranslationResult } fr
 import { translationSettings, validateTranslationSettings } from '../shared/settings';
 
 type Runtime = { translate(text: string, target: TargetLanguage): Promise<TranslationResult>; configure(): void };
-type SelectionSnapshot = { text: string; rect: DOMRect; route: { serverId: string }; tooLong: boolean };
+type SelectionSnapshot = { text: string; rect: DOMRect; route: { serverId: string } };
 type OverlayController = { refresh(): void; dispose(): void };
 type Registry = { readonly closed: boolean; register(serverId: string, runtime: Runtime): () => void };
 
@@ -40,7 +40,7 @@ function readSelection(): SelectionSnapshot | null {
   if (!text) return null;
   const route = parseConversationRoute(window.location.pathname, window.location.search, window.location.hash);
   if (!route) return null;
-  return { text, route, rect: selectionRect(selection.getRangeAt(0)), tooLong: text.length > 5000 };
+  return { text, route, rect: selectionRect(selection.getRangeAt(0)) };
 }
 
 function style(element: HTMLElement, values: Partial<CSSStyleDeclaration>) { Object.assign(element.style, values); }
@@ -67,7 +67,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     removeTrigger();
     const runtime = runtimes.get(snapshot.route.serverId);
     if (!runtime) return;
-    trigger = button(snapshot.tooLong ? '选取过长' : '翻译', '翻译选中的文字');
+    trigger = button('翻译', '翻译选中的文字');
     trigger.dataset.paseoTranslate = 'trigger';
     style(trigger, { position: 'fixed', zIndex: '2147483000', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
     trigger.addEventListener('pointerdown', event => event.preventDefault());
@@ -84,11 +84,13 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     const select = document.createElement('select'); select.setAttribute('aria-label', '目标语言');
     style(select, { background: '#27272a', color: '#fafafa', border: '1px solid #3f3f46', borderRadius: '7px', padding: '5px 7px', font: '12px system-ui, sans-serif' });
     for (const option of languageOptions) { const node = document.createElement('option'); node.value = option.value; node.textContent = option.label; select.append(node); }
+    const translate = button('翻译', '翻译输入框中的文字');
     const configure = button('设置', '配置翻译 API'); configure.addEventListener('click', () => { closeCard(); runtime.configure(); });
     const close = button('×', '关闭'); style(close, { padding: '4px 8px', fontSize: '16px', lineHeight: '1' }); close.addEventListener('click', closeCard);
-    header.append(title, select, configure, close);
-    const original = document.createElement('div'); original.textContent = snapshot.text;
-    style(original, { marginTop: '10px', padding: '8px', maxHeight: '74px', overflow: 'auto', borderRadius: '7px', background: '#27272a', color: '#d4d4d8', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: '12px' });
+    header.append(title, select, translate, configure, close);
+    const source = document.createElement('textarea'); source.value = snapshot.text; source.rows = 3; source.spellcheck = true;
+    source.setAttribute('aria-label', '待翻译文本'); source.placeholder = '输入或粘贴要翻译的文字';
+    style(source, { display: 'block', width: '100%', minHeight: '64px', maxHeight: '160px', boxSizing: 'border-box', marginTop: '10px', padding: '8px', resize: 'vertical', border: '1px solid #3f3f46', borderRadius: '7px', outline: 'none', background: '#27272a', color: '#f4f4f5', font: '12px/1.55 system-ui, sans-serif' });
     const status = document.createElement('div'); status.setAttribute('role', 'status'); style(status, { marginTop: '10px', color: '#a1a1aa' });
     const output = document.createElement('div'); style(output, { marginTop: '8px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: '14px' });
     const note = document.createElement('div'); style(note, { marginTop: '8px', color: '#a1a1aa', fontSize: '12px' });
@@ -99,14 +101,15 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
       catch { copy.textContent = '复制失败'; }
       setTimeout(() => { copy.textContent = '复制'; }, 1200);
     });
-    footer.append(model, copy); card.append(header, original, status, output, note, footer); document.body.append(card); place(card, snapshot.rect, Math.min(400, window.innerWidth - 16));
+    footer.append(model, copy); card.append(header, source, status, output, note, footer); document.body.append(card); place(card, snapshot.rect, Math.min(400, window.innerWidth - 16));
 
     async function run() {
-      const sequence = ++request; status.textContent = snapshot.tooLong ? '选中文字超过 5000 字符，请缩短选区。' : '正在翻译…';
+      const sequence = ++request, text = source.value.trim(); status.textContent = '正在翻译…';
       output.textContent = ''; note.textContent = ''; style(footer, { display: 'none' });
-      if (snapshot.tooLong) { status.style.color = '#fbbf24'; return; }
+      if (!text) { status.textContent = '请输入要翻译的文字。'; status.style.color = '#fbbf24'; return; }
+      if (text.length > 5000) { status.textContent = '输入内容超过 5000 字符，请缩短后重试。'; status.style.color = '#fbbf24'; return; }
       try {
-        const result = await runtime.translate(snapshot.text, select.value as TargetLanguage);
+        const result = await runtime.translate(text, select.value as TargetLanguage);
         if (sequence !== request || !card) return;
         status.textContent = `${result.detectedLanguage ? `${result.detectedLanguage} → ` : ''}${languageOptions.find(option => option.value === result.target)?.label ?? result.target}`;
         status.style.color = '#a1a1aa'; output.textContent = result.translation; note.textContent = result.note || ''; model.textContent = result.model; model.title = result.model; style(footer, { display: 'flex' });
@@ -115,6 +118,12 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
         status.textContent = error instanceof Error ? error.message : String(error); status.style.color = '#f87171';
       }
     }
+    translate.addEventListener('click', () => { void run(); });
+    source.addEventListener('input', () => {
+      request++; status.textContent = source.value.trim() ? '内容已修改，点击“翻译”查看结果。' : '请输入要翻译的文字。'; status.style.color = '#a1a1aa';
+      output.textContent = ''; note.textContent = ''; style(footer, { display: 'none' });
+    });
+    source.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void run(); } });
     select.addEventListener('change', () => { void run(); });
     void run();
   }
