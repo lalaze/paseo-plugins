@@ -182,6 +182,8 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, englishGuard: HTMLButtonElement | null = null, launcherTimer: number | undefined, guardTimer: number | undefined, draftUndo: DraftUndo | null = null, composerRequest = 0, composerBusy = false, writingComposer = false, inlineRequest = 0, modelRequest = 0, manualStrictEnglish = loadStrictEnglishMode(), automaticEnglishLock = false, activeModelDescriptor: string | null = null, activePolicyKey: string | null = null;
   const highlightedRanges = new Map<HTMLElement, Range>();
   const blocks = createBlockTranslator(runtimes);
+  let observedFrame: HTMLElement | null = null;
+  const frameObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(() => positionLauncher()) : null;
   const annotationGroups = new WeakMap<Element, HTMLElement>();
   const agentModels = new Map<string, string | null>();
   const englishLockModels = new Map<string, string[]>();
@@ -390,9 +392,15 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     return Math.abs(controlRect.bottom - editorRect.bottom) < 100 && controlRect.left >= editorRect.left - 80 && controlRect.right <= editorRect.right + 80;
   }
 
+  /** The composer root grows upward with attachments, so the launcher anchors to it rather than the textarea. */
+  function composerFrame(editor: HTMLElement | null): HTMLElement | null {
+    return editor?.closest<HTMLElement>('[data-testid="message-input-root"]') ?? editor;
+  }
+
   function positionLauncher() {
     if (!launcher || !englishGuard) return;
-    const editor = findComposer(), rect = editor?.getBoundingClientRect();
+    const frame = composerFrame(findComposer()), rect = frame?.getBoundingClientRect();
+    if (frame !== observedFrame) { frameObserver?.disconnect(); observedFrame = frame; if (frame) frameObserver?.observe(frame); }
     const right = rect ? Math.max(8, window.innerWidth - rect.right + 8) : 18;
     const bottom = rect ? Math.max(8, window.innerHeight - rect.top + 6) : 82;
     style(launcher, { right: `${right}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto' });
@@ -522,7 +530,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   modelObserver.observe(document.body, { attributes: true, attributeFilter: ['aria-label', 'title', 'data-testid'], childList: true, characterData: true, subtree: true });
   document.addEventListener('pointerup', delayedRefresh); document.addEventListener('keyup', delayedRefresh); document.addEventListener('touchend', delayedRefresh);
   document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown, true); document.addEventListener('click', clickGuard, true); document.addEventListener('submit', submitGuard, true); document.addEventListener('input', inputChanged, true); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
-  return { refresh, updateAgentModel, dispose() { composerRequest++; modelRequest++; modelObserver.disconnect(); dismiss(); removeLauncher(); blocks.dispose(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
+  return { refresh, updateAgentModel, dispose() { composerRequest++; modelRequest++; modelObserver.disconnect(); frameObserver?.disconnect(); dismiss(); removeLauncher(); blocks.dispose(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
 }
 
 function createRegistry(): Registry {
