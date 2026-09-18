@@ -40,6 +40,14 @@ function panelParent(block: Element): Element | null {
   return Array.from(block.children).reverse().find(child => !child.matches('[data-paseo-markdown-list-marker]')) ?? block;
 }
 
+/** Inline display: flex on the panel would defeat the hidden attribute, so collapse toggles the display itself. */
+function setCollapsed(panel: HTMLElement, collapsed: boolean) {
+  panel.style.display = collapsed ? 'none' : 'flex';
+  if (collapsed) panel.dataset.paseoTranslateCollapsed = ''; else delete panel.dataset.paseoTranslateCollapsed;
+}
+
+function isCollapsed(panel: HTMLElement) { return 'paseoTranslateCollapsed' in panel.dataset; }
+
 function existingTranslation(block: Element): HTMLElement | null {
   const parent = panelParent(block);
   if (parent) return parent.querySelector<HTMLElement>(':scope > [data-paseo-translate-block]');
@@ -69,6 +77,8 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
     }
     const body = panel.querySelector<HTMLElement>('[data-paseo-translate-block-text]');
     if (body) { body.textContent = text; body.style.color = error ? '#fca5a5' : '#e4e4e7'; }
+    setCollapsed(panel, false);
+    if (error) panel.dataset.paseoTranslateError = ''; else delete panel.dataset.paseoTranslateError;
     return panel;
   }
 
@@ -90,9 +100,10 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
 
   function syncTrigger(block: Element) {
     if (!trigger) return;
-    const translated = Boolean(existingTranslation(block));
-    trigger.textContent = translated ? '收起' : '译';
-    trigger.title = translated ? '移除这段译文' : '翻译这一段';
+    const panel = existingTranslation(block);
+    const state = !panel || 'paseoTranslateError' in panel.dataset ? 'translate' : isCollapsed(panel) ? 'expand' : 'collapse';
+    trigger.textContent = state === 'translate' ? '译' : state === 'expand' ? '展开' : '收起';
+    trigger.title = state === 'translate' ? '翻译这一段' : state === 'expand' ? '展开译文' : '收起译文';
   }
 
   function position(block: Element) {
@@ -120,8 +131,9 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
       trigger.addEventListener('click', () => {
         const runtime = currentRuntime();
         if (!hovered || !runtime) return;
+        // Collapsing keeps the translation so expanding again does not repeat the request; × discards it.
         const existing = existingTranslation(hovered);
-        if (existing) existing.remove(); else void translateBlock(hovered, runtime);
+        if (existing && !('paseoTranslateError' in existing.dataset)) setCollapsed(existing, !isCollapsed(existing)); else void translateBlock(hovered, runtime);
         syncTrigger(hovered);
       });
       document.body.append(trigger);
