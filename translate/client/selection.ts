@@ -59,9 +59,31 @@ function place(element: HTMLElement, rect: DOMRect, width = 0) {
 }
 
 export function createOverlayController(runtimes: Map<string, Runtime>): OverlayController {
-  let trigger: HTMLButtonElement | null = null, card: HTMLDivElement | null = null, request = 0;
+  let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, card: HTMLDivElement | null = null, request = 0;
   const removeTrigger = () => { trigger?.remove(); trigger = null; };
+  const removeLauncher = () => { launcher?.remove(); launcher = null; };
   const closeCard = () => { request++; card?.remove(); card = null; };
+
+  function currentRoute() {
+    return parseConversationRoute(window.location.pathname, window.location.search, window.location.hash);
+  }
+
+  function refreshLauncher() {
+    const route = currentRoute();
+    if (!route || !runtimes.has(route.serverId)) { removeLauncher(); return; }
+    if (launcher) return;
+    launcher = button('翻译输入', '输入或粘贴文字进行翻译'); launcher.dataset.paseoTranslate = 'launcher';
+    style(launcher, { position: 'fixed', zIndex: '2147482999', right: '18px', bottom: '82px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
+    launcher.addEventListener('pointerdown', event => event.preventDefault());
+    launcher.addEventListener('click', () => {
+      const activeRoute = currentRoute(), activeLauncher = launcher;
+      const runtime = activeRoute ? runtimes.get(activeRoute.serverId) : undefined;
+      if (!activeRoute || !activeLauncher || !runtime) { refreshLauncher(); return; }
+      const rect = activeLauncher.getBoundingClientRect();
+      showCard({ text: '', rect, route: activeRoute }, runtime);
+    });
+    document.body.append(launcher);
+  }
 
   function showTrigger(snapshot: SelectionSnapshot) {
     removeTrigger();
@@ -102,6 +124,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
       setTimeout(() => { copy.textContent = '复制'; }, 1200);
     });
     footer.append(model, copy); card.append(header, source, status, output, note, footer); document.body.append(card); place(card, snapshot.rect, Math.min(400, window.innerWidth - 16));
+    source.focus();
 
     async function run() {
       const sequence = ++request, text = source.value.trim(); status.textContent = '正在翻译…';
@@ -129,6 +152,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   }
 
   function refresh() {
+    refreshLauncher();
     if (card) return;
     const snapshot = readSelection();
     if (snapshot) showTrigger(snapshot); else removeTrigger();
@@ -136,14 +160,15 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   const delayedRefresh = () => { window.setTimeout(refresh, 0); };
   const outside = (event: PointerEvent) => {
     const target = event.target as Node | null;
-    if (card?.contains(target) || trigger?.contains(target)) return;
+    if (card?.contains(target) || trigger?.contains(target) || launcher?.contains(target)) return;
     if (card) closeCard(); else removeTrigger();
   };
   const keydown = (event: KeyboardEvent) => { if (event.key === 'Escape') { closeCard(); removeTrigger(); } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') removeTrigger(); };
   const dismiss = () => { removeTrigger(); closeCard(); };
+  const routeChanged = () => { closeCard(); removeTrigger(); refreshLauncher(); };
   document.addEventListener('pointerup', delayedRefresh); document.addEventListener('keyup', delayedRefresh); document.addEventListener('touchend', delayedRefresh);
-  document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown); window.addEventListener('resize', dismiss); document.addEventListener('scroll', removeTrigger, true);
-  return { refresh, dispose() { dismiss(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown); window.removeEventListener('resize', dismiss); document.removeEventListener('scroll', removeTrigger, true); } };
+  document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
+  return { refresh, dispose() { dismiss(); removeLauncher(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
 }
 
 function createRegistry(): Registry {
