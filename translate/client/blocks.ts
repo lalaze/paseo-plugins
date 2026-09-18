@@ -98,8 +98,9 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
   function position(block: Element) {
     if (!trigger) return;
     const rect = block.getBoundingClientRect(), margin = 6, width = trigger.offsetWidth || 28, height = trigger.offsetHeight || 22;
-    const outsideRight = rect.right + margin, outsideLeft = rect.left - width - margin;
-    const left = outsideRight + width <= window.innerWidth - margin ? outsideRight : outsideLeft >= margin ? outsideLeft : rect.right - width - margin;
+    // Sit just before the block's first line; spill to the right edge only when there is no gutter on the left.
+    const outsideLeft = rect.left - width - margin, outsideRight = rect.right + margin;
+    const left = outsideLeft >= margin ? outsideLeft : outsideRight + width <= window.innerWidth - margin ? outsideRight : rect.left + margin;
     const top = Math.max(margin, Math.min(rect.top + Math.max(0, (Math.min(rect.height, height * 1.5) - height) / 2), window.innerHeight - height - margin));
     style(trigger, { left: `${left}px`, top: `${top}px` });
   }
