@@ -1,4 +1,4 @@
-import type { AgentStreamEvent, AgentUsage } from "@getpaseo/protocol/agent-types";
+import type { AgentStreamEvent, AgentUsage, ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { z } from "zod";
 
 export const ResponseSpeedSchema = z.object({
@@ -23,10 +23,14 @@ export interface TurnTracker {
   turnId: string | null;
   startedAt: number;
   firstOutputAt: number | null;
-  segmentOutputAt: number | null;
-  activeStreamMs: number;
-  streamIntervals: number;
   outputEvents: number;
+  observedEvents: number;
+  /** callId -> serialized input of the latest running update. */
+  runningTools: Map<string, string>;
+  pendingPermissions: Set<string>;
+  /** When the model stopped generating to wait on tools or approvals. */
+  blockedSince: number | null;
+  blockedMs: number;
   usage: AgentUsage | null;
   baselineUsage: AgentUsage | null;
   terminalAt: number | null;
@@ -46,10 +50,12 @@ export function createTurnTracker(input: {
     turnId: input.turnId ?? null,
     startedAt: input.startedAt ?? Date.now(),
     firstOutputAt: null,
-    segmentOutputAt: null,
-    activeStreamMs: 0,
-    streamIntervals: 0,
     outputEvents: 0,
+    observedEvents: 0,
+    runningTools: new Map(),
+    pendingPermissions: new Set(),
+    blockedSince: null,
+    blockedMs: 0,
     usage: null,
     baselineUsage: null,
     terminalAt: null,
@@ -77,6 +83,34 @@ function belongsToTurn(tracker: TurnTracker, event: AgentStreamEvent): boolean {
   return !tracker.turnId || !id || tracker.turnId === id;
 }
 
+// The model-authored part of a tool call. Output/progress fields change while
+// the tool executes, which must not look like the model still generating.
+function toolInputKey(detail: ToolCallDetail | undefined): string {
+  if (!detail) return "";
+  switch (detail.type) {
+    case "shell": return JSON.stringify([detail.type, detail.command, detail.cwd]);
+    case "read": return JSON.stringify([detail.type, detail.filePath, detail.offset, detail.limit]);
+    case "edit": return JSON.stringify([detail.type, detail.filePath, detail.oldString, detail.newString]);
+    case "write": return JSON.stringify([detail.type, detail.filePath, detail.content]);
+    case "search": return JSON.stringify([detail.type, detail.query, detail.toolName, detail.mode]);
+    case "fetch": return JSON.stringify([detail.type, detail.url, detail.prompt]);
+    case "sub_agent": return JSON.stringify([detail.type, detail.subAgentType, detail.description]);
+    case "plan": return JSON.stringify([detail.type, detail.text]);
+    case "unknown": return JSON.stringify([detail.type, detail.input]);
+    default: return detail.type;
+  }
+}
+
+function isBlocked(tracker: TurnTracker): boolean {
+  return tracker.runningTools.size > 0 || tracker.pendingPermissions.size > 0;
+}
+
+function settleBlocked(tracker: TurnTracker, at: number): void {
+  if (tracker.blockedSince === null || isBlocked(tracker)) return;
+  tracker.blockedMs += Math.max(0, at - tracker.blockedSince);
+  tracker.blockedSince = null;
+}
+
 export function observeTimelineEvent(tracker: TurnTracker, update: TimelineEvent, receivedAt = Date.now()): void {
   if (update.agentId !== tracker.agentId || update.event.type === "replacement") return;
   const event = update.event;
@@ -85,20 +119,41 @@ export function observeTimelineEvent(tracker: TurnTracker, update: TimelineEvent
 
   if (event.type === "timeline" && (event.item.type === "assistant_message" || event.item.type === "reasoning")) {
     tracker.firstOutputAt ??= at;
-    if (tracker.segmentOutputAt !== null) {
-      tracker.activeStreamMs += Math.max(0, at - tracker.segmentOutputAt);
-      tracker.streamIntervals += 1;
-    }
-    tracker.segmentOutputAt = at;
     tracker.outputEvents += 1;
+    tracker.observedEvents += 1;
+    // Output while no approval is pending means the model is generating; a
+    // blocked window that was still open was not really a wait.
+    if (tracker.blockedSince !== null && tracker.pendingPermissions.size === 0) tracker.blockedSince = at;
     return;
   }
-  // Tool execution and user approval can sit between separate model calls.
-  // Break the output segment so that the gap is not counted as generation.
-  if ((event.type === "timeline" && event.item.type === "tool_call")
-    || event.type === "permission_requested"
-    || event.type === "permission_resolved") {
-    tracker.segmentOutputAt = null;
+  if (event.type === "timeline" && event.item.type === "tool_call") {
+    tracker.observedEvents += 1;
+    const item = event.item;
+    if (item.status === "running") {
+      // Running updates arrive while the tool input is still being generated
+      // (Claude streams partial input); the wait starts at the last change.
+      const input = toolInputKey(item.detail);
+      const previous = tracker.runningTools.get(item.callId);
+      tracker.runningTools.set(item.callId, input);
+      if (tracker.pendingPermissions.size === 0 && (tracker.blockedSince === null || previous !== input)) {
+        tracker.blockedSince = at;
+      }
+      return;
+    }
+    tracker.runningTools.delete(item.callId);
+    settleBlocked(tracker, at);
+    return;
+  }
+  if (event.type === "permission_requested") {
+    tracker.observedEvents += 1;
+    tracker.pendingPermissions.add(event.request.id);
+    tracker.blockedSince ??= at;
+    return;
+  }
+  if (event.type === "permission_resolved") {
+    tracker.observedEvents += 1;
+    tracker.pendingPermissions.delete(event.requestId);
+    settleBlocked(tracker, at);
     return;
   }
   if (event.type === "usage_updated") {
@@ -155,10 +210,14 @@ export function finishTurn(
   const ttftMs = tracker.firstOutputAt === null
     ? null
     : Math.max(0, Math.round(tracker.firstOutputAt - tracker.startedAt));
-  const observedStreamMs = Math.round(tracker.activeStreamMs);
-  // A single/final-only event does not prove a streaming interval. Intervals
-  // split by a tool or permission event are deliberately not joined.
-  const streamMs = tracker.streamIntervals >= 1 && observedStreamMs >= 100 ? observedStreamMs : null;
+  // Timeline text arrives in bursts (coalesced deltas, summarized reasoning
+  // delivered after the fact), so gaps between output events say nothing about
+  // generation time. Model time is the turn minus the waits on tools/approvals.
+  const blockedMs = tracker.blockedMs
+    + (tracker.blockedSince !== null ? Math.max(0, completedAt - tracker.blockedSince) : 0);
+  const generationMs = Math.max(0, Math.round(totalMs - blockedMs));
+  // Without any observed stream event the tool/permission waits are unknown.
+  const streamMs = tracker.observedEvents > 0 && generationMs >= 100 ? generationMs : null;
   const tokens = outputTokens(tracker.usage);
   return {
     provider: tracker.provider,
