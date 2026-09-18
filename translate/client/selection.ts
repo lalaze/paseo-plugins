@@ -1,6 +1,8 @@
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { settingsRpc } from '@getpaseo/plugin';
 import { parseConversationRoute } from './route';
+import { createBlockTranslator } from './blocks';
+import { button, style } from './dom';
 import { isEnglishCompatibleDraft, matchesEnglishLockModel, normalizeComposerModelLabel, parseEnglishLockModels } from './english';
 import { translateSelectionRpc, type TargetLanguage, type TranslationResult } from '../shared/rpc';
 import { translationSettings, validateTranslationSettings } from '../shared/settings';
@@ -39,7 +41,8 @@ function elementFor(node: Node | null): Element | null {
 
 function selectedMessage(selection: Selection): Element | null {
   const start = elementFor(selection.anchorNode), end = elementFor(selection.focusNode);
-  if (start?.closest('[data-paseo-translate-annotation]') || end?.closest('[data-paseo-translate-annotation]')) return null;
+  const plugin = '[data-paseo-translate-annotation], [data-paseo-translate-block]';
+  if (start?.closest(plugin) || end?.closest(plugin)) return null;
   const messageSelector = '[data-testid="assistant-message"], [data-testid="user-message"]';
   const message = start?.closest(messageSelector) ?? null;
   const chat = message?.closest('[data-testid="agent-chat-scroll"]') ?? null;
@@ -66,13 +69,6 @@ function readSelection(): SelectionSnapshot | null {
   const anchor = block && message.contains(block) ? block : message;
   const before = document.createRange(); before.selectNodeContents(message); before.setEnd(range.startContainer, range.startOffset);
   return { text, route, message, anchor, range, selectionKey: `${before.toString().length}:${range.toString().length}`, rect: selectionRect(range) };
-}
-
-function style(element: HTMLElement, values: Partial<CSSStyleDeclaration>) { Object.assign(element.style, values); }
-function button(label: string, title = label) {
-  const element = document.createElement('button'); element.type = 'button'; element.textContent = label; element.title = title;
-  style(element, { border: '1px solid #3f3f46', borderRadius: '7px', background: '#27272a', color: '#fafafa', padding: '6px 9px', cursor: 'pointer', font: '12px system-ui, sans-serif' });
-  return element;
 }
 
 function place(element: HTMLElement, rect: DOMRect, width = 0) {
@@ -185,6 +181,7 @@ function saveStrictEnglishMode(enabled: boolean) {
 export function createOverlayController(runtimes: Map<string, Runtime>): OverlayController {
   let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, englishGuard: HTMLButtonElement | null = null, launcherTimer: number | undefined, guardTimer: number | undefined, draftUndo: DraftUndo | null = null, composerRequest = 0, composerBusy = false, writingComposer = false, inlineRequest = 0, modelRequest = 0, manualStrictEnglish = loadStrictEnglishMode(), automaticEnglishLock = false, activeModelDescriptor: string | null = null, activePolicyKey: string | null = null;
   const highlightedRanges = new Map<HTMLElement, Range>();
+  const blocks = createBlockTranslator(runtimes);
   const annotationGroups = new WeakMap<Element, HTMLElement>();
   const agentModels = new Map<string, string | null>();
   const englishLockModels = new Map<string, string[]>();
@@ -525,7 +522,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   modelObserver.observe(document.body, { attributes: true, attributeFilter: ['aria-label', 'title', 'data-testid'], childList: true, characterData: true, subtree: true });
   document.addEventListener('pointerup', delayedRefresh); document.addEventListener('keyup', delayedRefresh); document.addEventListener('touchend', delayedRefresh);
   document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown, true); document.addEventListener('click', clickGuard, true); document.addEventListener('submit', submitGuard, true); document.addEventListener('input', inputChanged, true); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
-  return { refresh, updateAgentModel, dispose() { composerRequest++; modelRequest++; modelObserver.disconnect(); dismiss(); removeLauncher(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
+  return { refresh, updateAgentModel, dispose() { composerRequest++; modelRequest++; modelObserver.disconnect(); dismiss(); removeLauncher(); blocks.dispose(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
 }
 
 function createRegistry(): Registry {
