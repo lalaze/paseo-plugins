@@ -20,9 +20,6 @@ export function TranslationSurface({ theme, layout, openSettings }: Props) {
       <Text style={{ color: colors.foregroundMuted, fontSize: 13, lineHeight: 19 }}>
         {ui('Paste or enter text here. Translation runs on the current Paseo host using your configured API.', '在这里粘贴或输入文字，当前 Paseo 主机会使用已配置的 API 完成翻译。')}
       </Text>
-      {layout.platform !== 'web' ? <Text style={{ color: colors.foregroundMuted, fontSize: 13, lineHeight: 19 }}>
-        {ui('Inside a conversation, tap the "Translate" pill next to the composer to translate a draft or the latest AI reply.', '在对话中点击输入框旁的「译」，可以翻译草稿或最新的 AI 回复。')}
-      </Text> : null}
     </View>
 
     {settings.status === 'loading' ? <Text style={{ color: colors.foregroundMuted }}>{ui('Loading Translation API settings…', '正在读取翻译 API 设置…')}</Text> : null}
