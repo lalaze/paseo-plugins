@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseTranslationOutput, resolveTarget, translateSelection } from '../server/translate';
+import { buildTranslationPrompt, parseTranslationOutput, resolveTarget, translateSelection } from '../server/translate';
 import { validateTranslationSettings } from '../shared/settings';
 
 const settings = { apiUrl: 'https://translate.example/v1/chat/completions', apiKey: 'secret-key', model: 'translate-model' };
@@ -22,6 +22,10 @@ test('parses JSON, fenced JSON, and plain translation output', () => {
   assert.equal(parseTranslationOutput('纯文本结果').translation, '纯文本结果');
 });
 
+test('uses a minimal user-only prompt compatible with translation and chat models', () => {
+  assert.equal(buildTranslationPrompt('predict', 'zh-CN'), 'Translate the following segment into Simplified Chinese, without additional explanation.\n\npredict');
+});
+
 test('calls the configured OpenAI-compatible API without creating a Paseo agent', async () => {
   let requestUrl = '', request: RequestInit | undefined;
   const fetchStub: typeof fetch = async (input, init) => {
@@ -35,7 +39,7 @@ test('calls the configured OpenAI-compatible API without creating a Paseo agent'
   assert.equal((request?.headers as Record<string, string>).authorization, 'Bearer secret-key');
   const body = JSON.parse(String(request?.body));
   assert.equal(body.model, 'translate-model');
-  assert.match(body.messages[1].content, /hello/);
+  assert.deepEqual(body.messages, [{ role: 'user', content: 'Translate the following segment into Simplified Chinese, without additional explanation.\n\nhello' }]);
 });
 
 test('surfaces a bounded API error message', async () => {
