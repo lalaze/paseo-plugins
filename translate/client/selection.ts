@@ -5,12 +5,15 @@ import { translateSelectionRpc, type TargetLanguage, type TranslationResult } fr
 import { translationSettings, validateTranslationSettings } from '../shared/settings';
 
 type Runtime = { translate(text: string, target: TargetLanguage): Promise<TranslationResult>; configure(): void };
-type SelectionSnapshot = { text: string; rect: DOMRect; route: { serverId: string } };
+type SelectionSnapshot = { text: string; rect: DOMRect; route: { serverId: string }; message?: Element; anchor?: Element; range?: Range; selectionKey?: string };
 type OverlayController = { refresh(): void; dispose(): void };
 type Registry = { readonly closed: boolean; register(serverId: string, runtime: Runtime): () => void };
+type HighlightRegistry = { set(name: string, highlight: unknown): void; delete(name: string): boolean };
+type HighlightConstructor = new (...ranges: Range[]) => unknown;
 
 const REGISTRY_KEY = Symbol.for('lalaze.paseo-translate.registry.v1');
 const AUTO_TRANSLATE_DELAY_MS = 600;
+const HIGHLIGHT_NAME = 'paseo-translate-selection';
 const languageOptions: { value: TargetLanguage; label: string }[] = [
   { value: 'auto', label: '自动' }, { value: 'zh-CN', label: '中文' }, { value: 'en', label: 'English' },
   { value: 'ja', label: '日本語' }, { value: 'ko', label: '한국어' }, { value: 'fr', label: 'Français' },
@@ -23,10 +26,11 @@ function elementFor(node: Node | null): Element | null {
 
 function selectedMessage(selection: Selection): Element | null {
   const start = elementFor(selection.anchorNode), end = elementFor(selection.focusNode);
+  if (start?.closest('[data-paseo-translate-annotation]') || end?.closest('[data-paseo-translate-annotation]')) return null;
   const messageSelector = '[data-testid="assistant-message"], [data-testid="user-message"]';
   const message = start?.closest(messageSelector) ?? null;
   const chat = message?.closest('[data-testid="agent-chat-scroll"]') ?? null;
-  return chat && end?.closest('[data-testid="agent-chat-scroll"]') === chat && end.closest(messageSelector) ? message : null;
+  return chat && end?.closest('[data-testid="agent-chat-scroll"]') === chat && end.closest(messageSelector) === message ? message : null;
 }
 
 function selectionRect(range: Range) {
@@ -36,12 +40,19 @@ function selectionRect(range: Range) {
 
 function readSelection(): SelectionSnapshot | null {
   const selection = window.getSelection();
-  if (!selection || selection.isCollapsed || selection.rangeCount !== 1 || !selectedMessage(selection)) return null;
+  if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return null;
+  const message = selectedMessage(selection);
+  if (!message) return null;
   const text = selection.toString().trim();
   if (!text) return null;
   const route = parseConversationRoute(window.location.pathname, window.location.search, window.location.hash);
   if (!route) return null;
-  return { text, route, rect: selectionRect(selection.getRangeAt(0)) };
+  const range = selection.getRangeAt(0).cloneRange();
+  const selectedElement = elementFor(range.startContainer);
+  const block = selectedElement?.closest('p, li, pre, blockquote');
+  const anchor = block && message.contains(block) ? block : message;
+  const before = document.createRange(); before.selectNodeContents(message); before.setEnd(range.startContainer, range.startOffset);
+  return { text, route, message, anchor, range, selectionKey: `${before.toString().length}:${range.toString().length}`, rect: selectionRect(range) };
 }
 
 function style(element: HTMLElement, values: Partial<CSSStyleDeclaration>) { Object.assign(element.style, values); }
@@ -61,10 +72,50 @@ function place(element: HTMLElement, rect: DOMRect, width = 0) {
 
 export function createOverlayController(runtimes: Map<string, Runtime>): OverlayController {
   let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, card: HTMLDivElement | null = null, translateTimer: number | undefined, request = 0;
+  const highlightedRanges = new Map<HTMLElement, Range>();
   const removeTrigger = () => { trigger?.remove(); trigger = null; };
   const removeLauncher = () => { launcher?.remove(); launcher = null; };
   const cancelScheduledTranslation = () => { if (translateTimer !== undefined) { window.clearTimeout(translateTimer); translateTimer = undefined; } };
   const closeCard = () => { request++; cancelScheduledTranslation(); card?.remove(); card = null; };
+
+  function syncHighlights() {
+    const css = globalThis.CSS as typeof CSS & { highlights?: HighlightRegistry };
+    const HighlightClass = (globalThis as typeof globalThis & { Highlight?: HighlightConstructor }).Highlight;
+    if (!css?.highlights || !HighlightClass) return;
+    for (const [annotation, range] of highlightedRanges) if (!annotation.isConnected) highlightedRanges.delete(annotation);
+    if (!highlightedRanges.size) { css.highlights.delete(HIGHLIGHT_NAME); return; }
+    if (!document.querySelector('[data-paseo-translate-highlight-style]')) {
+      const highlightStyle = document.createElement('style'); highlightStyle.dataset.paseoTranslateHighlightStyle = '';
+      highlightStyle.textContent = `::highlight(${HIGHLIGHT_NAME}) { background: rgba(59, 130, 246, .38); color: inherit; }`;
+      document.head.append(highlightStyle);
+    }
+    css.highlights.set(HIGHLIGHT_NAME, new HighlightClass(...highlightedRanges.values()));
+  }
+
+  function persistTranslation(snapshot: SelectionSnapshot, result: TranslationResult) {
+    const { message, anchor, range, selectionKey } = snapshot;
+    if (!message?.isConnected || !range || !selectionKey) return;
+    const existing = Array.from(message.querySelectorAll<HTMLElement>('[data-paseo-translate-annotation]')).find(node => node.dataset.paseoTranslateKey === selectionKey);
+    const annotation = existing ?? document.createElement('div');
+    if (!existing) {
+      annotation.dataset.paseoTranslateAnnotation = ''; annotation.dataset.paseoTranslateKey = selectionKey;
+      style(annotation, { display: 'flex', alignItems: 'flex-start', gap: '7px', marginTop: '8px', padding: '7px 9px', borderLeft: '3px solid #60a5fa', borderRadius: '6px', background: 'rgba(59,130,246,.10)', color: '#e4e4e7', font: '12px/1.5 system-ui, sans-serif' });
+      const source = document.createElement('span'); source.dataset.paseoTranslateSource = '';
+      style(source, { flex: '0 1 auto', padding: '1px 6px', borderRadius: '5px', background: 'rgba(59,130,246,.32)', color: '#dbeafe', overflowWrap: 'anywhere' });
+      const arrow = document.createElement('span'); arrow.textContent = '→'; arrow.setAttribute('aria-hidden', 'true'); style(arrow, { color: '#93c5fd' });
+      const output = document.createElement('span'); output.dataset.paseoTranslateOutput = ''; style(output, { flex: '1', minWidth: '0', overflowWrap: 'anywhere' });
+      const remove = button('×', '移除这条翻译'); style(remove, { flex: '0 0 auto', padding: '0 5px', border: '0', background: 'transparent', color: '#a1a1aa', fontSize: '15px', lineHeight: '1.3' });
+      remove.addEventListener('click', () => { highlightedRanges.delete(annotation); annotation.remove(); syncHighlights(); });
+      annotation.append(source, arrow, output, remove);
+      if (anchor && anchor !== message && !anchor.matches('li')) anchor.insertAdjacentElement('afterend', annotation);
+      else (anchor ?? message).append(annotation);
+    }
+    const source = annotation.querySelector<HTMLElement>('[data-paseo-translate-source]');
+    const output = annotation.querySelector<HTMLElement>('[data-paseo-translate-output]');
+    if (source) source.textContent = snapshot.text;
+    if (output) output.textContent = result.translation;
+    highlightedRanges.set(annotation, range); syncHighlights();
+  }
 
   function currentRoute() {
     return parseConversationRoute(window.location.pathname, window.location.search, window.location.hash);
@@ -139,6 +190,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
         if (sequence !== request || !card) return;
         status.textContent = `${result.detectedLanguage ? `${result.detectedLanguage} → ` : ''}${languageOptions.find(option => option.value === result.target)?.label ?? result.target}`;
         status.style.color = '#a1a1aa'; output.textContent = result.translation; note.textContent = result.note || ''; model.textContent = result.model; model.title = result.model; style(footer, { display: 'flex' });
+        if (text === snapshot.text) persistTranslation(snapshot, result);
       } catch (error) {
         if (sequence !== request || !card) return;
         status.textContent = error instanceof Error ? error.message : String(error); status.style.color = '#f87171';
@@ -179,7 +231,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   const routeChanged = () => { closeCard(); removeTrigger(); refreshLauncher(); };
   document.addEventListener('pointerup', delayedRefresh); document.addEventListener('keyup', delayedRefresh); document.addEventListener('touchend', delayedRefresh);
   document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
-  return { refresh, dispose() { dismiss(); removeLauncher(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
+  return { refresh, dispose() { dismiss(); removeLauncher(); for (const annotation of highlightedRanges.keys()) annotation.remove(); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
 }
 
 function createRegistry(): Registry {
