@@ -73,6 +73,7 @@ function place(element: HTMLElement, rect: DOMRect, width = 0) {
 export function createOverlayController(runtimes: Map<string, Runtime>): OverlayController {
   let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, card: HTMLDivElement | null = null, translateTimer: number | undefined, request = 0, inlineRequest = 0;
   const highlightedRanges = new Map<HTMLElement, Range>();
+  const annotationGroups = new WeakMap<Element, HTMLElement>();
   const removeTrigger = () => { trigger?.remove(); trigger = null; };
   const removeLauncher = () => { launcher?.remove(); launcher = null; };
   const cancelScheduledTranslation = () => { if (translateTimer !== undefined) { window.clearTimeout(translateTimer); translateTimer = undefined; } };
@@ -99,16 +100,28 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     const annotation = existing ?? document.createElement('div');
     if (!existing) {
       annotation.dataset.paseoTranslateAnnotation = ''; annotation.dataset.paseoTranslateKey = selectionKey;
-      style(annotation, { display: 'flex', alignItems: 'flex-start', gap: '7px', marginTop: '8px', padding: '7px 9px', borderLeft: '3px solid #60a5fa', borderRadius: '6px', background: 'rgba(59,130,246,.10)', color: '#e4e4e7', font: '12px/1.5 system-ui, sans-serif' });
+      style(annotation, { display: 'inline-flex', alignItems: 'center', gap: '5px', maxWidth: '100%', padding: '3px 6px', border: '1px solid rgba(96,165,250,.24)', borderRadius: '6px', background: 'rgba(59,130,246,.10)', color: '#e4e4e7', font: '12px/1.45 system-ui, sans-serif' });
       const source = document.createElement('span'); source.dataset.paseoTranslateSource = '';
-      style(source, { flex: '0 1 auto', padding: '1px 6px', borderRadius: '5px', background: 'rgba(59,130,246,.32)', color: '#dbeafe', overflowWrap: 'anywhere' });
+      style(source, { flex: '0 1 auto', padding: '0 5px', borderRadius: '4px', background: 'rgba(59,130,246,.32)', color: '#dbeafe', overflowWrap: 'anywhere' });
       const arrow = document.createElement('span'); arrow.textContent = '→'; arrow.setAttribute('aria-hidden', 'true'); style(arrow, { color: '#93c5fd' });
       const output = document.createElement('span'); output.dataset.paseoTranslateOutput = ''; style(output, { flex: '1', minWidth: '0', overflowWrap: 'anywhere' });
       const remove = button('×', '移除这条翻译'); style(remove, { flex: '0 0 auto', padding: '0 5px', border: '0', background: 'transparent', color: '#a1a1aa', fontSize: '15px', lineHeight: '1.3' });
-      remove.addEventListener('click', () => { highlightedRanges.delete(annotation); annotation.remove(); syncHighlights(); });
+      remove.addEventListener('click', () => {
+        const group = annotation.parentElement; highlightedRanges.delete(annotation); annotation.remove();
+        if (group?.matches('[data-paseo-translate-group]') && !group.childElementCount) group.remove();
+        syncHighlights();
+      });
       annotation.append(source, arrow, output, remove);
-      if (anchor && anchor !== message && !anchor.matches('li')) anchor.insertAdjacentElement('afterend', annotation);
-      else (anchor ?? message).append(annotation);
+      const groupAnchor = anchor ?? message;
+      let group = annotationGroups.get(groupAnchor);
+      if (!group?.isConnected) {
+        group = document.createElement('div'); group.dataset.paseoTranslateGroup = '';
+        style(group, { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '5px', marginTop: '6px' });
+        annotationGroups.set(groupAnchor, group);
+        if (groupAnchor !== message && !groupAnchor.matches('li')) groupAnchor.insertAdjacentElement('afterend', group);
+        else groupAnchor.append(group);
+      }
+      group.append(annotation);
     }
     const source = annotation.querySelector<HTMLElement>('[data-paseo-translate-source]');
     const output = annotation.querySelector<HTMLElement>('[data-paseo-translate-output]');
@@ -246,7 +259,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   const routeChanged = () => { closeCard(); removeTrigger(); refreshLauncher(); };
   document.addEventListener('pointerup', delayedRefresh); document.addEventListener('keyup', delayedRefresh); document.addEventListener('touchend', delayedRefresh);
   document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
-  return { refresh, dispose() { dismiss(); removeLauncher(); for (const annotation of highlightedRanges.keys()) annotation.remove(); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
+  return { refresh, dispose() { dismiss(); removeLauncher(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
 }
 
 function createRegistry(): Registry {
