@@ -5,31 +5,46 @@ import { button, style } from './dom';
 type Runtime = { translate(text: string, target: TargetLanguage): Promise<TranslationResult> };
 type BlockTranslator = { dispose(): void };
 
-const BLOCK_SELECTOR = 'p, li, blockquote, h1, h2, h3, h4, h5, h6';
+// Paseo's web UI is React Native Web: markdown blocks are <div>s tagged with data-paseo-markdown-tag,
+// list items are flex rows of [marker, content], and user messages are a single plain Text element.
+const MARKDOWN_BLOCK_SELECTOR = ['p', 'li', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].map(tag => `[data-paseo-markdown-tag="${tag}"]`).join(', ');
 const MESSAGE_SELECTOR = '[data-testid="assistant-message"], [data-testid="user-message"]';
 const PLUGIN_SELECTOR = '[data-paseo-translate-group], [data-paseo-translate-block], [data-paseo-translate]';
 const MAX_BLOCK_CHARS = 5000;
 
-/** Hoverable markdown block inside a chat message, excluding the plugin's own nodes. */
+/** Hoverable text block inside a chat message, excluding the plugin's own nodes. */
 function hoveredBlock(target: EventTarget | null): Element | null {
   const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
   if (!element || element.closest(PLUGIN_SELECTOR)) return null;
-  const block = element.closest(BLOCK_SELECTOR);
-  if (!block || block.closest('pre') || !block.closest(MESSAGE_SELECTOR)?.closest('[data-testid="agent-chat-scroll"]')) return null;
-  return block;
+  const message = element.closest(MESSAGE_SELECTOR);
+  if (!message?.closest('[data-testid="agent-chat-scroll"]')) return null;
+  if (message.matches('[data-testid="user-message"]')) {
+    if (element.closest('[data-testid="user-message-trailing-row"]')) return null;
+    const text = element.closest('[dir="auto"]');
+    return text && message.contains(text) && (text.textContent ?? '').trim() ? text : null;
+  }
+  const block = element.closest(MARKDOWN_BLOCK_SELECTOR);
+  return block && !block.closest('[data-paseo-markdown-tag="pre"]') ? block : null;
 }
 
-/** Own text of the block: nested lists and earlier translations are left out. */
+/** Own text of the block: list markers, nested lists and earlier translations are left out. */
 export function blockText(block: Element): string {
   const clone = block.cloneNode(true) as Element;
-  clone.querySelectorAll('ul, ol, [data-paseo-translate-group], [data-paseo-translate-block]').forEach(node => node.remove());
+  clone.querySelectorAll('[data-paseo-markdown-tag="ul"], [data-paseo-markdown-tag="ol"], [data-paseo-markdown-list-marker], [data-paseo-translate-group], [data-paseo-translate-block]').forEach(node => node.remove());
   return (clone.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
 
+/** List items lay out marker and content side by side, so their panel lives inside the content wrapper. */
+function panelParent(block: Element): Element | null {
+  if (!block.matches('[data-paseo-markdown-tag="li"]')) return null;
+  return Array.from(block.children).reverse().find(child => !child.matches('[data-paseo-markdown-list-marker]')) ?? block;
+}
+
 function existingTranslation(block: Element): HTMLElement | null {
-  const inside = block.querySelector<HTMLElement>(':scope > [data-paseo-translate-block]');
+  const parent = panelParent(block);
+  if (parent) return parent.querySelector<HTMLElement>(':scope > [data-paseo-translate-block]');
   const after = block.nextElementSibling;
-  return inside ?? (after instanceof HTMLElement && after.matches('[data-paseo-translate-block]') ? after : null);
+  return after instanceof HTMLElement && after.matches('[data-paseo-translate-block]') ? after : null;
 }
 
 export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTranslator {
@@ -49,7 +64,8 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
       style(remove, { flex: '0 0 auto', padding: '0 5px', border: '0', background: 'transparent', color: '#a1a1aa', fontSize: '15px', lineHeight: '1.3' });
       remove.addEventListener('click', () => { panel?.remove(); if (hovered === block) syncTrigger(block); });
       panel.append(body, remove);
-      if (block.matches('li')) block.append(panel); else block.insertAdjacentElement('afterend', panel);
+      const parent = panelParent(block);
+      if (parent) parent.append(panel); else block.insertAdjacentElement('afterend', panel);
     }
     const body = panel.querySelector<HTMLElement>('[data-paseo-translate-block-text]');
     if (body) { body.textContent = text; body.style.color = error ? '#fca5a5' : '#e4e4e7'; }
