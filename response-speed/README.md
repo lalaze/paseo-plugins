@@ -27,10 +27,10 @@ paseo plugin install "$PWD/response-speed"
 
 ## 口径
 
-- **生成速度**：Provider 上报的 `outputTokens` ÷ 首个至末个可见输出事件的时间。只有观察到有效的流式区间时才显示。
+- **生成速度**：Provider 上报的 `outputTokens` ÷ 各段连续输出时间之和。工具调用或权限等待会切断当前输出段，工具后的首个输出重新开始计时；只有观察到有效的流式区间时才显示。
 - **全程速度**：`outputTokens` ÷ 从本轮开始到完成的时间。它会包含首字等待、工具调用和模型之间的停顿。
 - **TTFT**：从本轮开始到首个 reasoning 或 assistant 输出事件。
-- 一轮若有多段模型输出，生成速度的区间也会包含这些输出之间的工具调用或等待时间。
+- 一轮若有多段模型输出，插件只累计同一段内相邻输出事件的间隔，不把工具执行、审批等待或工具后的首字等待计入生成时间。
 - `outputTokens` 由 Provider 上报，可能包含推理 token，具体含义取决于 Provider。
 - Provider 不上报本轮输出 token 时，t/s 与 token 数显示 `—`，插件不会按字符数猜测。
 

@@ -23,7 +23,9 @@ export interface TurnTracker {
   turnId: string | null;
   startedAt: number;
   firstOutputAt: number | null;
-  lastOutputAt: number | null;
+  segmentOutputAt: number | null;
+  activeStreamMs: number;
+  streamIntervals: number;
   outputEvents: number;
   usage: AgentUsage | null;
   baselineUsage: AgentUsage | null;
@@ -44,7 +46,9 @@ export function createTurnTracker(input: {
     turnId: input.turnId ?? null,
     startedAt: input.startedAt ?? Date.now(),
     firstOutputAt: null,
-    lastOutputAt: null,
+    segmentOutputAt: null,
+    activeStreamMs: 0,
+    streamIntervals: 0,
     outputEvents: 0,
     usage: null,
     baselineUsage: null,
@@ -81,8 +85,20 @@ export function observeTimelineEvent(tracker: TurnTracker, update: TimelineEvent
 
   if (event.type === "timeline" && (event.item.type === "assistant_message" || event.item.type === "reasoning")) {
     tracker.firstOutputAt ??= at;
-    tracker.lastOutputAt = at;
+    if (tracker.segmentOutputAt !== null) {
+      tracker.activeStreamMs += Math.max(0, at - tracker.segmentOutputAt);
+      tracker.streamIntervals += 1;
+    }
+    tracker.segmentOutputAt = at;
     tracker.outputEvents += 1;
+    return;
+  }
+  // Tool execution and user approval can sit between separate model calls.
+  // Break the output segment so that the gap is not counted as generation.
+  if ((event.type === "timeline" && event.item.type === "tool_call")
+    || event.type === "permission_requested"
+    || event.type === "permission_resolved") {
+    tracker.segmentOutputAt = null;
     return;
   }
   if (event.type === "usage_updated") {
@@ -139,12 +155,10 @@ export function finishTurn(
   const ttftMs = tracker.firstOutputAt === null
     ? null
     : Math.max(0, Math.round(tracker.firstOutputAt - tracker.startedAt));
-  const observedStreamMs = tracker.firstOutputAt !== null && tracker.lastOutputAt !== null
-    ? Math.round(tracker.lastOutputAt - tracker.firstOutputAt)
-    : 0;
-  // A single/final-only event does not prove a streaming interval. Avoid an
-  // artificially huge rate from two events delivered in the same tick.
-  const streamMs = tracker.outputEvents >= 2 && observedStreamMs >= 100 ? observedStreamMs : null;
+  const observedStreamMs = Math.round(tracker.activeStreamMs);
+  // A single/final-only event does not prove a streaming interval. Intervals
+  // split by a tool or permission event are deliberately not joined.
+  const streamMs = tracker.streamIntervals >= 1 && observedStreamMs >= 100 ? observedStreamMs : null;
   const tokens = outputTokens(tracker.usage);
   return {
     provider: tracker.provider,

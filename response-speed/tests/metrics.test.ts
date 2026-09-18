@@ -45,6 +45,57 @@ test("does not invent a streaming interval or token count", () => {
   assert.equal(result.outputTokens, null);
 });
 
+test("excludes tool execution and permission waits from streaming time", () => {
+  const tracker = createTurnTracker({ agentId: "agent-1", provider: "codex", turnId: "turn-1", startedAt: 0 });
+  observeTimelineEvent(tracker, update({ type: "timeline", provider: "codex", turnId: "turn-1", item: { type: "reasoning", text: "first" } }, 1_000));
+  observeTimelineEvent(tracker, update({ type: "timeline", provider: "codex", turnId: "turn-1", item: { type: "reasoning", text: "first continued" } }, 2_000));
+  observeTimelineEvent(tracker, update({
+    type: "timeline",
+    provider: "codex",
+    turnId: "turn-1",
+    item: { type: "tool_call", callId: "tool-1", name: "shell", status: "running", error: null, detail: { type: "unknown", input: {}, output: null } },
+  }, 2_100));
+  observeTimelineEvent(tracker, update({
+    type: "timeline",
+    provider: "codex",
+    turnId: "turn-1",
+    item: { type: "tool_call", callId: "tool-1", name: "shell", status: "completed", error: null, detail: { type: "unknown", input: {}, output: {} } },
+  }, 12_000));
+  observeTimelineEvent(tracker, update({ type: "timeline", provider: "codex", turnId: "turn-1", item: { type: "assistant_message", text: "second" } }, 13_000));
+  observeTimelineEvent(tracker, update({ type: "timeline", provider: "codex", turnId: "turn-1", item: { type: "assistant_message", text: "second continued" } }, 15_000));
+  observeTimelineEvent(tracker, update({
+    type: "permission_requested",
+    provider: "codex",
+    turnId: "turn-1",
+    request: { id: "permission-1", provider: "codex", name: "confirm", kind: "tool" },
+  }, 15_100));
+  observeTimelineEvent(tracker, update({ type: "timeline", provider: "codex", turnId: "turn-1", item: { type: "assistant_message", text: "final" } }, 25_000));
+  observeTimelineEvent(tracker, update({ type: "turn_completed", provider: "codex", turnId: "turn-1", usage: { outputTokens: 300 } }, 26_000));
+
+  const result = finishTurn(tracker, "completed");
+  assert.equal(result.streamMs, 3_000);
+  assert.equal(result.streamTokensPerSecond, 100);
+  assert.equal(result.totalMs, 26_000);
+  assert.equal(result.totalTokensPerSecond, 11.5);
+});
+
+test("does not join isolated output events across a tool call", () => {
+  const tracker = createTurnTracker({ agentId: "agent-1", provider: "codex", startedAt: 0 });
+  observeTimelineEvent(tracker, update({ type: "timeline", provider: "codex", item: { type: "reasoning", text: "before" } }, 1_000));
+  observeTimelineEvent(tracker, update({
+    type: "timeline",
+    provider: "codex",
+    item: { type: "tool_call", callId: "tool-1", name: "shell", status: "completed", error: null, detail: { type: "unknown", input: {}, output: {} } },
+  }, 5_000));
+  observeTimelineEvent(tracker, update({ type: "timeline", provider: "codex", item: { type: "assistant_message", text: "after" } }, 6_000));
+  observeTimelineEvent(tracker, update({ type: "turn_completed", provider: "codex", usage: { outputTokens: 50 } }, 7_000));
+
+  const result = finishTurn(tracker, "completed");
+  assert.equal(result.streamMs, null);
+  assert.equal(result.streamTokensPerSecond, null);
+  assert.equal(result.totalTokensPerSecond, 7.1);
+});
+
 test("ignores other agents and other turn ids", () => {
   const tracker = createTurnTracker({ agentId: "agent-1", provider: "codex", turnId: "wanted", startedAt: 0 });
   observeTimelineEvent(tracker, update({ type: "timeline", provider: "codex", turnId: "wanted", item: { type: "reasoning", text: "other agent" } }, 100, "agent-2"));
