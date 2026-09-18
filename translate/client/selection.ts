@@ -4,21 +4,16 @@ import { parseConversationRoute } from './route';
 import { translateSelectionRpc, type TargetLanguage, type TranslationResult } from '../shared/rpc';
 import { translationSettings, validateTranslationSettings } from '../shared/settings';
 
-type Runtime = { translate(text: string, target: TargetLanguage): Promise<TranslationResult>; configure(): void };
+type Runtime = { translate(text: string, target: TargetLanguage): Promise<TranslationResult> };
 type SelectionSnapshot = { text: string; rect: DOMRect; route: { serverId: string }; message?: Element; anchor?: Element; range?: Range; selectionKey?: string };
 type OverlayController = { refresh(): void; dispose(): void };
 type Registry = { readonly closed: boolean; register(serverId: string, runtime: Runtime): () => void };
 type HighlightRegistry = { set(name: string, highlight: unknown): void; delete(name: string): boolean };
 type HighlightConstructor = new (...ranges: Range[]) => unknown;
+type DraftUndo = { editor: HTMLElement; before: string; after: string };
 
 const REGISTRY_KEY = Symbol.for('lalaze.paseo-translate.registry.v1');
-const AUTO_TRANSLATE_DELAY_MS = 600;
 const HIGHLIGHT_NAME = 'paseo-translate-selection';
-const languageOptions: { value: TargetLanguage; label: string }[] = [
-  { value: 'auto', label: '自动' }, { value: 'zh-CN', label: '中文' }, { value: 'en', label: 'English' },
-  { value: 'ja', label: '日本語' }, { value: 'ko', label: '한국어' }, { value: 'fr', label: 'Français' },
-  { value: 'de', label: 'Deutsch' }, { value: 'es', label: 'Español' }, { value: 'ru', label: 'Русский' },
-];
 
 function elementFor(node: Node | null): Element | null {
   return node instanceof Element ? node : node?.parentElement ?? null;
@@ -70,14 +65,55 @@ function place(element: HTMLElement, rect: DOMRect, width = 0) {
   style(element, { left: `${left}px`, top: `${top}px` });
 }
 
+function visibleEditor(element: HTMLElement) {
+  if (element.closest('[data-paseo-translate]')) return false;
+  if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+    if (element.disabled || element.readOnly) return false;
+  } else if (!element.isContentEditable) return false;
+  const rect = element.getBoundingClientRect(), computed = window.getComputedStyle(element);
+  return rect.width >= 160 && rect.height >= 24 && rect.bottom > window.innerHeight * .45 && computed.display !== 'none' && computed.visibility !== 'hidden';
+}
+
+function findComposer(): HTMLElement | null {
+  const preferred = '[data-testid*="composer"] textarea, [data-testid*="composer"] [contenteditable="true"], textarea[placeholder*="@files"], textarea[placeholder*="/commands"], [data-testid="agent-chat-input"], [data-testid="agent-composer-input"]';
+  const fallback = 'textarea, input[type="text"], [contenteditable="true"][role="textbox"]';
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>(preferred)).filter(visibleEditor);
+  const pool = candidates.length ? candidates : Array.from(document.querySelectorAll<HTMLElement>(fallback)).filter(visibleEditor);
+  return pool.sort((left, right) => right.getBoundingClientRect().bottom - left.getBoundingClientRect().bottom || right.getBoundingClientRect().width - left.getBoundingClientRect().width)[0] ?? null;
+}
+
+function editorText(editor: HTMLElement): string {
+  if (editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) return editor.value;
+  return editor.innerText.replace(/\u00a0/g, ' ');
+}
+
+function replaceEditorText(editor: HTMLElement, text: string) {
+  editor.focus();
+  if (editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) {
+    const prototype = editor instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+    if (setter) setter.call(editor, text); else editor.value = text;
+    editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertReplacementText', data: text }));
+    editor.setSelectionRange(text.length, text.length);
+    return;
+  }
+  const selection = window.getSelection(), range = document.createRange();
+  range.selectNodeContents(editor); selection?.removeAllRanges(); selection?.addRange(range);
+  const inserted = typeof document.execCommand === 'function' && document.execCommand('insertText', false, text);
+  if (!inserted) {
+    editor.textContent = text;
+    editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertReplacementText', data: text }));
+  }
+  range.selectNodeContents(editor); range.collapse(false); selection?.removeAllRanges(); selection?.addRange(range);
+}
+
 export function createOverlayController(runtimes: Map<string, Runtime>): OverlayController {
-  let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, card: HTMLDivElement | null = null, translateTimer: number | undefined, request = 0, inlineRequest = 0;
+  let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, launcherTimer: number | undefined, draftUndo: DraftUndo | null = null, composerRequest = 0, composerBusy = false, writingComposer = false, inlineRequest = 0;
   const highlightedRanges = new Map<HTMLElement, Range>();
   const annotationGroups = new WeakMap<Element, HTMLElement>();
   const removeTrigger = () => { trigger?.remove(); trigger = null; };
-  const removeLauncher = () => { launcher?.remove(); launcher = null; };
-  const cancelScheduledTranslation = () => { if (translateTimer !== undefined) { window.clearTimeout(translateTimer); translateTimer = undefined; } };
-  const closeCard = () => { request++; cancelScheduledTranslation(); card?.remove(); card = null; };
+  const clearLauncherTimer = () => { if (launcherTimer !== undefined) { window.clearTimeout(launcherTimer); launcherTimer = undefined; } };
+  const removeLauncher = () => { clearLauncherTimer(); launcher?.remove(); launcher = null; };
 
   function syncHighlights() {
     const css = globalThis.CSS as typeof CSS & { highlights?: HighlightRegistry };
@@ -150,21 +186,71 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     return parseConversationRoute(window.location.pathname, window.location.search, window.location.hash);
   }
 
+  function setLauncherState(label: string, title: string, busy = false) {
+    if (!launcher) return;
+    launcher.textContent = label; launcher.title = title; launcher.disabled = busy; launcher.setAttribute('aria-busy', String(busy));
+    style(launcher, { cursor: busy ? 'wait' : 'pointer', opacity: busy ? '.65' : '1' });
+  }
+
+  function resetLauncher() {
+    clearLauncherTimer(); setLauncherState('译', '翻译当前聊天输入并替换原文（Alt/Option + T）');
+  }
+
+  function temporaryLauncherState(label: string, title: string) {
+    clearLauncherTimer(); setLauncherState(label, title);
+    launcherTimer = window.setTimeout(() => { launcherTimer = undefined; if (!draftUndo && !composerBusy) resetLauncher(); }, 1800);
+  }
+
+  function positionLauncher() {
+    if (!launcher) return;
+    const editor = findComposer(), rect = editor?.getBoundingClientRect();
+    if (!rect) { style(launcher, { right: '18px', bottom: '82px', left: 'auto', top: 'auto' }); return; }
+    style(launcher, { right: `${Math.max(8, window.innerWidth - rect.right + 8)}px`, bottom: `${Math.max(8, window.innerHeight - rect.top + 6)}px`, left: 'auto', top: 'auto' });
+  }
+
+  async function translateComposer() {
+    if (composerBusy) return;
+    const editor = findComposer();
+    if (!editor) { temporaryLauncherState('未找到', '没有找到当前聊天输入框'); return; }
+    if (draftUndo?.editor === editor && editorText(editor) === draftUndo.after) {
+      writingComposer = true;
+      try { replaceEditorText(editor, draftUndo.before); }
+      finally { writingComposer = false; draftUndo = null; }
+      temporaryLauncherState('已撤销', '已恢复翻译前的草稿');
+      return;
+    }
+    draftUndo = null;
+    const route = currentRoute(), runtime = route ? runtimes.get(route.serverId) : undefined;
+    if (!runtime) { temporaryLauncherState('不可用', '当前对话没有可用的翻译服务'); return; }
+    const original = editorText(editor), source = original.trim();
+    if (!source) { temporaryLauncherState('空', '请先在聊天输入框中输入文字'); return; }
+    if (source.length > 5000) { temporaryLauncherState('过长', '输入内容超过 5000 字符'); return; }
+    const sequence = ++composerRequest; composerBusy = true; clearLauncherTimer(); setLauncherState('翻译中…', '正在翻译当前草稿', true);
+    try {
+      const result = await runtime.translate(source, 'auto');
+      if (sequence !== composerRequest || !editor.isConnected) return;
+      if (editorText(editor) !== original) { temporaryLauncherState('已取消', '翻译期间草稿发生变化，未覆盖新内容'); return; }
+      writingComposer = true;
+      try { replaceEditorText(editor, result.translation); }
+      finally { writingComposer = false; }
+      draftUndo = { editor, before: original, after: result.translation };
+      setLauncherState('撤销', '恢复翻译前的草稿');
+    } catch (error) {
+      if (sequence === composerRequest) temporaryLauncherState('失败', error instanceof Error ? error.message : String(error));
+    } finally {
+      if (sequence === composerRequest) composerBusy = false;
+    }
+  }
+
   function refreshLauncher() {
     const route = currentRoute();
     if (!route || !runtimes.has(route.serverId)) { removeLauncher(); return; }
-    if (launcher) return;
-    launcher = button('翻译输入', '输入或粘贴文字进行翻译'); launcher.dataset.paseoTranslate = 'launcher';
-    style(launcher, { position: 'fixed', zIndex: '2147482999', right: '18px', bottom: '82px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
+    if (launcher) { positionLauncher(); return; }
+    launcher = button('译', '翻译当前聊天输入并替换原文（Alt/Option + T）'); launcher.dataset.paseoTranslate = 'launcher';
+    style(launcher, { position: 'fixed', zIndex: '2147482999', minWidth: '34px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
     launcher.addEventListener('pointerdown', event => event.preventDefault());
-    launcher.addEventListener('click', () => {
-      const activeRoute = currentRoute(), activeLauncher = launcher;
-      const runtime = activeRoute ? runtimes.get(activeRoute.serverId) : undefined;
-      if (!activeRoute || !activeLauncher || !runtime) { refreshLauncher(); return; }
-      const rect = activeLauncher.getBoundingClientRect();
-      showCard({ text: '', rect, route: activeRoute }, runtime);
-    });
-    document.body.append(launcher);
+    launcher.addEventListener('click', () => { void translateComposer(); });
+    document.body.append(launcher); positionLauncher();
   }
 
   function showTrigger(snapshot: SelectionSnapshot) {
@@ -179,87 +265,31 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     document.body.append(trigger); place(trigger, snapshot.rect);
   }
 
-  function showCard(snapshot: SelectionSnapshot, runtime: Runtime) {
-    closeCard();
-    card = document.createElement('div'); card.dataset.paseoTranslate = 'card'; card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', '翻译');
-    style(card, { position: 'fixed', zIndex: '2147483000', width: 'min(400px, calc(100vw - 16px))', maxHeight: 'min(520px, calc(100vh - 16px))', overflow: 'auto', boxSizing: 'border-box', padding: '12px', border: '1px solid #3f3f46', borderRadius: '12px', background: '#18181b', color: '#fafafa', boxShadow: '0 16px 48px rgba(0,0,0,.38)', font: '13px/1.55 system-ui, sans-serif' });
-    const header = document.createElement('div'); style(header, { display: 'flex', alignItems: 'center', gap: '8px' });
-    const title = document.createElement('strong'); title.textContent = '翻译'; style(title, { flex: '1', fontSize: '13px' });
-    const select = document.createElement('select'); select.setAttribute('aria-label', '目标语言');
-    style(select, { background: '#27272a', color: '#fafafa', border: '1px solid #3f3f46', borderRadius: '7px', padding: '5px 7px', font: '12px system-ui, sans-serif' });
-    for (const option of languageOptions) { const node = document.createElement('option'); node.value = option.value; node.textContent = option.label; select.append(node); }
-    const configure = button('设置', '配置翻译 API'); configure.addEventListener('click', () => { closeCard(); runtime.configure(); });
-    const close = button('×', '关闭'); style(close, { padding: '4px 8px', fontSize: '16px', lineHeight: '1' }); close.addEventListener('click', closeCard);
-    header.append(title, select, configure, close);
-    const source = document.createElement('textarea'); source.value = snapshot.text; source.rows = 3; source.spellcheck = true;
-    source.setAttribute('aria-label', '待翻译文本'); source.placeholder = '输入或粘贴要翻译的文字';
-    style(source, { display: 'block', width: '100%', minHeight: '64px', maxHeight: '160px', boxSizing: 'border-box', marginTop: '10px', padding: '8px', resize: 'vertical', border: '1px solid #3f3f46', borderRadius: '7px', outline: 'none', background: '#27272a', color: '#f4f4f5', font: '12px/1.55 system-ui, sans-serif' });
-    const status = document.createElement('div'); status.setAttribute('role', 'status'); style(status, { marginTop: '10px', color: '#a1a1aa' });
-    const output = document.createElement('div'); style(output, { marginTop: '8px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: '14px' });
-    const note = document.createElement('div'); style(note, { marginTop: '8px', color: '#a1a1aa', fontSize: '12px' });
-    const footer = document.createElement('div'); style(footer, { display: 'none', marginTop: '10px', alignItems: 'center', gap: '8px', borderTop: '1px solid #3f3f46', paddingTop: '9px' });
-    const model = document.createElement('span'); style(model, { flex: '1', minWidth: '0', color: '#a1a1aa', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
-    const copy = button('复制'); copy.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(output.textContent || ''); copy.textContent = '已复制'; }
-      catch { copy.textContent = '复制失败'; }
-      setTimeout(() => { copy.textContent = '复制'; }, 1200);
-    });
-    footer.append(model, copy); card.append(header, source, status, output, note, footer); document.body.append(card); place(card, snapshot.rect, Math.min(400, window.innerWidth - 16));
-    source.focus();
-
-    async function run() {
-      cancelScheduledTranslation();
-      const sequence = ++request, text = source.value.trim(); status.textContent = '正在翻译…';
-      status.style.color = '#a1a1aa';
-      output.textContent = ''; note.textContent = ''; style(footer, { display: 'none' });
-      if (!text) { status.textContent = '请输入要翻译的文字。'; status.style.color = '#fbbf24'; return; }
-      if (text.length > 5000) { status.textContent = '输入内容超过 5000 字符，请缩短后重试。'; status.style.color = '#fbbf24'; return; }
-      try {
-        const result = await runtime.translate(text, select.value as TargetLanguage);
-        if (sequence !== request || !card) return;
-        status.textContent = `${result.detectedLanguage ? `${result.detectedLanguage} → ` : ''}${languageOptions.find(option => option.value === result.target)?.label ?? result.target}`;
-        status.style.color = '#a1a1aa'; output.textContent = result.translation; note.textContent = result.note || ''; model.textContent = result.model; model.title = result.model; style(footer, { display: 'flex' });
-      } catch (error) {
-        if (sequence !== request || !card) return;
-        status.textContent = error instanceof Error ? error.message : String(error); status.style.color = '#f87171';
-      }
-    }
-    let composing = false;
-    function scheduleTranslation() {
-      cancelScheduledTranslation(); request++;
-      const text = source.value.trim(); status.textContent = text ? '输入中…' : '请输入要翻译的文字。'; status.style.color = '#a1a1aa';
-      output.textContent = ''; note.textContent = ''; style(footer, { display: 'none' });
-      if (!text || composing) return;
-      translateTimer = window.setTimeout(() => { translateTimer = undefined; void run(); }, AUTO_TRANSLATE_DELAY_MS);
-    }
-    source.addEventListener('input', scheduleTranslation);
-    source.addEventListener('compositionstart', () => { composing = true; request++; cancelScheduledTranslation(); });
-    source.addEventListener('compositionend', () => { composing = false; scheduleTranslation(); });
-    source.addEventListener('keydown', event => {
-      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); void run(); }
-    });
-    select.addEventListener('change', () => { void run(); });
-    void run();
-  }
-
   function refresh() {
     refreshLauncher();
-    if (card) return;
     const snapshot = readSelection();
     if (snapshot) showTrigger(snapshot); else removeTrigger();
   }
   const delayedRefresh = () => { window.setTimeout(refresh, 0); };
   const outside = (event: PointerEvent) => {
     const target = event.target as Node | null;
-    if (card?.contains(target) || trigger?.contains(target) || launcher?.contains(target)) return;
-    if (card) closeCard(); else removeTrigger();
+    if (trigger?.contains(target) || launcher?.contains(target)) return;
+    removeTrigger();
   };
-  const keydown = (event: KeyboardEvent) => { if (event.key === 'Escape') { closeCard(); removeTrigger(); } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') removeTrigger(); };
-  const dismiss = () => { removeTrigger(); closeCard(); };
-  const routeChanged = () => { closeCard(); removeTrigger(); refreshLauncher(); };
+  const keydown = (event: KeyboardEvent) => {
+    if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && event.key.toLowerCase() === 't' && !event.isComposing) { event.preventDefault(); void translateComposer(); }
+    else if (event.key === 'Escape' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a')) removeTrigger();
+  };
+  const inputChanged = (event: Event) => {
+    if (writingComposer || !draftUndo) return;
+    const target = event.target as Node | null;
+    if (target === draftUndo.editor || (target && draftUndo.editor.contains(target))) { draftUndo = null; resetLauncher(); }
+  };
+  const dismiss = () => { removeTrigger(); positionLauncher(); };
+  const routeChanged = () => { composerRequest++; composerBusy = false; draftUndo = null; removeTrigger(); refreshLauncher(); resetLauncher(); };
   document.addEventListener('pointerup', delayedRefresh); document.addEventListener('keyup', delayedRefresh); document.addEventListener('touchend', delayedRefresh);
-  document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
-  return { refresh, dispose() { dismiss(); removeLauncher(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
+  document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown); document.addEventListener('input', inputChanged, true); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
+  return { refresh, dispose() { composerRequest++; dismiss(); removeLauncher(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
 }
 
 function createRegistry(): Registry {
@@ -284,7 +314,6 @@ export function registerTranslationClient(serverId: string, client: PluginClient
   const registry = !shared[REGISTRY_KEY] || shared[REGISTRY_KEY].closed ? shared[REGISTRY_KEY] = createRegistry() : shared[REGISTRY_KEY];
   const contracts = settingsRpc(translationSettings.id);
   return registry.register(serverId, {
-    configure: () => client.openSettings('translate-settings'),
     translate: async (text, target) => {
       const saved = await client.rpc(contracts.read, {});
       if (saved.status !== 'ready') throw new Error(`翻译 API 设置无法读取：${saved.error}`);
