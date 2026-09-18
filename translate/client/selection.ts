@@ -21,6 +21,17 @@ type DraftUndo = { editor: HTMLElement; before: string; after: string };
 const REGISTRY_KEY = Symbol.for('lalaze.paseo-translate.registry.v1');
 const HIGHLIGHT_NAME = 'paseo-translate-selection';
 const STRICT_ENGLISH_KEY = 'lalaze.paseo-translate.strict-english.v1';
+const DISCOVERED_MODEL_CONTROLS = new WeakSet<HTMLElement>();
+const MODEL_CONTROL_SELECTOR = [
+  '[data-testid="combined-model-selector"]',
+  '[data-testid="agent-model-selector"]',
+  '[data-testid="model-selector"]',
+  '[data-testid*="model-selector"]',
+  'button[aria-label*="model" i]',
+  '[role="button"][aria-label*="model" i]',
+  'button[aria-label*="模型"]',
+  '[role="button"][aria-label*="模型"]',
+].join(', ');
 
 function elementFor(node: Node | null): Element | null {
   return node instanceof Element ? node : node?.parentElement ?? null;
@@ -89,14 +100,51 @@ function findComposer(): HTMLElement | null {
   return pool.sort((left, right) => right.getBoundingClientRect().bottom - left.getBoundingClientRect().bottom || right.getBoundingClientRect().width - left.getBoundingClientRect().width)[0] ?? null;
 }
 
-function composerModelDescriptor(): string | null {
+function visibleControl(element: HTMLElement) {
+  const rect = element.getBoundingClientRect(), computed = window.getComputedStyle(element);
+  return rect.width > 0 && rect.height > 0 && computed.display !== 'none' && computed.visibility !== 'hidden';
+}
+
+function modelControlDescriptor(element: HTMLElement) {
+  const label = [element.textContent, element.getAttribute('aria-label'), element.getAttribute('title')].filter(Boolean).join(' ');
+  return normalizeComposerModelLabel(label);
+}
+
+function matchingModelControl(element: HTMLElement, keywords: readonly string[]) {
+  if (element.closest('[data-paseo-translate]') || !visibleControl(element)) return false;
+  const descriptor = modelControlDescriptor(element);
+  return descriptor?.startsWith('claude/') === true || matchesEnglishLockModel(descriptor, keywords);
+}
+
+function composerModelDescriptor(keywords: readonly string[] = []): string | null {
   const editor = findComposer();
   if (!editor) return null;
   for (let container = editor.parentElement; container && container !== document.body; container = container.parentElement) {
-    const selector = container.querySelector<HTMLElement>('[data-testid="combined-model-selector"]');
-    if (selector) return normalizeComposerModelLabel(selector.textContent ?? '');
+    const selector = Array.from(container.querySelectorAll<HTMLElement>(MODEL_CONTROL_SELECTOR)).find(visibleControl);
+    if (selector) {
+      DISCOVERED_MODEL_CONTROLS.add(selector);
+      return modelControlDescriptor(selector);
+    }
+
+    // Paseo 0.8's compact composer does not expose a stable model-selector
+    // test id. Its visible model button still contains labels such as Opus,
+    // Sonnet, Haiku, Fable or Mythos. Configured model keywords also help
+    // identify custom provider buttons in versions without semantic markers.
+    const modelControl = Array.from(container.querySelectorAll<HTMLElement>('button, [role="button"]')).find(element => matchingModelControl(element, keywords));
+    if (modelControl) {
+      DISCOVERED_MODEL_CONTROLS.add(modelControl);
+      return modelControlDescriptor(modelControl);
+    }
   }
   return null;
+}
+
+function containsComposerModelControl(element: Element, keywords: readonly string[]) {
+  if (element.closest(MODEL_CONTROL_SELECTOR) || element.matches(MODEL_CONTROL_SELECTOR) || element.querySelector(MODEL_CONTROL_SELECTOR)) return true;
+  const closestControl = element.closest<HTMLElement>('button, [role="button"]');
+  if (closestControl && DISCOVERED_MODEL_CONTROLS.has(closestControl)) return true;
+  if (closestControl && matchingModelControl(closestControl, keywords)) return true;
+  return Array.from(element.querySelectorAll<HTMLElement>('button, [role="button"]')).some(control => matchingModelControl(control, keywords));
 }
 
 function editorText(editor: HTMLElement): string {
@@ -239,17 +287,21 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
       return;
     }
     if (!route.agentId) {
-      const descriptor = composerModelDescriptor();
+      const cachedKeywords = englishLockModels.get(route.serverId) ?? [];
+      const descriptor = composerModelDescriptor(cachedKeywords);
       const key = `composer\u0000${route.serverId}\u0000${descriptor ?? ''}`;
       if (!force && activePolicyKey === key) return;
       activePolicyKey = key;
-      const cachedKeywords = englishLockModels.get(route.serverId);
-      applyAutomaticEnglishLock(descriptor, cachedKeywords ?? []);
+      applyAutomaticEnglishLock(descriptor, cachedKeywords);
       const sequence = ++modelRequest;
       void runtime.englishLockModels().then(keywords => {
         englishLockModels.set(route.serverId, keywords);
         const current = currentRoute();
-        if (sequence === modelRequest && current?.serverId === route.serverId && !current.agentId && composerModelDescriptor() === descriptor) applyAutomaticEnglishLock(descriptor, keywords);
+        if (sequence === modelRequest && current?.serverId === route.serverId && !current.agentId) {
+          const currentDescriptor = composerModelDescriptor(keywords);
+          activePolicyKey = `composer\u0000${route.serverId}\u0000${currentDescriptor ?? ''}`;
+          applyAutomaticEnglishLock(currentDescriptor, keywords);
+        }
       }).catch(() => {
         if (sequence === modelRequest) applyAutomaticEnglishLock(null, []);
       });
@@ -304,13 +356,14 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     englishGuard.title = automaticEnglishLock
       ? `当前模型 ${activeModelDescriptor ?? ''} 命中自动 EN 锁规则，切换模型或修改设置后解除`
       : enabled ? '严格英文模式已开启：点击关闭' : '严格英文模式已关闭：点击开启';
+    englishGuard.disabled = automaticEnglishLock;
     englishGuard.setAttribute('aria-pressed', String(enabled));
     englishGuard.setAttribute('aria-disabled', String(automaticEnglishLock));
     style(englishGuard, automaticEnglishLock
-      ? { borderColor: '#c084fc', background: '#6b21a8', color: '#faf5ff' }
+      ? { borderColor: '#c084fc', background: '#6b21a8', color: '#faf5ff', cursor: 'not-allowed', opacity: '1' }
       : enabled
-        ? { borderColor: '#60a5fa', background: '#1d4ed8', color: '#eff6ff' }
-      : { borderColor: '#3f3f46', background: '#27272a', color: '#d4d4d8' });
+        ? { borderColor: '#60a5fa', background: '#1d4ed8', color: '#eff6ff', cursor: 'pointer', opacity: '1' }
+      : { borderColor: '#3f3f46', background: '#27272a', color: '#d4d4d8', cursor: 'pointer', opacity: '1' });
   }
 
   function flashEnglishGuard(message: string) {
@@ -457,18 +510,18 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   const dismiss = () => { removeTrigger(); positionLauncher(); };
   const routeChanged = () => { composerRequest++; composerBusy = false; draftUndo = null; removeTrigger(); activePolicyKey = null; refreshLauncher(); resetLauncher(); };
   const modelObserver = new MutationObserver(records => {
-    const selector = '[data-testid="combined-model-selector"]';
+    const route = currentRoute(), keywords = route ? englishLockModels.get(route.serverId) ?? [] : [];
     const changed = records.some(record => {
       const target = elementFor(record.target);
-      if (target?.closest(selector)) return true;
+      if (target && containsComposerModelControl(target, keywords)) return true;
       return Array.from(record.addedNodes).some(node => {
         const element = elementFor(node);
-        return Boolean(element?.matches(selector) || element?.querySelector(selector));
+        return Boolean(element && containsComposerModelControl(element, keywords));
       });
     });
     if (changed) { activePolicyKey = null; window.setTimeout(refreshLauncher, 0); }
   });
-  modelObserver.observe(document.body, { childList: true, characterData: true, subtree: true });
+  modelObserver.observe(document.body, { attributes: true, attributeFilter: ['aria-label', 'title', 'data-testid'], childList: true, characterData: true, subtree: true });
   document.addEventListener('pointerup', delayedRefresh); document.addEventListener('keyup', delayedRefresh); document.addEventListener('touchend', delayedRefresh);
   document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown, true); document.addEventListener('click', clickGuard, true); document.addEventListener('submit', submitGuard, true); document.addEventListener('input', inputChanged, true); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
   return { refresh, updateAgentModel, dispose() { composerRequest++; modelRequest++; modelObserver.disconnect(); dismiss(); removeLauncher(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
