@@ -126,7 +126,7 @@ test("migration freezes dispatch, preserves in-flight operations and retries cre
   const before = h.store.get(id), op = before.operations.find(o => o.id === before.activeOperationId)!;
   h.gateway.failCreate = true;
   await h.chats.migrate(); await h.chats.tick(); await h.engine.tick();
-  assert.equal(h.store.get(id).activeOperationId, op.id); assert.ok(h.chats.list()[0].error);
+  assert.equal(h.store.get(id).activeOperationId, op.id); assert.ok(h.chats.summary(h.store.get(id).migrationConversationId!).error);
   h.gateway.failCreate = false; await h.chats.tick();
   const after = h.store.get(id); assert.equal(after.activeOperationId, op.id);
   assert.equal(after.operations[0].agentId, op.agentId); assert.notEqual(after.directorAgentId, op.agentId);

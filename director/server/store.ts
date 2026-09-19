@@ -61,22 +61,12 @@ export class Store {
   }
   findRequest(id: string): Run | undefined { return this.decode(this.db.prepare("SELECT data FROM runs WHERE request_id=?").get(id)); }
   get(id: string): Run { const r = this.decode(this.db.prepare("SELECT data FROM runs WHERE id=?").get(id)); if (!r) throw new Error("任务不存在"); return r; }
-  workspaceRunId(workspaceId: string): string | null {
-    // Restore from durable state, including tasks beyond the first history page.
-    // Unfinished work takes priority over more recently completed/canceled runs.
-    const row = this.db.prepare("SELECT id FROM runs WHERE json_extract(data,'$.workspaceId') = ? ORDER BY (json_extract(data,'$.phase') = 'completed' OR json_extract(data,'$.control') = 'canceled') ASC, rowid DESC LIMIT 1").get(workspaceId) as { id: string } | undefined;
-    return row?.id ?? null;
-  }
   all(): Run[] { return this.db.prepare("SELECT data FROM runs ORDER BY rowid DESC").all().map(r => this.decode(r)!); }
   unfinishedWorkspaceRuns(): Pick<Run, "id" | "workspaceId" | "cwd">[] {
     return this.db.prepare("SELECT id, json_extract(data,'$.workspaceId') AS workspaceId, json_extract(data,'$.cwd') AS cwd FROM runs WHERE json_extract(data,'$.phase') <> 'completed' AND json_extract(data,'$.control') <> 'canceled'").all() as Pick<Run, "id" | "workspaceId" | "cwd">[];
   }
   pending(): Run[] {
     return this.db.prepare("SELECT data FROM runs WHERE json_extract(data,'$.phase') <> 'completed' AND json_extract(data,'$.control') IN ('running','waiting_permission','canceling')").all().map(r => this.decode(r)!);
-  }
-  page(offset: number, limit: number) {
-    const runs = this.db.prepare("SELECT data FROM runs ORDER BY rowid DESC LIMIT ? OFFSET ?").all(limit + 1, offset).map(r => this.decode(r)!);
-    return { runs: runs.slice(0, limit), hasMore: runs.length > limit };
   }
   insert(run: Run) { this.db.prepare("INSERT INTO runs VALUES (?,?,?,?)").run(run.id, run.requestId, run.revision, JSON.stringify(run)); }
   save(run: Run) {

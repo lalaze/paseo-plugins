@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
-import { CHAT_ACTOR, confirmationFor, type Conversation, type ConversationSummary, type ConversationListItem } from "../shared/conversation";
+import { CHAT_ACTOR, confirmationFor, type Conversation, type ConversationSummary } from "../shared/conversation";
 import { SettingsSchema, type ControlAction, type Run, type Profile } from "../shared/schema";
 import type { Store } from "./store";
 import type { Engine, AgentSnapshot } from "./engine";
@@ -43,13 +43,6 @@ export class Conversations {
   summary(id: string): ConversationSummary {
     const c = this.store.conversation(id), run = c.runId ? this.store.get(c.runId) : undefined;
     return { id: c.id, agentId: c.agentId, workspaceId: c.workspaceId, runId: c.runId, state: c.state, error: c.error, title: run?.goal ?? c.initialGoal ?? "新的协作对话", run, confirmation: c.confirmation };
-  }
-  list(workspaceId?: string): ConversationListItem[] {
-    return this.store.conversations().filter(c => !workspaceId || c.workspaceId === workspaceId).map(c => {
-      const { run, confirmation: _confirmation, ...summary } = this.summary(c.id);
-      const active = run?.operations.find(o => o.id === run.activeOperationId);
-      return { ...summary, activity: run ? { running: active && active.agentId !== c.agentId && ["sending", "sent"].includes(active.state) && !["canceled", "canceling"].includes(run.control) ? 1 : 0, total: run.tasks.length, phase: run.phase, control: run.control } : undefined };
-    });
   }
   async open(input: { requestId: string; workspaceId: string; goal?: string; fresh?: boolean; conversationId?: string; agentId?: string }) {
     return this.locked(async () => {

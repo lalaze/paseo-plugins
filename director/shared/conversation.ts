@@ -25,6 +25,3 @@ export function confirmationFor(run: Run): Omit<Confirmation, "noticeId"> | unde
     return { kind: "final", key: `final:${run.finalEvidence.id}`, artifactId: run.finalEvidence.id };
 }
 
-export type ConversationListItem = Omit<ConversationSummary, "run" | "confirmation"> & {
-  activity?: { running: number; total: number; phase: Run["phase"]; control: Run["control"] };
-};

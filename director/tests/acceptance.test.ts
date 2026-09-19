@@ -134,11 +134,10 @@ test("pending final acceptance restores in its workspace and holds the checkout 
   h.agents.directory = h.directory;
   const run = { ...h.run(), workspaceId: "workspace", cwd: h.directory }; h.store.save(run);
   await h.restart();
-  assert.equal(h.store.workspaceRunId("workspace"), h.id);
   assert.equal(h.store.pending().length, 0);
   const next = { requestId: "next", workspaceId: "workspace", repository: h.directory, goal: "另一个目标", settings: run.settings };
   await assert.rejects(h.engine.create(next), /已有未结束/);
   await h.engine.control(h.id, "reject_final", undefined, input(h.run()));
   const nextId = await h.engine.create(next);
-  assert.notEqual(nextId, h.id); assert.equal(h.store.workspaceRunId("workspace"), nextId);
+  assert.notEqual(nextId, h.id);
 });

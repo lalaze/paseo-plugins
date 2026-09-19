@@ -11,9 +11,8 @@ try {
   if (plugin?.status !== "running") throw new Error("Director plugin is not running");
   const settings = await client.invokePluginRpc("paseo-director", "director.settings.get", {});
   DraftStateSchema.parse(await client.invokePluginRpc("paseo-director", "director.settings.draft.get", {}));
-  const runs = await client.invokePluginRpc("paseo-director", "director.run.list", { offset: 0, limit: 20 });
-  if (settings.error || runs.error || !Array.isArray(runs.runs)) throw new Error("Director RPC validation failed");
+  if (settings.error) throw new Error(`Director RPC validation failed: ${settings.error}`);
   await gateway.connect();
   const providers = await gateway.api.providers.snapshot({});
-  console.log(JSON.stringify({ plugin: plugin.status, settingsRpc: "ok", draftRpc: "ok", runsRpc: "ok", storedRuns: runs.runs.length, daemonConnection: "ok", providers: providers.entries.length }, null, 2));
+  console.log(JSON.stringify({ plugin: plugin.status, settingsRpc: "ok", draftRpc: "ok", daemonConnection: "ok", providers: providers.entries.length }, null, 2));
 } finally { await client.close(); await gateway.close(); }

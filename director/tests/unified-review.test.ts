@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import { finalAcceptance, ReviewSchema, summarize, type Plan, type Operation } from "../shared/schema";
 import { buildPrompt } from "../server/prompts";
 import { readDirectorPrompt } from "../client/prompt-model";
-import { runPresentation } from "../client/run-model";
 import { harness, plan, result, review, reviewerSettings } from "./helpers";
 
 const multiPlan: Plan = { ...plan, tasks: [
@@ -27,7 +26,6 @@ test("all tasks execute serially in dependency order before one verification and
     assert.equal(h.run().tasks.find(task => task.spec.id === taskId)?.status, "executed");
     assert.equal(h.run().finalReview, undefined);
     assert.equal(summarize(h.run()).done, index + 1);
-    assert.equal(runPresentation(h.run()).done, index + 1);
     assert.equal(h.repository.verifications, 0);
     assert.equal(h.run().operations.some(op => ["review", "final"].includes(op.kind)), false);
     if (index === 0) await h.restart();

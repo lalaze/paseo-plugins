@@ -23,7 +23,6 @@ export class Engine {
   private locks = new Map<string, Promise<unknown>>();
   private checks = new Map<string, AbortController>();
   private stopped = false;
-  private timer?: ReturnType<typeof setInterval>;
   constructor(readonly store: Store, private agents: AgentGateway, private repository: Repository, private now = () => Date.now()) {}
   private async locked<T>(id: string, action: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(id) ?? Promise.resolve();
@@ -56,9 +55,8 @@ export class Engine {
       this.store.insert(run); return id;
     });
   }
-  start() { this.timer = setInterval(() => { void this.tick().catch(e => console.error("Director tick:", String(e))); }, 2000); }
   async close() {
-    this.stopped = true; if (this.timer) clearInterval(this.timer);
+    this.stopped = true;
     for (const controller of this.checks.values()) controller.abort();
     await Promise.allSettled([...this.locks.values()]);
   }
