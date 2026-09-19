@@ -19,19 +19,22 @@ export default function contribute(server: PluginServerContext) {
   mcp = new DirectorMcp(store, engine, conversations, root);
   let startupError: string | null = null, stopped = false;
   let timer: ReturnType<typeof setInterval> | undefined, pumping = false;
+  const report = (stage: string, error: unknown) => console.error(`Director ${stage}:`, error instanceof Error ? error.message : String(error));
   const pump = async () => {
     if (stopped || pumping) return;
     pumping = true;
-    try { await conversations.migrate(); await conversations.tick(); await engine.tick(); }
-    catch (error) { console.error("Director conversations:", error instanceof Error ? error.message : String(error)); }
-    finally { pumping = false; }
+    try {
+      for (const [stage, step] of [["migrate", () => conversations.migrate()], ["conversations", () => conversations.tick()], ["engine", () => engine.tick()]] as const) {
+        try { await step(); } catch (error) { report(stage, error); }
+      }
+    } finally { pumping = false; }
   };
   const ready = mcp.start().then(() => { if (!stopped) { timer = setInterval(() => { void pump(); }, 2500); void pump(); } }).catch(error => {
     startupError = `AI 协作后台启动失败：${error instanceof Error ? error.message : String(error)}`;
     console.error(startupError);
   });
   server.handle(openConversationRpc, async (input, context) => { gateway.setPluginApi(context.paseo); await ready; if (startupError) throw new Error(startupError); await conversations.migrate(); return conversations.open(input); });
-  server.handle(resyncConversationRpc, ({ id }) => conversations.resync(id));
+  server.handle(resyncConversationRpc, async ({ id }) => { await ready; if (startupError) throw new Error(startupError); return conversations.resync(id); });
   server.handle(getConversationRpc, ({ id }) => conversations.summary(id));
   server.handle(getSettingsRpc, (_input, context) => { gateway.setPluginApi(context.paseo); return { settings: store.settings() ?? null, error: startupError }; });
   server.handle(getSettingsDraftRpc, () => store.settingsDraft());
@@ -42,5 +45,14 @@ export default function contribute(server: PluginServerContext) {
   server.on("agent.created", (_event, context) => { gateway.setPluginApi(context.paseo); });
   server.on("agent.turn_ended", (_event, context) => { gateway.setPluginApi(context.paseo); wake(); });
   server.on("agent.permission_resolved", wake);
-  return async () => { stopped = true; if (timer) clearInterval(timer); await ready; await mcp.close(); await conversations.close(); await engine.close(); await gateway.close(); store.close(); };
+  // Release every resource even if one close fails; a retained owner row would
+  // block the next plugin load in this same daemon process.
+  return async () => {
+    stopped = true; if (timer) clearInterval(timer); await ready;
+    const failures: unknown[] = [];
+    for (const step of [() => mcp.close(), () => conversations.close(), () => engine.close(), () => gateway.close(), async () => store.close()]) {
+      try { await step(); } catch (error) { failures.push(error); }
+    }
+    if (failures.length) throw failures[0];
+  };
 }

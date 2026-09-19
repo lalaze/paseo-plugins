@@ -63,7 +63,8 @@ export class Engine {
   async tick() {
     if (this.stopped) return;
     const runs = this.store.pending();
-    await Promise.allSettled(runs.filter(r => !this.locks.has(r.id)).map(r => this.locked(r.id, () => this.advance(r.id))));
+    const results = await Promise.allSettled(runs.filter(r => !this.locks.has(r.id)).map(r => this.locked(r.id, () => this.advance(r.id))));
+    for (const [index, outcome] of results.entries()) if (outcome.status === "rejected") console.error(`Director run ${runs[index].id}:`, outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason));
   }
   private hold(run: Run, message: string) { run.control = "needs_attention"; this.event(run, message); this.store.save(run); }
   private current(run: Run) { return run.operations.find(o => o.id === run.activeOperationId); }

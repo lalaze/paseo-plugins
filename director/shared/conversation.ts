@@ -1,4 +1,4 @@
-import type { Run, Settings } from "./schema";
+import { awaitingAcceptance, type Run, type Settings } from "./schema";
 
 export type Confirmation = { key: string; kind: "plan" | "final"; noticeId: string; artifactId?: string; planVersion?: number };
 export type Conversation = {
@@ -21,7 +21,6 @@ export const CHAT_ACTOR = "role:chat";
 export const CHAT_MARKER = "[paseo-director-chat:";
 export function confirmationFor(run: Run): Omit<Confirmation, "noticeId"> | undefined {
   if (run.control === "paused" && run.plan && !run.planApproved) return { kind: "plan", key: `plan:${run.planVersion ?? 1}:${JSON.stringify(run.plan)}`, planVersion: run.planVersion ?? 1 };
-  if (["awaiting_acceptance", "completed"].includes(run.phase) && ["running", "paused"].includes(run.control) && run.finalReview?.decision === "approved" && run.finalEvidence && !run.userAcceptance && !run.activeOperationId)
-    return { kind: "final", key: `final:${run.finalEvidence.id}`, artifactId: run.finalEvidence.id };
+  if (awaitingAcceptance(run)) return { kind: "final", key: `final:${run.finalEvidence!.id}`, artifactId: run.finalEvidence!.id };
 }
 

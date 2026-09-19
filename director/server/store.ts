@@ -19,7 +19,9 @@ export class Store {
       this.db.exec("BEGIN IMMEDIATE");
       try {
         const owner = this.meta<{ pid: number }>("owner");
-        if (owner) {
+        // A row left by this same process is a previous plugin generation whose
+        // cleanup did not finish, not a concurrent instance.
+        if (owner && owner.pid !== process.pid) {
           let alive = true;
           try { process.kill(owner.pid, 0); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ESRCH") alive = false; }
           if (alive) throw new Error("另一个 AI 协作实例正在使用此数据库");
