@@ -34,6 +34,9 @@ export class FakeRepository implements Repository {
   version = "artifact-v1";
   passed = true;
   verifications = 0;
+  discarded: Evidence[] = [];
+  async fingerprint() { return this.version; }
+  async discard(evidence: Evidence) { this.discarded.push(evidence); }
   async prepare(repository: string, runId: string, currentWorkspace = false) { return { repository, cwd: currentWorkspace ? repository : `/worktrees/${runId}`, baseCommit: "base", branch: `director/${runId}` }; }
   async capture() { return { id: this.version, tree: "tree", diffPath: "/artifacts/code.patch", changedFiles: ["src/api.ts"], diff: "diff", capturedAt: 1 }; }
   async verify(run: Run): Promise<Evidence> {

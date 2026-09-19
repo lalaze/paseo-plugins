@@ -210,6 +210,8 @@ test("rework returns precise instructions to original worker and respects limit"
   await h.until("plan"); await h.complete(plan); const worker = await h.until("execute"); await h.complete(result);
   await h.until("final"); await h.complete(review(true, "changes_requested"));
   const redo = await h.until("execute"); assert.equal(redo.agentId, worker.agentId); assert.match(redo.prompt, /增加空值处理/);
+  // Superseded verification output is released once the run stops showing it.
+  assert.equal(h.run().finalEvidence, undefined); assert.equal(h.repository.discarded.length, 1);
   await h.complete(result); await h.until("final"); await h.complete(review(true, "changes_requested"));
   assert.equal(h.run().control, "needs_attention"); assert.match(h.run().message, /返工次数上限/);
 });

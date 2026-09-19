@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
-import { SettingsSchema, PlanSchema, ResultSchema, ReviewSchema, hasFinalResult, canResumeRun, executionComplete, finalAcceptance, parseOutput, profileForTask, validatePlan, operationRole, operationLabel, REVIEWER_ACTOR, type Run, type Operation, type Settings, type Profile, type Review, type ControlAction, type FinalControl } from "../shared/schema";
+import { SettingsSchema, PlanSchema, ResultSchema, ReviewSchema, hasFinalResult, canResumeRun, executionComplete, finalAcceptance, parseOutput, profileForTask, validatePlan, operationRole, operationLabel, REVIEWER_ACTOR, type Run, type Operation, type Settings, type Profile, type Review, type ControlAction, type FinalControl, type Evidence } from "../shared/schema";
 import type { Repository } from "./repository";
 import { Store } from "./store";
 import { buildPrompt, responseSchema } from "./prompts";
@@ -68,6 +68,10 @@ export class Engine {
     for (const [index, outcome] of results.entries()) if (outcome.status === "rejected") console.error(`Director run ${runs[index].id}:`, outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason));
   }
   private hold(run: Run, message: string) { run.control = "needs_attention"; this.event(run, message); this.store.save(run); }
+  /** Forget evidence the run no longer shows; its files are removed in the background. */
+  private release(...evidence: (Evidence | undefined)[]) {
+    for (const item of evidence) if (item) void this.repository.discard(item).catch(error => console.error("Director artifacts:", error instanceof Error ? error.message : String(error)));
+  }
   private current(run: Run) { return run.operations.find(o => o.id === run.activeOperationId); }
   private actor(run: Run, op: Operation): string {
     const role = operationRole(run.settings, op.kind);
@@ -149,6 +153,8 @@ export class Engine {
           try {
             const evidence = await this.repository.verify(run, controller.signal);
             if (this.stopped) return;
+            const previous = task ? task.evidence : run.finalEvidence;
+            if (previous && previous.id !== evidence.id) this.release(previous);
             if (task) task.evidence = evidence; else run.finalEvidence = evidence;
           } finally { this.checks.delete(id); }
           this.enqueue(run, task ? "review" : "final", task?.spec.id);
@@ -265,7 +271,7 @@ export class Engine {
     } else {
       const review = ReviewSchema.parse(value), task = run.tasks.find(t => t.spec.id === op.taskId);
       const evidence = op.kind === "final" ? run.finalEvidence! : task!.evidence!;
-      if (review.artifactId !== evidence.id || (await this.repository.capture(run)).id !== evidence.id) throw new Error("审核版本与当前成果不一致，需重新验证后审核");
+      if (review.artifactId !== evidence.id || await this.repository.fingerprint(run) !== evidence.id) throw new Error("审核版本与当前成果不一致，需重新验证后审核");
       const criteria = op.kind === "final" ? op.reviewScope === "all_tasks" ? finalAcceptance(run.plan!) : run.plan!.acceptance : task!.spec.acceptance;
       if (review.decision === "approved") {
         if (op.kind === "final" && (!run.tasks.length || !run.tasks.every(executionComplete))) throw new Error("仍有任务未执行完成，不能批准成果");
@@ -292,13 +298,14 @@ export class Engine {
     let changed = true;
     while (changed) { changed = false; for (const t of run.tasks) if (!invalid.has(t.spec.id) && t.spec.dependsOn.some(d => invalid.has(d))) { invalid.add(t.spec.id); changed = true; } }
     for (const task of run.tasks) if (invalid.has(task.spec.id)) {
-      task.status = "pending"; task.evidence = undefined; task.review = undefined;
+      task.status = "pending"; this.release(task.evidence); task.evidence = undefined; task.review = undefined;
       if (ids.has(task.spec.id)) { task.reworks++; task.feedback = JSON.stringify(review.findings.filter(f => f.taskId === task.spec.id)); }
       else task.feedback = "前置任务发生变更，请重新检查实现与集成兼容性";
     }
     // If a task review requests changes in a dependency, also reschedule the current task.
     const currentTask = run.tasks.find(t => t.status === "reviewing");
-    if (currentTask) { currentTask.status = "pending"; currentTask.evidence = undefined; }
+    if (currentTask) { currentTask.status = "pending"; this.release(currentTask.evidence); currentTask.evidence = undefined; }
+    this.release(run.finalEvidence);
     run.finalEvidence = undefined; run.finalReview = undefined; run.phase = "executing";
     this.event(run, `需要返工：${[...ids].join("、")}`);
   }
@@ -384,7 +391,7 @@ export class Engine {
       run.control = "canceled"; this.event(run, "你选择不采纳并结束任务；文件和分支已保留");
     } else if (action === "accept_final") {
       await this.repository.assertBranch(run);
-      if ((await this.repository.capture(run)).id !== run.finalEvidence!.id) throw new Error("代码已在最终审核后发生变化，请提交修改意见，让团队重新审核当前成果");
+      if (await this.repository.fingerprint(run) !== run.finalEvidence!.id) throw new Error("代码已在最终审核后发生变化，请提交修改意见，让团队重新审核当前成果");
       run.userAcceptance = { decision: "approved", artifactId: run.finalEvidence!.id, decidedAt: this.now() };
       run.phase = "completed"; run.control = "running"; this.event(run, "你已验收通过，任务完成；文件和分支已保留");
     } else {
@@ -399,6 +406,7 @@ export class Engine {
         previousTasks: run.tasks.map(t => ({ id: t.spec.id, profileId: t.profileId, agentId: t.agentId, result: t.result })),
       }];
       run.roundStartedAt = this.now(); run.roundOperationOffset = run.operations.length;
+      this.release(run.finalEvidence, ...run.tasks.map(t => t.evidence));
       run.plan = undefined; run.tasks = []; run.finalEvidence = undefined; run.finalReview = undefined; run.userAcceptance = undefined; run.dispatchOrder = [];
       run.planApproved = !run.settings.requirePlanApproval; run.planApprovedAt = undefined;
       run.phase = "planning"; run.control = "running";
@@ -486,6 +494,7 @@ export class Engine {
         }
         if (op) op.state = "abandoned";
         run.activeOperationId = undefined; run.goal = goal.trim(); run.planVersion = (run.planVersion ?? 1) + 1;
+        this.release(run.finalEvidence, ...run.tasks.map(t => t.evidence));
         run.plan = undefined; run.tasks = []; run.finalEvidence = undefined; run.finalReview = undefined; run.dispatchOrder = [];
         run.planApproved = !run.settings.requirePlanApproval; run.planApprovedAt = undefined; run.phase = "planning"; run.control = "running";
         this.event(run, `需求已更新为第 ${run.planVersion} 版，保留现有代码，重新设计并验收`);

@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, unlink, writeFile } from "node:fs/promises";
 import { join, isAbsolute } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type { Run, Evidence, Command } from "../shared/schema";
@@ -9,8 +9,12 @@ const exec = promisify(execFile);
 export interface Repository {
   prepare(repository: string, runId: string, currentWorkspace?: boolean): Promise<{ repository: string; cwd: string; baseCommit: string; branch: string }>;
   assertBranch(run: Run): Promise<void>;
+  /** The artifact id of the working tree right now, without writing any artifact. */
+  fingerprint(run: Run): Promise<string>;
   capture(run: Run): Promise<Omit<Evidence, "checks" | "passed">>;
   verify(run: Run, signal: AbortSignal): Promise<Evidence>;
+  /** Best-effort removal of files only this evidence references. */
+  discard(evidence: Evidence): Promise<void>;
 }
 export class GitRepository implements Repository {
   constructor(private root: string) {}
@@ -51,9 +55,9 @@ export class GitRepository implements Repository {
   async assertBranch(run: Run) {
     if (run.workspaceId && await this.git(run.cwd, ["branch", "--show-current"]) !== run.branch) throw new Error(`工作区已切换分支，请切回 ${run.branch} 后重试`);
   }
-  async capture(run: Run) {
+  /** Write the working tree (tracked, untracked, staged) into a throwaway index and return its tree. */
+  private async writeTree(run: Run, directory: string) {
     await this.assertBranch(run);
-    const directory = join(this.root, "artifacts", run.id);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const temp = await mkdtemp(join(directory, "index-"));
     try {
@@ -61,16 +65,27 @@ export class GitRepository implements Repository {
       await this.git(run.cwd, ["read-tree", "HEAD"], env);
       await this.git(run.cwd, ["add", "-A", "--", "."], env);
       const tree = await this.git(run.cwd, ["write-tree"], env);
-      const id = createHash("sha256").update(run.baseCommit + ":" + tree).digest("hex");
-      // Patches and NUL-delimited paths must retain their exact whitespace.
-      const diff = await this.gitOutput(run.cwd, ["diff", "--binary", run.baseCommit, tree, "--"]);
-      const names = await this.gitOutput(run.cwd, ["diff", "--name-only", "-z", run.baseCommit, tree, "--"]);
-      const diffPath = join(directory, `${id}.patch`);
-      await writeFile(diffPath, diff, { mode: 0o600 });
-      // Keep the tree reachable even if Git prunes loose objects later.
-      await this.git(run.cwd, ["update-ref", `refs/paseo-director/${run.id}/${id}`, tree]);
-      return { id, tree, diffPath, changedFiles: names.split("\0").filter(Boolean), diff: diff.slice(0, 48000), capturedAt: Date.now() };
+      return { tree, id: createHash("sha256").update(run.baseCommit + ":" + tree).digest("hex") };
     } finally { await rm(temp, { recursive: true, force: true }); }
+  }
+  async fingerprint(run: Run) {
+    return (await this.writeTree(run, join(this.root, "artifacts", run.id))).id;
+  }
+  async capture(run: Run) {
+    const directory = join(this.root, "artifacts", run.id);
+    const { tree, id } = await this.writeTree(run, directory);
+    // Patches and NUL-delimited paths must retain their exact whitespace.
+    const diff = await this.gitOutput(run.cwd, ["diff", "--binary", run.baseCommit, tree, "--"]);
+    const names = await this.gitOutput(run.cwd, ["diff", "--name-only", "-z", run.baseCommit, tree, "--"]);
+    const diffPath = join(directory, `${id}.patch`);
+    await writeFile(diffPath, diff, { mode: 0o600 });
+    // Keep the tree reachable even if Git prunes loose objects later.
+    await this.git(run.cwd, ["update-ref", `refs/paseo-director/${run.id}/${id}`, tree]);
+    return { id, tree, diffPath, changedFiles: names.split("\0").filter(Boolean), diff: diff.slice(0, 48000), capturedAt: Date.now() };
+  }
+  async discard(evidence: Evidence) {
+    // Patches and pinned trees stay: reviews keep citing their artifact ids.
+    await Promise.all(evidence.checks.map(check => unlink(check.logPath).catch(() => {})));
   }
   async verify(run: Run, signal: AbortSignal): Promise<Evidence> {
     if (signal.aborted) throw new Error("验证已中止");
@@ -86,8 +101,7 @@ export class GitRepository implements Repository {
       await writeFile(logPath, result.output, { mode: 0o600 });
       checks.push({ label: command.label, exitCode: result.exitCode, logPath, output: result.output.slice(-6000) });
     }
-    const after = await this.capture(run);
-    if (after.id !== snapshot.id) throw new Error("验收命令改变了源文件，请使用不修改源文件的验证命令后重试");
+    if (await this.fingerprint(run) !== snapshot.id) throw new Error("验收命令改变了源文件，请使用不修改源文件的验证命令后重试");
     const passed = checks.every(c => c.exitCode === 0);
     return { ...snapshot, checks, passed, verificationStatus: passed ? "passed" : "failed" };
   }
