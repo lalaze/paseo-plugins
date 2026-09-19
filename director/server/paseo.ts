@@ -115,19 +115,26 @@ export class PaseoGateway implements AgentGateway {
     } while (cursor);
     return ids;
   }
-  async inspect(agentId: string, operationId: string): Promise<AgentSnapshot> {
-    await this.connect(); const agent = this.api.agents.ref(agentId);
-    if (!(await agent.refresh()) || agent.archivedAt || agent.status === "closed") return { status: "missing", seen: false, output: "" };
-    const status: AgentSnapshot["status"] = agent.pendingPermissions?.length ? "permission" : agent.status === "error" ? "error" : agent.activeTurn || agent.status === "running" || agent.status === "initializing" ? "running" : "idle";
+  /** Stop paging back once a page is entirely older than `since`; the daemon shares this clock. */
+  private static readonly SINCE_MARGIN_MS = 60000;
+  private async timeline(agent: ReturnType<PaseoApi["agents"]["ref"]>, stop: (items: AgentTimelineItem[]) => boolean, since?: number, tooLong = "会话记录过长，需要人工核对后继续") {
     let page = await agent.timeline.refetch({ direction: "tail", limit: 100, projection: "canonical" });
     const items = page.entries.map(e => e.item);
-    let count = 0;
-    while (!inspectMessages(items, operationId).seen && page.hasOlder && page.startCursor) {
-      if (++count > 100) throw new Error("本轮会话记录过长，需要人工核对后继续");
+    const olderThanSince = () => since !== undefined && page.entries.length > 0
+      && page.entries.every(e => Date.parse(e.timestamp) < since - PaseoGateway.SINCE_MARGIN_MS);
+    for (let count = 0; !stop(items) && !olderThanSince() && page.hasOlder && page.startCursor; count++) {
+      if (count >= 100) throw new Error(tooLong);
       page = await agent.timeline.refetch({ direction: "before", cursor: page.startCursor, limit: 100, projection: "canonical" });
       if (page.staleCursor || page.gap) throw new Error("会话记录在读取期间发生变化，请稍后重试");
       items.unshift(...page.entries.map(e => e.item));
     }
+    return items;
+  }
+  async inspect(agentId: string, operationId: string, since?: number): Promise<AgentSnapshot> {
+    await this.connect(); const agent = this.api.agents.ref(agentId);
+    if (!(await agent.refresh()) || agent.archivedAt || agent.status === "closed") return { status: "missing", seen: false, output: "" };
+    const status: AgentSnapshot["status"] = agent.pendingPermissions?.length ? "permission" : agent.status === "error" ? "error" : agent.activeTurn || agent.status === "running" || agent.status === "initializing" ? "running" : "idle";
+    const items = await this.timeline(agent, items => inspectMessages(items, operationId).seen, since, "本轮会话记录过长，需要人工核对后继续");
     return { status, ...inspectMessages(items, operationId), error: agent.lastError ?? undefined };
   }
   async send(agentId: string, operationId: string, prompt: string) {
@@ -189,23 +196,15 @@ export class PaseoGateway implements AgentGateway {
     const page = await this.api.agents.list({ filter: { labels: { "director-conversation": id, "director-generation": String(generation) } }, page: { limit: 100 } });
     return page.entries.map(e => e.agent.id);
   }
-  async conversationHistory(agentId: string) {
+  /** Newest items first arrive; `stop` lets callers end paging once the items they need are present. */
+  async conversationHistory(agentId: string, stop: (items: AgentTimelineItem[]) => boolean = () => false) {
     await this.connect();
-    const agent = this.api.agents.ref(agentId);
-    let page = await agent.timeline.refetch({ direction: "tail", limit: 100, projection: "canonical" });
-    const items = page.entries.map(e => e.item);
-    for (let count = 0; page.hasOlder && page.startCursor; count++) {
-      if (count >= 100) throw new Error("聊天记录过长，无法可靠核验用户确认");
-      page = await agent.timeline.refetch({ direction: "before", cursor: page.startCursor, limit: 100, projection: "canonical" });
-      if (page.staleCursor || page.gap) throw new Error("聊天记录发生变化，请重试");
-      items.unshift(...page.entries.map(e => e.item));
-    }
-    return items;
+    return this.timeline(this.api.agents.ref(agentId), stop, undefined, "聊天记录过长，无法可靠核验用户确认");
   }
   async appendConversationLink(agentId: string, conversationId: string) {
     await this.connect();
-    const items = await this.conversationHistory(agentId);
-    if (items.some(i => i.type === "plugin" && i.kind === "director-conversation" && (i.data as { conversationId?: string }).conversationId === conversationId)) return;
+    const linked = (items: AgentTimelineItem[]) => items.some(i => i.type === "plugin" && i.kind === "director-conversation" && (i.data as { conversationId?: string }).conversationId === conversationId);
+    if (linked(await this.conversationHistory(agentId, linked))) return;
     if (!this.pluginApi) throw new Error("等待宿主插件连接，以恢复聊天入口");
     await this.pluginApi.agents.ref(agentId).timeline.append({ type: "plugin", id: `conversation-${conversationId}`, kind: "director-conversation", version: 1, data: { conversationId } });
   }

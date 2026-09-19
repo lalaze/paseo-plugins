@@ -14,7 +14,8 @@ export interface AgentGateway {
   retainWorkspaceName(workspaceId: string): Promise<void>;
   create(run: Run, op: Operation, profile: Profile, token: string): Promise<string>;
   find(runId: string, operationId: string): Promise<string[]>;
-  inspect(agentId: string, operationId: string): Promise<AgentSnapshot>;
+  /** `since` (epoch ms) bounds how far back history is searched for the marker. */
+  inspect(agentId: string, operationId: string, since?: number): Promise<AgentSnapshot>;
   send(agentId: string, operationId: string, prompt: string): Promise<void>;
   stop(agentId: string): Promise<void>;
 }
@@ -102,13 +103,13 @@ export class Engine {
           const ids = await this.agents.find(run.id, op.id);
           for (const agentId of ids) {
             await this.agents.stop(agentId);
-            const state = await this.agents.inspect(agentId, op.id);
+            const state = await this.agents.inspect(agentId, op.id, op.createdAt);
             if (state.status === "running" || state.status === "permission") return;
           }
         }
         if (op?.agentId && op.agentId !== run.chat?.mainAgentId) {
           await this.agents.stop(op.agentId);
-          const state = await this.agents.inspect(op.agentId, op.id);
+          const state = await this.agents.inspect(op.agentId, op.id, op.createdAt);
           if (state.status === "running" || state.status === "permission") return;
         }
         run.control = run.stopTarget ?? "canceled";
@@ -171,7 +172,7 @@ export class Engine {
       if (!op.agentId) throw new Error("缺少 AI 会话");
       if (op.state === "ready") {
         await this.repository.assertBranch(run);
-        const before = await this.agents.inspect(op.agentId, op.id);
+        const before = await this.agents.inspect(op.agentId, op.id, op.createdAt);
         const { actor, action, detail } = this.describe(run, op);
         if (before.status === "running" || before.status === "permission") {
           const control = before.status === "permission" ? "waiting_permission" : "running";
@@ -186,7 +187,7 @@ export class Engine {
         await this.agents.send(op.agentId, op.id, op.prompt);
         op.state = "sent"; op.deliveryConfirmedAt = this.now(); this.event(run, `已发送${action}指令，等待${actor}开始${detail}`); this.store.save(run); return;
       }
-      const state = await this.agents.inspect(op.agentId, op.id);
+      const state = await this.agents.inspect(op.agentId, op.id, op.createdAt);
       if (state.status === "missing" || state.status === "error") throw new Error(state.error ?? "AI 会话不可用");
       const conversational = !!run.chat && op.agentId === run.chat.mainAgentId;
       if (state.interrupted && !conversational) throw new Error("此会话收到其他消息，已暂停自动处理；请检查后重试当前步骤");
@@ -322,7 +323,7 @@ export class Engine {
   async markMigration(id: string, conversationId: string) {
     return this.locked(id, async () => {
       const run = this.store.get(id);
-      if (run.chat) return;
+      if (run.chat || run.migrationConversationId === conversationId) return;
       run.migrationConversationId = conversationId;
       this.store.save(run);
     });
@@ -437,7 +438,7 @@ export class Engine {
           if (ids.length === 1) this.bindAgent(run, op, ids[0]);
         }
         if (op?.agentId) {
-          const state = await this.agents.inspect(op.agentId, op.id);
+          const state = await this.agents.inspect(op.agentId, op.id, op.createdAt);
           if (["running", "permission"].includes(state.status)) throw new Error("原 AI 仍在执行或等待权限，请先在 Paseo 中处理");
           // Recover valid completed work after an adapter fix, without another
           // AI turn. Interrupted or blocked work still takes the retry path.
@@ -480,7 +481,7 @@ export class Engine {
         if (op?.state === "creating" && !op.agentId) throw new Error("请先检查创建中的会话并重试，再修改需求");
         if (op?.agentId && op.agentId !== run.chat?.mainAgentId) {
           await this.agents.stop(op.agentId);
-          const state = await this.agents.inspect(op.agentId, op.id);
+          const state = await this.agents.inspect(op.agentId, op.id, op.createdAt);
           if (["running", "permission"].includes(state.status)) throw new Error("正在停止原 AI，请稍后保存新要求");
         }
         if (op) op.state = "abandoned";

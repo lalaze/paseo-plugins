@@ -7,11 +7,12 @@ export type Conversation = {
   state: "creating" | "ready" | "migration_pending";
   generation?: number; previousAgentIds?: string[];
   linksReady?: boolean;
-  takeover?: { instruction?: string; messages: { id: string; text: string; automatic?: boolean; state: "pending" | "sending" | "sent" }[] };
+  takeover?: { instruction?: string; messages: { id: string; text: string; automatic?: boolean; state: "pending" | "sending" | "sent"; createdAt?: number }[] };
   toolsConnectedAt?: number;
   error?: string; initialGoal?: string; initialDelivered?: boolean;
   legacyAgentId?: string; noticeKey?: string; confirmation?: Confirmation;
-  notices: { id: string; key: string; text: string; state: "pending" | "sending" | "sent"; attempts?: number }[];
+  /** `createdAt` bounds delivery checks; records from older versions lack it and are searched fully. */
+  notices: { id: string; key: string; text: string; state: "pending" | "sending" | "sent"; attempts?: number; createdAt?: number }[];
   receipts: Record<string, { action: string; state: "pending" | "done"; value?: unknown; goal?: string }>;
 };
 export type ConversationSummary = Pick<Conversation, "id" | "workspaceId" | "agentId" | "runId" | "state" | "error"> & {

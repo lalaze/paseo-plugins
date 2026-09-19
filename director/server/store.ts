@@ -64,6 +64,13 @@ export class Store {
   findRequest(id: string): Run | undefined { return this.decode(this.db.prepare("SELECT data FROM runs WHERE request_id=?").get(id)); }
   get(id: string): Run { const r = this.decode(this.db.prepare("SELECT data FROM runs WHERE id=?").get(id)); if (!r) throw new Error("任务不存在"); return r; }
   all(): Run[] { return this.db.prepare("SELECT data FROM runs ORDER BY rowid DESC").all().map(r => this.decode(r)!); }
+  runForConversation(conversationId: string): Run | undefined {
+    return this.decode(this.db.prepare("SELECT data FROM runs WHERE json_extract(data,'$.chat.conversationId') = ? ORDER BY rowid DESC LIMIT 1").get(conversationId));
+  }
+  /** Runs created before native chat, which still need a main conversation. */
+  legacyRuns(): Run[] {
+    return this.db.prepare("SELECT data FROM runs WHERE json_extract(data,'$.chat') IS NULL ORDER BY rowid DESC").all().map(r => this.decode(r)!);
+  }
   unfinishedWorkspaceRuns(): Pick<Run, "id" | "workspaceId" | "cwd">[] {
     return this.db.prepare("SELECT id, json_extract(data,'$.workspaceId') AS workspaceId, json_extract(data,'$.cwd') AS cwd FROM runs WHERE json_extract(data,'$.phase') <> 'completed' AND json_extract(data,'$.control') <> 'canceled'").all() as Pick<Run, "id" | "workspaceId" | "cwd">[];
   }

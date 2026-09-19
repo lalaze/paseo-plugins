@@ -329,3 +329,19 @@ test("workers receive the persisted approval made in an adopted main conversatio
   assert.equal(evidence.planApproval.approved, true); assert.equal(evidence.planApproval.required, true);
   assert.equal(evidence.planApproval.userApprovedAt, new Date(run.planApprovedAt!).toISOString());
 });
+
+test("a stalled poll of one conversation does not delay tool calls from another", async t => {
+  const h = await fixture(t);
+  const slow = await h.chats.open({ requestId: "slow", workspaceId: "workspace", fresh: true });
+  const quick = await h.chats.open({ requestId: "quick", workspaceId: "workspace", fresh: true });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const original = h.gateway.inspect.bind(h.gateway);
+  h.gateway.inspect = async (agentId: string, id?: string) => { if (agentId === slow.agentId) await gate; return original(agentId, id); };
+  const tick = h.chats.tick();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const status = await Promise.race([h.chats.status(quick.id), new Promise<"blocked">(resolve => setTimeout(() => resolve("blocked"), 200))]);
+  assert.notEqual(status, "blocked", "the quick conversation's status call must not wait on the slow conversation's poll");
+  assert.equal((status as { id: string }).id, quick.id);
+  release(); await tick;
+});

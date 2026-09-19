@@ -4,8 +4,8 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspectMessages, connectionConfig, PaseoGateway } from "../server/paseo";
-import { parseOutput } from "../shared/schema";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import { parseOutput } from "../shared/schema";
 import { harness, plan, result, reviewerSettings } from "./helpers";
 
 test("director and worker are created in the exact originating workspace; legacy runs keep their worktree", async t => {
@@ -161,4 +161,47 @@ test("adoption only adds labels and a private bridge, keeping model, permissions
   await assert.rejects(gateway.takeoverProfile("original", "other"), /工作区/);
   (original.labels as Record<string, string>)["director-role"] = "worker";
   await assert.rejects(gateway.takeoverProfile("original", "workspace"), /子会话/);
+});
+
+function pagedTimeline(pages: { items: AgentTimelineItem[]; timestamp: string }[][]) {
+  // pages[0] is the tail; each earlier page is one "before" fetch.
+  const fetches: string[] = [];
+  const build = (index: number) => ({
+    entries: pages[index].map(({ items, timestamp }) => ({ item: items[0], timestamp })),
+    hasOlder: index + 1 < pages.length, startCursor: index + 1 < pages.length ? { epoch: "e", seq: index + 1 } : null, staleCursor: false, gap: false,
+  });
+  const agent = {
+    refresh: async () => ({ agent: {} }), archivedAt: undefined, status: "idle", pendingPermissions: [], activeTurn: undefined, lastError: undefined,
+    timeline: { refetch: async (options: { direction: string; cursor?: { seq: number } }) => { fetches.push(options.direction); return build(options.direction === "tail" ? 0 : options.cursor!.seq); } },
+  };
+  return { agent, fetches };
+}
+
+test("history reads stop paging once a page predates the message being searched for", async t => {
+  const gateway = new PaseoGateway({ url: "ws://127.0.0.1:1/ws" }, () => "http://127.0.0.1:1/mcp"); t.after(() => gateway.close());
+  t.mock.method(gateway, "connect", async () => {});
+  const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60000).toISOString();
+  const user = (text: string): AgentTimelineItem => ({ type: "user_message", text, messageId: text });
+  const { agent, fetches } = pagedTimeline([
+    [{ items: [user("recent")], timestamp: at(0) }],
+    [{ items: [user("older")], timestamp: at(10) }],
+    [{ items: [user("ancient")], timestamp: at(600) }],
+    [{ items: [user("oldest")], timestamp: at(6000) }],
+  ]);
+  t.mock.method(gateway.api.agents, "ref", () => agent);
+  // Unbounded: an absent marker walks the whole history.
+  assert.equal((await gateway.inspect("agent", "missing")).seen, false);
+  assert.equal(fetches.length, 4); fetches.length = 0;
+  // Bounded by the operation's creation time: the first page that is entirely older ends the search.
+  assert.equal((await gateway.inspect("agent", "missing", Date.now() - 5 * 60000)).seen, false);
+  assert.equal(fetches.length, 2); fetches.length = 0;
+  // A marker older than the bound is out of scope; without a bound it is still found.
+  assert.equal((await gateway.inspect("agent", "ancient", Date.now())).seen, false);
+  assert.equal(fetches.length, 2); fetches.length = 0;
+  assert.equal((await gateway.inspect("agent", "ancient")).seen, true);
+  assert.equal(fetches.length, 3); fetches.length = 0;
+  // Callers of conversationHistory stop as soon as they have what they need.
+  const items = await gateway.conversationHistory("agent", items => items.some(i => i.type === "user_message" && i.text === "older"));
+  assert.deepEqual(items.map(i => (i as { text: string }).text), ["older", "recent"]);
+  assert.equal(fetches.length, 2);
 });
