@@ -88,7 +88,7 @@ Details: [translate/README.md](translate/README.md)
 
 ## [Antigravity quota patch](agy-quota)
 
-Adds Google Antigravity quota reading to Plan usage, plus optional on-demand Kimi renewal. This is an install-time patch, not a `paseo plugin` package.
+Adds Google Antigravity quota reading to Plan usage, plus optional on-demand Kimi and Grok credential renewal. This is an install-time patch, not a `paseo plugin` package.
 
 ```bash
 git clone git@github.com:lalaze/paseo-plugins.git

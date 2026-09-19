@@ -9,5 +9,7 @@
   "nodePtyVersion": "1.2.0-beta.15",
   "protocolUsageSha256": "6d89d94f1aec5ac364f1ceaa814267587ade3a4809c5b2bd1f0b01b8bc372dc0",
   "kimiFileSha256": "3f21213132983b4fcfe7b314a85de256388ceba601fda209f060940d7158cef7",
-  "testedKimiVersion": "0.42.0"
+  "testedKimiVersion": "0.42.0",
+  "grokFileSha256": "925f3ae6ac674dc62bd5b24cb89805a878e4c92ad843dc91630f23e3da6f0049",
+  "testedGrokVersion": "1.0.34"
 }

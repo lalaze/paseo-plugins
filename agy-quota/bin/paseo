@@ -46,8 +46,10 @@ if [ "$ensure_usage" = true ]; then
   cli_dir="$(dirname "$(dirname "$real_paseo")")"
   google_patch="${PASEO_USAGE_GUARD_GOOGLE_PATCH_SCRIPT:-$root/patch.mjs}"
   kimi_patch="${PASEO_USAGE_GUARD_KIMI_PATCH_SCRIPT:-$root/kimi-patch.mjs}"
+  grok_patch="${PASEO_USAGE_GUARD_GROK_PATCH_SCRIPT:-$root/grok-patch.mjs}"
   node "$google_patch" apply --cli "$cli_dir"
   node "$kimi_patch" apply --cli "$cli_dir"
+  node "$grok_patch" apply --cli "$cli_dir"
   director_notifications="${PASEO_USAGE_GUARD_DIRECTOR_PATCH_SCRIPT:-$root/../director/scripts/notification-patch.mjs}"
   if [ -f "$director_notifications" ]; then
     node "$director_notifications" apply --cli "$cli_dir"

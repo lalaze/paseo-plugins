@@ -151,9 +151,38 @@ paseo daemon restart
 
 Kimi 扩展会检查上游 Kimi 读取器和共享额度工具的哈希，拒绝覆盖不兼容代码。Kimi CLI 本地 API 将来改变时，续期会有界失败而不会绕过认证；需要更新扩展。并发请求按凭证路径合并；失败后冷却 60 秒，后续查询再尝试。Paseo 原有 5 分钟额度缓存保持不变，因此之前的 Unavailable 可能仍显示到下一次缓存过期。撤销登录或 refresh token 失效仍需用户重新登录，不能自动绕过。
 
-### 升级后自动恢复额度补丁
+## Grok 按需续期补丁（可选，独立安装/回退）
 
-本目录提供 `bin/paseo` 守卫入口。将它放在真实 Paseo 之前的 PATH 后，普通命令直接透传；`start`、`restart`、`daemon start`、`daemon restart` 和 `onboard` 会先定位当前 nvm/npm 安装的真实 CLI，再运行兼容性检查并按需重装 Google Antigravity 和 Kimi 续期补丁。已安装时不会重复写文件；任一补丁与新版不兼容时会在停止旧 daemon 之前拒绝执行，避免盲目覆盖。
+Paseo 原来的 Grok 额度读取器直接使用 `~/.grok/auth.json`，不会续期。Grok CLI 可以自行续期并继续对话，但额度读取可能因旧令牌返回 401，在顶栏被隐藏。此补丁在每次读取时检查所选 OIDC 凭证：剩余不超过 5 分钟且有 refresh token 时，先调用 Grok 自己的续期逻辑，再重新读取磁盘令牌查询额度。其他 Grok 进程已经更新的令牌也会被重新读取。
+
+已在 macOS、Paseo `0.8.0`、Grok `1.0.34` 验证。临时运行 `grok agent --no-leader stdio`，只发送 ACP `initialize`；不创建 session、不发送 prompt。Grok 管理跨进程认证锁、refresh token 轮换及凭证写回。进程的 `GROK_HOME` 和 `GROK_AUTH_PATH` 指向额度读取器正在使用的凭证文件；不连接用户现有 leader。15 秒内未成功续期就结束，随后清理此次创建的私有进程组。
+
+```bash
+cd /path/to/paseo-plugins/agy-quota
+node grok-patch.mjs check
+node grok-patch.mjs live
+node grok-patch.mjs apply
+paseo daemon restart
+```
+
+补丁只修改 `providers/grok.js` 并添加 `providers/grok-refresh.js`，备份独立保存在 `.state/`。支持 `--cli /path/to/@getpaseo/cli`；`PASEO_GROK_BIN` 可指定 Grok 绝对路径，否则按 Paseo 配置、PATH、`~/.grok/bin/grok` 查找。凭证位置仍沿用 Paseo Grok 读取器的 `~/.grok/auth.json`，不会改变账号选择规则。有效凭证、旧版静态凭证、环境变量 `GROK_API_KEY` / `GROK_TOKEN` 不启动续期进程。
+
+并发请求按凭证路径合并，失败后冷却 60 秒，CLI 输出和凭证不会写入 Paseo 日志。Paseo 原有 5 分钟额度缓存保持不变；授权撤销或 refresh token 失效时仍需要 `grok login`。本补丁不把 401 当作额度为零。
+
+更新时重新执行 `check`、`apply`、重启。卸载仅影响 Grok：
+
+```bash
+node grok-patch.mjs rollback
+paseo daemon restart
+```
+
+缺失 `.state` 时可使用 `node grok-patch.mjs recover`，只对兼容性哈希匹配的已知补丁还原。测试覆盖续期后请求真正使用新令牌、有效凭证/API key 跳过续期、并发、失败冷却、超时、进程清理和精确回退。
+
+实现依据：[Grok 官方认证与自动续期说明](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/README.md)、[官方续期锁与写回逻辑](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-login/src/manager/refresh_chain.rs)。真实验证只比较令牌是否变化及到期时间是否延长，不输出凭证。
+
+## 升级后自动恢复额度补丁
+
+本目录提供 `bin/paseo` 守卫入口。将它放在真实 Paseo 之前的 PATH 后，普通命令直接透传；`start`、`restart`、`daemon start`、`daemon restart` 和 `onboard` 会先定位当前 nvm/npm 安装的真实 CLI，再运行兼容性检查并按需重装 Google Antigravity、Kimi 和 Grok 续期补丁。已安装时不会重复写文件；任一补丁与新版不兼容时会在停止旧 daemon 之前拒绝执行，避免盲目覆盖。守卫会启用全部三项补丁；要长期单独卸载其中一项，应使用真实 Paseo 入口启动，否则下次守卫启动时会重新安装。
 
 ```bash
 ln -sfn "$PWD/bin/paseo" ~/.local/bin/paseo
