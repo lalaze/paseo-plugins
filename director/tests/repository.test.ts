@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -11,7 +11,7 @@ import type { Run } from "../shared/schema";
 const exec = promisify(execFile);
 
 test("current-workspace mode preserves dirty work and index, reviews existing changes, and refuses switched checkouts", async t => {
-  const root = await mkdtemp(join(tmpdir(), "director-current-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "director-current-"))); t.after(() => rm(root, { recursive: true, force: true }));
   const repo = join(root, "repo"); await mkdir(repo);
   for (const args of [["init", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"]]) await exec("git", args, { cwd: repo });
   await writeFile(join(repo, "app.txt"), "before\n");
@@ -55,7 +55,7 @@ test("current-workspace mode preserves dirty work and index, reviews existing ch
 });
 
 test("isolated mode directs dirty repositories to current-workspace mode without changing user work", async t => {
-  const root = await mkdtemp(join(tmpdir(), "director-isolated-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "director-isolated-"))); t.after(() => rm(root, { recursive: true, force: true }));
   const repo = join(root, "repo"); await mkdir(repo);
   for (const args of [["init", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"]]) await exec("git", args, { cwd: repo });
   await writeFile(join(repo, "app.txt"), "before\n");
@@ -69,7 +69,7 @@ test("isolated mode directs dirty repositories to current-workspace mode without
 });
 
 test("current-workspace mode refuses unresolved conflicts without switching branches", async t => {
-  const root = await mkdtemp(join(tmpdir(), "director-conflict-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "director-conflict-"))); t.after(() => rm(root, { recursive: true, force: true }));
   const repo = join(root, "repo"); await mkdir(repo);
   for (const args of [["init", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"]]) await exec("git", args, { cwd: repo });
   await writeFile(join(repo, "app.txt"), "base\n");
@@ -86,7 +86,7 @@ test("current-workspace mode refuses unresolved conflicts without switching bran
 });
 
 test("worktree and immutable snapshot include untracked source, preserve user's index, and catch failing checks", async t => {
-  const root = await mkdtemp(join(tmpdir(), "director-git-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "director-git-"))); t.after(() => rm(root, { recursive: true, force: true }));
   const repo = join(root, "repo"); await mkdir(repo);
   for (const args of [["init"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"]]) await exec("git", args, { cwd: repo });
   await writeFile(join(repo, "app.txt"), "before\n"); await exec("git", ["add", "."], { cwd: repo }); await exec("git", ["commit", "-m", "base"], { cwd: repo });
@@ -116,7 +116,7 @@ test("worktree and immutable snapshot include untracked source, preserve user's 
 });
 
 test("saved snapshot patches apply cleanly and preserve exact text and binary contents", async t => {
-  const root = await mkdtemp(join(tmpdir(), "director-patch-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "director-patch-"))); t.after(() => rm(root, { recursive: true, force: true }));
   const repo = join(root, "repo"); await mkdir(repo);
   for (const args of [["init", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"]]) await exec("git", args, { cwd: repo });
   await writeFile(join(repo, "app.txt"), "before\n");

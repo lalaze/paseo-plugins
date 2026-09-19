@@ -7,7 +7,7 @@
   "engines": { "node": ">=22.13.0" },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test --test-isolation=none tests/*.test.ts",
+    "test": "node --import tsx --import ./tests/locale.mjs --test tests/*.test.ts",
     "build": "node scripts/build.mjs",
     "check": "npm run typecheck && npm test && npm run build"
   },

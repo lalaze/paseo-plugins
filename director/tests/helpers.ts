@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SettingsSchema, type Run, type Operation, type Profile, type Evidence, type Plan } from "../shared/schema";
@@ -43,7 +43,7 @@ export class FakeRepository implements Repository {
   }
 }
 export async function harness(overrides = {}) {
-  const directory = mkdtempSync(join(tmpdir(), "director-engine-"));
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), "director-engine-")));
   let store = new Store(join(directory, "db.sqlite"));
   const agents = new FakeAgents(), repository = new FakeRepository();
   let now = Date.now(), engine = new Engine(store, agents, repository, () => now);

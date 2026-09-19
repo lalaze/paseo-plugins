@@ -149,7 +149,7 @@ SQLite 中包含 MCP 访问令牌，不应提交或分享数据库。界面与�
 
 任务状态机在 `server/engine.ts`，聊天协调在 `server/conversations.ts`，宿主接入集中在 `server/paseo.ts`。会话、通知和用户确认都保存在 SQLite 中；重复消息、旧操作结果和过期成果不能重复推进任务。
 
-运行 `npm run check` 完成类型检查、回归测试与官方插件编译。HTTP MCP 集成测试需要本机回环端口权限。实际宿主验证应使用独立的 `PASEO_HOME`、`PASEO_DIRECTOR_DATA_DIR` 和 `PASEO_DIRECTOR_URL`，避免将测试连接到已有协作数据。
+运行 `npm run check` 完成类型检查、回归测试与官方插件编译。测试通过 `tests/locale.mjs` 固定为英文界面文案，不受系统语言影响。HTTP MCP 集成测试需要本机回环端口权限。实际宿主验证应使用独立的 `PASEO_HOME`、`PASEO_DIRECTOR_DATA_DIR` 和 `PASEO_DIRECTOR_URL`，避免将测试连接到已有协作数据。
 
 ## 子任务通知静默
 
