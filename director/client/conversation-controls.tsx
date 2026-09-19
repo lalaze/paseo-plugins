@@ -14,7 +14,9 @@ export function createConversationRenderer() {
   return function ConversationLink({ item, theme, agentId, host }: PluginTimelineItemProps<z.infer<typeof ConversationLinkSchema>>) {
     const get = useRpc(getConversationRpc), resync = useRpc(resyncConversationRpc);
     const sync = useMutation({ mutationFn: resync });
-    const query = useQuery({ queryKey: ["director", host.id, "conversation", item.data.conversationId], queryFn: () => get({ id: item.data.conversationId }), refetchInterval: 2500 });
+    // Ended tasks no longer change; keep polling only while work can still move.
+    const query = useQuery({ queryKey: ["director", host.id, "conversation", item.data.conversationId], queryFn: () => get({ id: item.data.conversationId }),
+      refetchInterval: ({ state }) => { const run = state.data?.run; return run && (run.control === "canceled" || run.phase === "completed") ? false : 2500; } });
     const summary = query.data;
     const error = query.error ?? summary?.error ?? sync.error;
     const migrated = summary?.agentId && summary.agentId !== agentId;

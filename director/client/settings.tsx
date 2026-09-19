@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ProfileSchema, type Profile, type Settings } from "../shared/schema";
 import { instructionRoles, type InstructionRole } from "../shared/instructions";
 import { commitSettingsRpc, getSettingsRpc, getSettingsDraftRpc, writeSettingsDraftRpc } from "../shared/rpc";
-import { documentKey, formChanged, settingsForm, type DraftState, type SettingsForm } from "../shared/settings-draft";
+import { documentKey, settingsForm, type DraftState, type SettingsDraft, type SettingsForm } from "../shared/settings-draft";
 import { createDraftWriter } from "./draft-writer";
 import { Button, Card, Choice, ErrorText, Field, Label, outline, type Theme } from "./ui";
 import { Disclosure, ProfileEditor, SelectionCard } from "./settings-controls";
@@ -21,6 +21,7 @@ const localizedInstructionRoles: typeof instructionRoles = {
   review: { label: ui("Review AI", "审核 AI"), description: ui(instructionRoles.review.description, "全部任务完成后的统一审核与返工复审时使用；沿用设计会话也会应用。"), example: ui(instructionRoles.review.example, "逐项对照验收标准，独立检查实际代码、差异和执行报告，按需运行测试或构建。重点检查功能遗漏、边界情况、回归风险和验证证据。问题需注明位置、具体修改要求及复验方法；只审核，不修改源代码。通过时写清依据，未验证的部分如实说明，不把推测当成已通过。") },
 };
 const newId = () => `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const DRAFT_WRITE_DELAY_MS = 400;
 
 type EditorProps = { initial: Settings | null; cwd: string; hostId: string; theme: Theme; compact?: boolean; onSaved: (s: Settings) => void; onSavingChange?: (saving: boolean) => void };
 export function SettingsEditor(props: EditorProps) {
@@ -65,15 +66,25 @@ function SettingsFormEditor({ initial: loadedInitial, seed, cwd, hostId, theme, 
   const [, redraw] = useState(0);
   const writeDraft = useRpc(writeSettingsDraftRpc);
   const [writer] = useState(() => createDraftWriter(seed.revision, writeDraft, () => { if (mounted.current) redraw(n => n + 1); }));
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const dirty = formChanged(form, base), stale = documentKey(base) !== documentKey(initial);
-  const formKey = documentKey(form);
+  // An edit still waiting for its debounce is flushed when the editor unmounts.
+  const pendingDraft = useRef<{ draft: SettingsDraft | null } | undefined>(undefined);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; if (pendingDraft.current) { writer.enqueue(pendingDraft.current.draft); pendingDraft.current = undefined; } }; }, []);
+  // Serializing the form is the expensive part of a render: instructions alone
+  // can reach hundreds of kilobytes. Baselines change only on save or reload.
+  const baseKey = useMemo(() => documentKey(settingsForm(base)), [base]);
+  const stale = useMemo(() => documentKey(base) !== documentKey(initial), [base, initial]);
+  const formKey = useMemo(() => documentKey({ ...form, step: 0 }), [form]);
+  const dirty = formKey !== baseKey;
   const previousForm = useRef(formKey);
   useEffect(() => {
     if (previousForm.current === formKey) return;
     previousForm.current = formKey;
     if (!dirty && !edited.current) return;
-    edited.current = true; writer.enqueue(dirty ? { version: 1, base, form } : null);
+    edited.current = true;
+    // Coalesce keystrokes into one draft write; the latest edit always wins.
+    pendingDraft.current = { draft: dirty ? { version: 1, base, form } : null };
+    const timer = setTimeout(() => { if (pendingDraft.current) { writer.enqueue(pendingDraft.current.draft); pendingDraft.current = undefined; } }, DRAFT_WRITE_DELAY_MS);
+    return () => clearTimeout(timer);
   }, [formKey]);
   const catalog = useQuery({ queryKey: ["director", hostId, "providers", cwd], queryFn: () => paseo.providers.waitForReady({ cwd: cwd || undefined, timeoutMs: 12000 }), staleTime: 30000 });
   const save = useRpc(commitSettingsRpc);
@@ -83,7 +94,8 @@ function SettingsFormEditor({ initial: loadedInitial, seed, cwd, hostId, theme, 
     // The commit clears the draft and advances its revision. Start a clean editing
     // baseline while retaining the tab the user saved from.
     const nextForm = { ...settingsForm(value), step: form.step };
-    previousForm.current = documentKey(nextForm);
+    previousForm.current = documentKey({ ...nextForm, step: 0 });
+    pendingDraft.current = undefined;
     edited.current = false;
     setInitial(value); setBase(value); setForm(nextForm); setRestoredDraft(false);
     onSaved(value);
