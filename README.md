@@ -66,6 +66,19 @@ paseo plugin add lalaze/paseo-plugins --path response-speed
 
 Details: [response-speed/README.md](response-speed/README.md)
 
+## [Pi Qwen thinking levels](pi-qwen-thinking)
+
+A Pi companion extension that forwards the selected thinking strength to the
+local Qwen3.8-Flash-Next model. It maps Minimal/Low to `low`, Medium to `medium`,
+and High/Extra High to `xhigh`; Off disables thinking. Install separately on
+each Pi host (this is not part of `install-all.sh`):
+
+```bash
+node pi-qwen-thinking/install.mjs
+```
+
+Details: [pi-qwen-thinking/README.md](pi-qwen-thinking/README.md)
+
 ## [File Transfer](file-upload)
 
 A workspace file transfer panel: browse the directory tree and upload/download files on the current daemon host. Plugin ID: `paseo-file-upload`.

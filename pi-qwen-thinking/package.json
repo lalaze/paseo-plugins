@@ -1,0 +1,8 @@
+{
+  "name": "pi-qwen-thinking",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Forward Pi thinking levels to Qwen3.8-Flash-Next chat template arguments",
+  "pi": { "extensions": ["./index.js"] }
+}
