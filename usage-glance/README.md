@@ -160,4 +160,6 @@ paseo plugin ls paseo-usage-glance --json
 
 Paseo 沿用 5 分钟额度缓存，插件每分钟检查一次。手动刷新也遵循 daemon 缓存；界面显示数据实际更新时间。连接失败或数据过期时，标签显示「待更新」，概览明确标注上次数据。没有剩余窗口或余额的供应商不出现在顶栏和明细里，也不会被当成 0%。
 
+Claude 可另外安装 [`claude-patch.mjs` 限频补丁](../agy-quota/README.md#claude-额度查询限频可选)，将外部查询降到每 15 分钟最多一次，并遵守 429 的 `Retry-After`。此时界面和 daemon 仍可读取本机缓存，Claude 数字的真实查询间隔为 15 分钟或更长；daemon 的总响应时间戳不代表 Claude 刚刚访问了远端。
+
 `paseo plugin install` 会记录目录路径。移动本仓库后，需要重新安装从该路径装过的插件。`build` 使用当前 Node 安装中的 Paseo 官方编译器，也可通过 `PASEO_COMPILER` 指定 `compiler.js`。

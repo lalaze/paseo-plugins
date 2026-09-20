@@ -11,5 +11,7 @@
   "kimiFileSha256": "3f21213132983b4fcfe7b314a85de256388ceba601fda209f060940d7158cef7",
   "testedKimiVersion": "0.42.0",
   "grokFileSha256": "925f3ae6ac674dc62bd5b24cb89805a878e4c92ad843dc91630f23e3da6f0049",
-  "testedGrokVersion": "1.0.34"
+  "testedGrokVersion": "1.0.34",
+  "claudeFileSha256": "592b3dca6c19f0f7fad072a4c3402a5699c705b11225f11679dae6ed110b1dca",
+  "testedClaudePaseoVersion": "0.8.0"
 }

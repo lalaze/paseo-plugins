@@ -8,6 +8,24 @@
 
 安装、更新、卸载都在本目录用 `patch.mjs` 完成，并需要重启 daemon。
 
+## Claude 额度查询限频（可选）
+
+`claude-patch.mjs` 适配已检查的 Paseo **0.8.0** Claude 读取器。默认 daemon 的额度缓存为 5 分钟，界面每分钟读取本机缓存；单台 daemon 正常持续打开时，每小时最多约 12 次 Claude 外部查询。此独立补丁把 Claude 查询间隔提高到 **15 分钟**，每小时最多约 4 次，多个页面和手动刷新共用限制。其他供应商的缓存不变。
+
+收到 **429** 时，遵守 `Retry-After` 的秒数或 HTTP 日期；缺失或无效时等待 **1 小时**，短于 15 分钟时仍遵守最小查询间隔。请求失败也不会立即重试。正常结果只在当前 daemon 内存中缓存，因此 Claude 数字最多可能落后 15 分钟；限流恢复还需等下一次 daemon 缓存刷新。
+
+冷却截止时间保存在 `$PASEO_HOME/cache/claude-quota-throttle.json`（默认 `~/.paseo/cache/claude-quota-throttle.json`），重启不会绕过等待。该文件不保存凭证和额度响应。重启后尚在冷却期时暂不显示 Claude，等下一次允许查询后恢复。不同机器的 daemon 各自计数，同一账号在其他软件中的查询不受此补丁控制。
+
+```bash
+cd /path/to/paseo-plugins/agy-quota
+node claude-patch.mjs check
+node claude-patch.mjs apply
+# 确认当前任务与终端可以中断后：
+paseo daemon restart
+```
+
+安装时自动运行离线测试，不访问 Claude 接口。原始文件保存在 `.state/claude-*.json`，`node claude-patch.mjs rollback` 可恢复，回退后同样需重启。Paseo 升级可能覆盖补丁，需重新执行 `check` / `apply`；未知上游文件会拒绝修改。
+
 ## 安装
 
 ```bash
