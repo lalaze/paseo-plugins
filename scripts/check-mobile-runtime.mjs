@@ -31,6 +31,7 @@ const probes = [
     }`],
   ['usage-glance', `
     import { createHostRegistry, getHostRegistry } from './client/hosts';
+    import { createQuotaDialogController } from './client/quota-dialog';
     export function run() {
       const registry = createHostRegistry();
       let notices = 0;
@@ -43,6 +44,16 @@ const probes = [
       registration.dispose(); stop();
       if (registry.get('phone')?.online) throw Error('host cleanup');
       if (getHostRegistry() !== getHostRegistry()) throw Error('shared registry');
+      const quota = createQuotaDialogController();
+      const first = {}, duplicate = {};
+      const remove = quota.register(first, 'workspace');
+      quota.register(duplicate, 'workspace');
+      quota.toggle('workspace');
+      if (quota.getSnapshot()?.presenter !== first) throw Error('quota open');
+      remove();
+      if (quota.getSnapshot()?.presenter !== duplicate) throw Error('quota transfer');
+      quota.dispose();
+      if (quota.getSnapshot() !== null) throw Error('quota cleanup');
       return Promise.resolve();
     }`],
 ];
@@ -51,7 +62,7 @@ try {
   for (const [plugin, contents] of probes) {
     const result = await build({ stdin: { contents, resolveDir: join(root, plugin), loader: 'ts' }, bundle: true,
       format: 'cjs', platform: 'neutral', target: 'es2020', supported: { 'async-await': false }, write: false,
-      external: ['@getpaseo/plugin', '@tanstack/react-query', 'zod'] });
+      external: ['@getpaseo/plugin', '@tanstack/react-query', 'zod', 'react'] });
     // Schema/RPC definitions are not invoked in these state lifecycle probes.
     const source = `(function(require) { const module = { exports: {} }; const exports = module.exports;
       ${result.outputFiles[0].text.replaceAll('get: () => from[key]', 'value: from[key]')}
@@ -60,6 +71,7 @@ try {
     await writeFile(path, `
       var schema = new Proxy(function() { return schema; }, { get: function() { return schema; } });
       function runtimeRequire(name) {
+        if (name === 'react') return {};
         if (name === 'zod') return { z: schema };
         if (name === '@getpaseo/plugin') return { defineRpc: function(value) { return value; } };
         if (name === '@tanstack/react-query') return { isCancelledError: function() { return false; } };

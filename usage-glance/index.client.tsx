@@ -1,5 +1,7 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
-import type { PluginClientContext, PluginButtonRegistration, PluginButtonContentProps, PluginButtonIconProps, PluginSurfaceProps } from '@getpaseo/plugin/client';
+import { useEffect } from 'react';
+import type { PluginClientContext, PluginButtonRegistration, PluginButtonIconProps, PluginSurfaceProps } from '@getpaseo/plugin/client';
+import { Modal } from '@getpaseo/plugin/client/react-native';
+import { Pressable } from 'react-native';
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { HeaderQuotaIcon, Overview } from './client/overview';
 import { ConsumptionPage } from './client/consumption-page';
@@ -13,10 +15,10 @@ import { readHostIdentity } from './shared/hosts';
 import { readWorkspaceConsumption } from './shared/consumption';
 import { headerSummary, isStale } from './shared/usage';
 import { ui } from './client/i18n';
-import { createQuotaPopoverScope } from './client/quota-popover';
+import { createQuotaDialogController, useQuotaDialog } from './client/quota-dialog';
 
 export default function contribute(client: PluginClientContext) {
-  const popovers = createQuotaPopoverScope();
+  const quotaDialog = createQuotaDialogController();
   const query = createUsageQuery(client.paseo);
   const consumption = createConsumptionQuery(query.client, (contract, input) => client.rpc(contract, input), client.paseo.providers);
   const workspaceClient = new QueryClient();
@@ -36,13 +38,16 @@ export default function contribute(client: PluginClientContext) {
   let workspaces = new Set<string>();
   const HeaderIcon = (props: PluginButtonIconProps) => {
     useEffect(() => { registration.identify(props.host, true); workspaceRegistration.identify(props.host, true); }, [props.host.id, props.host.label]);
-    return <HeaderQuotaIcon {...props} query={query} preference={preference} />;
-  };
-  const HeaderContent = (props: PluginButtonContentProps) => {
-    const close = useRef(props.close);
-    close.current = props.close;
-    useLayoutEffect(() => popovers.open(() => close.current()), []);
-    return <Overview {...props} query={query} preference={preference} popover />;
+    const dialog = useQuotaDialog(quotaDialog, props.workspaceId);
+    return <>
+      <HeaderQuotaIcon {...props} query={query} preference={preference} />
+      {/* Portal events still bubble through the icon's React ancestors. */}
+      {dialog.open ? <Pressable accessible={false} focusable={false} onPress={event => event.stopPropagation()}>
+        <Modal title={ui('Quota details', '额度明细')} open onOpenChange={dialog.onOpenChange}>
+          <Modal.Content><Overview {...props} query={query} preference={preference} popover /></Modal.Content>
+        </Modal>
+      </Pressable> : null}
+    </>;
   };
   const ConsumptionSurface = (props: PluginSurfaceProps) => <ConsumptionPage {...props} fleet={fleet} />;
   const removeSurface = client.addSurface('consumption', ConsumptionSurface);
@@ -63,7 +68,7 @@ export default function contribute(client: PluginClientContext) {
       if (existing) existing.update({ label: headerLabel, title: headerTitle });
       else headers.set(workspaceId, client.addHeaderButton({
         id: 'usage', workspaceId,
-        button: { label: headerLabel, title: headerTitle, icon: HeaderIcon, behavior: { kind: 'popover', Content: HeaderContent } },
+        button: { label: headerLabel, title: headerTitle, icon: HeaderIcon, behavior: { kind: 'action', onPress: () => quotaDialog.toggle(workspaceId) } },
       }));
     }
   }
@@ -71,7 +76,7 @@ export default function contribute(client: PluginClientContext) {
   const unsubscribePreference = preference.subscribe(sync);
   const stopWorkspaces = followWorkspaces(client.paseo, latest => { workspaces = new Set(latest); sync(); });
   return () => {
-    popovers.dispose();
+    quotaDialog.dispose();
     stopConsumptionSync();
     removeCommand();
     removeSidebar();
