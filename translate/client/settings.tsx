@@ -9,8 +9,12 @@ export function TranslationSettingsScreen({ theme, layout }: PluginSurfaceProps)
   const [apiUrl, setApiUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
+  const [fallbackApiUrl, setFallbackApiUrl] = useState('');
+  const [fallbackApiKey, setFallbackApiKey] = useState('');
+  const [fallbackModel, setFallbackModel] = useState('');
   const [englishLockModels, setEnglishLockModels] = useState('');
   const [showKey, setShowKey] = useState(false);
+  const [showFallbackKey, setShowFallbackKey] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,6 +23,9 @@ export function TranslationSettingsScreen({ theme, layout }: PluginSurfaceProps)
     setApiUrl(settings.values.apiUrl);
     setApiKey(settings.values.apiKey);
     setModel(settings.values.model);
+    setFallbackApiUrl(settings.values.fallbackApiUrl);
+    setFallbackApiKey(settings.values.fallbackApiKey);
+    setFallbackModel(settings.values.fallbackModel);
     setEnglishLockModels(settings.values.englishLockModels);
   }, [settings.status, settings.status === 'ready' ? settings.revision : '']);
 
@@ -45,7 +52,7 @@ export function TranslationSettingsScreen({ theme, layout }: PluginSurfaceProps)
   const save = async () => {
     setError(null); setMessage(null);
     try {
-      const values = validateTranslationSettings({ apiUrl, apiKey, model, englishLockModels });
+      const values = validateTranslationSettings({ apiUrl, apiKey, model, fallbackApiUrl, fallbackApiKey, fallbackModel, englishLockModels });
       const saved = await settings.save(values, settings.revision);
       if (saved) setMessage(ui('Saved. Future translations will call this API directly.', '已保存。之后的翻译会直接调用此 API。'));
       else setError(settings.saveError ? localizeTranslationError(settings.saveError) : ui('Save failed; try again', '保存失败，请重试'));
@@ -82,6 +89,19 @@ export function TranslationSettingsScreen({ theme, layout }: PluginSurfaceProps)
     <View style={{ gap: 7 }}>
       <Text style={labelStyle}>{ui('Model', '模型')}</Text>
       <TextInput value={model} onChangeText={setModel} style={fieldStyle} autoCapitalize="none" autoCorrect={false} placeholder={ui('For example, gpt-4.1-mini', '例如 gpt-4.1-mini')} placeholderTextColor={theme.colors.foregroundMuted} />
+    </View>
+
+    <View style={{ gap: 7 }}>
+      <Text style={labelStyle}>{ui('Fallback API (optional)', '备用 API（可选）')}</Text>
+      <TextInput value={fallbackApiUrl} onChangeText={setFallbackApiUrl} style={fieldStyle} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder={ui('Fallback API URL', '备用 API 地址')} placeholderTextColor={theme.colors.foregroundMuted} />
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <TextInput value={fallbackApiKey} onChangeText={setFallbackApiKey} style={[fieldStyle, { flex: 1 }]} autoCapitalize="none" autoCorrect={false} secureTextEntry={!showFallbackKey} placeholder={ui('Fallback API Key (optional)', '备用 API Key（可留空）')} placeholderTextColor={theme.colors.foregroundMuted} />
+        <Pressable onPress={() => setShowFallbackKey(value => !value)} style={{ justifyContent: 'center', borderColor: theme.colors.border, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12 }}>
+          <Text style={{ color: theme.colors.foreground }}>{showFallbackKey ? ui('Hide', '隐藏') : ui('Show', '显示')}</Text>
+        </Pressable>
+      </View>
+      <TextInput value={fallbackModel} onChangeText={setFallbackModel} style={fieldStyle} autoCapitalize="none" autoCorrect={false} placeholder={ui('Fallback model', '备用模型')} placeholderTextColor={theme.colors.foregroundMuted} />
+      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{ui('When the primary API fails, the request is retried once against this endpoint. Leave blank to disable.', '主接口失败时会自动改用备用接口重试一次；留空则不启用。')}</Text>
     </View>
 
     <View style={{ gap: 7 }}>

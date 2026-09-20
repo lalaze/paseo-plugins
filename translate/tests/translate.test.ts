@@ -3,7 +3,7 @@ import test from 'node:test';
 import { buildTranslationPrompt, parseTranslationOutput, resolveTarget, translateSelection } from '../server/translate';
 import { validateTranslationSettings } from '../shared/settings';
 
-const settings = { apiUrl: 'https://translate.example/v1/chat/completions', apiKey: 'secret-key', model: 'translate-model', englishLockModels: 'claude, anthropic' };
+const settings = { apiUrl: 'https://translate.example/v1/chat/completions', apiKey: 'secret-key', model: 'translate-model', fallbackApiUrl: '', fallbackApiKey: '', fallbackModel: '', englishLockModels: 'claude, anthropic' };
 
 test('auto direction follows the dominant script', () => {
   assert.equal(resolveTarget('你好世界，world', 'auto'), 'en');
@@ -49,4 +49,43 @@ test('calls the configured OpenAI-compatible API without creating a Paseo agent'
 test('surfaces a bounded API error message', async () => {
   const fetchStub: typeof fetch = async () => new Response(JSON.stringify({ error: { message: 'bad credentials' } }), { status: 401 });
   await assert.rejects(translateSelection({ text: 'hello', target: 'zh-CN', settings }, fetchStub), /401.*bad credentials/);
+});
+
+const fallbackSettings = { ...settings, fallbackApiUrl: 'https://backup.example/v1/chat/completions', fallbackApiKey: 'backup-key', fallbackModel: 'backup-model' };
+
+test('retries the fallback endpoint when the primary fails', async () => {
+  const calls: { url: string; authorization: string | undefined; model: string }[] = [];
+  const fetchStub: typeof fetch = async (input, init) => {
+    calls.push({ url: String(input), authorization: (init?.headers as Record<string, string>).authorization, model: JSON.parse(String(init?.body)).model });
+    if (calls.length === 1) return new Response(JSON.stringify({ error: { message: 'overloaded' } }), { status: 503 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"translation":"你好","detectedLanguage":"English","note":null}' } }] }), { status: 200 });
+  };
+  const result = await translateSelection({ text: 'hello', target: 'auto', settings: fallbackSettings }, fetchStub);
+  assert.equal(result.translation, '你好');
+  assert.equal(result.model, 'backup-model');
+  assert.deepEqual(calls, [
+    { url: settings.apiUrl, authorization: 'Bearer secret-key', model: 'translate-model' },
+    { url: fallbackSettings.fallbackApiUrl, authorization: 'Bearer backup-key', model: 'backup-model' },
+  ]);
+});
+
+test('combines both errors when primary and fallback fail', async () => {
+  const fetchStub: typeof fetch = async (input) => String(input) === settings.apiUrl
+    ? new Response(JSON.stringify({ error: { message: 'primary down' } }), { status: 500 })
+    : new Response(JSON.stringify({ error: { message: 'fallback down' } }), { status: 503 });
+  await assert.rejects(translateSelection({ text: 'hello', target: 'zh-CN', settings: fallbackSettings }, fetchStub), /primary and fallback.*primary down.*fallback down/s);
+});
+
+test('does not call a fallback when none is configured', async () => {
+  let calls = 0;
+  const fetchStub: typeof fetch = async () => { calls++; return new Response(JSON.stringify({ error: { message: 'down' } }), { status: 500 }); };
+  await assert.rejects(translateSelection({ text: 'hello', target: 'zh-CN', settings }, fetchStub), /500.*down/);
+  assert.equal(calls, 1);
+});
+
+test('requires a complete fallback configuration when partially filled', () => {
+  assert.throws(() => validateTranslationSettings({ ...settings, fallbackApiUrl: 'https://backup.example/v1/chat/completions' }), /fallback model/);
+  assert.throws(() => validateTranslationSettings({ ...settings, fallbackModel: 'backup-model' }), /fallback API URL/);
+  assert.throws(() => validateTranslationSettings({ ...fallbackSettings, fallbackApiUrl: 'file:///tmp/backup' }), /HTTP/);
+  assert.equal(validateTranslationSettings({ ...settings, fallbackApiUrl: '', fallbackModel: '' }).fallbackModel, '');
 });

@@ -77,23 +77,23 @@ function apiError(body: string, status: number): Error {
   return new Error(`Translation API request failed (${status})${detail ? `: ${detail}` : ''}`);
 }
 
-export async function translateSelection(input: TranslationInput, fetchImpl: Fetch = globalThis.fetch): Promise<TranslationResult> {
-  const settings = validateTranslationSettings(input.settings);
-  const target = resolveTarget(input.text, input.target);
+type TranslationEndpoint = { apiUrl: string; apiKey: string; model: string };
+
+async function requestTranslation(endpoint: TranslationEndpoint, prompt: string, fetchImpl: Fetch): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 24000);
   try {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (settings.apiKey.trim()) headers.authorization = `Bearer ${settings.apiKey.trim()}`;
-    const response = await fetchImpl(settings.apiUrl, {
+    if (endpoint.apiKey.trim()) headers.authorization = `Bearer ${endpoint.apiKey.trim()}`;
+    const response = await fetchImpl(endpoint.apiUrl, {
       method: 'POST',
       headers,
       signal: controller.signal,
       body: JSON.stringify({
-        model: settings.model,
+        model: endpoint.model,
         stream: false,
         messages: [
-          { role: 'user', content: buildTranslationPrompt(input.text, target) },
+          { role: 'user', content: prompt },
         ],
       }),
     });
@@ -102,12 +102,36 @@ export async function translateSelection(input: TranslationInput, fetchImpl: Fet
     let payload: unknown;
     try { payload = JSON.parse(body); }
     catch { throw new Error('The Translation API returned invalid JSON'); }
-    return { ...parseTranslationOutput(responseContent(payload)), target, model: settings.model };
+    return responseContent(payload);
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw new Error('The Translation API timed out. Try again later');
     throw error;
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+function describeError(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 300);
+}
+
+export async function translateSelection(input: TranslationInput, fetchImpl: Fetch = globalThis.fetch): Promise<TranslationResult> {
+  const settings = validateTranslationSettings(input.settings);
+  const target = resolveTarget(input.text, input.target);
+  const prompt = buildTranslationPrompt(input.text, target);
+  const primary: TranslationEndpoint = { apiUrl: settings.apiUrl, apiKey: settings.apiKey, model: settings.model };
+  try {
+    const content = await requestTranslation(primary, prompt, fetchImpl);
+    return { ...parseTranslationOutput(content), target, model: primary.model };
+  } catch (primaryError) {
+    if (!settings.fallbackApiUrl || !settings.fallbackModel) throw primaryError;
+    const fallback: TranslationEndpoint = { apiUrl: settings.fallbackApiUrl, apiKey: settings.fallbackApiKey, model: settings.fallbackModel };
+    try {
+      const content = await requestTranslation(fallback, prompt, fetchImpl);
+      return { ...parseTranslationOutput(content), target, model: fallback.model };
+    } catch (fallbackError) {
+      throw new Error(`The Translation API failed on both primary and fallback endpoints (${describeError(primaryError)}; ${describeError(fallbackError)})`);
+    }
   }
 }
 

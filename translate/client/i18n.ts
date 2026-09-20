@@ -49,6 +49,10 @@ const chineseErrors: Record<string, string> = {
   'The Translation API URL is invalid': '翻译 API 地址格式不正确',
   'The Translation API URL must use HTTP or HTTPS': '翻译 API 地址只支持 HTTP 或 HTTPS',
   'Enter a translation model first': '请先填写翻译模型名',
+  'Enter the fallback API URL first': '请先填写备用 API 地址',
+  'Enter the fallback model first': '请先填写备用模型名',
+  'The fallback API URL is invalid': '备用 API 地址格式不正确',
+  'The fallback API URL must use HTTP or HTTPS': '备用 API 地址只支持 HTTP 或 HTTPS',
   'The Translation API returned no translation': '翻译 API 没有返回翻译结果',
   'The Translation API returned an invalid response': '翻译 API 返回格式不正确',
   'The Translation API response is missing choices[0].message.content': '翻译 API 响应中没有 choices[0].message.content',
@@ -61,6 +65,8 @@ export function localizeTranslationError(value: unknown): string {
   const message = value instanceof Error ? value.message : String(value);
   if (resolveUiLocale() !== 'zh-CN') return message;
   if (chineseErrors[message]) return chineseErrors[message];
+  const both = /^The Translation API failed on both primary and fallback endpoints \((.*)\)$/.exec(message);
+  if (both) return `主接口和备用接口都请求失败（${both[1]}）`;
   const failed = /^Translation API request failed \((\d+)\)(?:: (.*))?$/.exec(message);
   return failed ? `翻译 API 请求失败（${failed[1]}）${failed[2] ? `：${failed[2]}` : ''}` : message;
 }
