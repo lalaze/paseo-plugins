@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { PluginClientContext, PluginButtonRegistration, PluginButtonContentProps, PluginButtonIconProps, PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { HeaderQuotaIcon, Overview } from './client/overview';
@@ -13,8 +13,10 @@ import { readHostIdentity } from './shared/hosts';
 import { readWorkspaceConsumption } from './shared/consumption';
 import { headerSummary, isStale } from './shared/usage';
 import { ui } from './client/i18n';
+import { createQuotaPopoverScope } from './client/quota-popover';
 
 export default function contribute(client: PluginClientContext) {
+  const popovers = createQuotaPopoverScope();
   const query = createUsageQuery(client.paseo);
   const consumption = createConsumptionQuery(query.client, (contract, input) => client.rpc(contract, input), client.paseo.providers);
   const workspaceClient = new QueryClient();
@@ -36,7 +38,12 @@ export default function contribute(client: PluginClientContext) {
     useEffect(() => { registration.identify(props.host, true); workspaceRegistration.identify(props.host, true); }, [props.host.id, props.host.label]);
     return <HeaderQuotaIcon {...props} query={query} preference={preference} />;
   };
-  const HeaderContent = (props: PluginButtonContentProps) => <Overview {...props} query={query} preference={preference} popover />;
+  const HeaderContent = (props: PluginButtonContentProps) => {
+    const close = useRef(props.close);
+    close.current = props.close;
+    useLayoutEffect(() => popovers.open(() => close.current()), []);
+    return <Overview {...props} query={query} preference={preference} popover />;
+  };
   const ConsumptionSurface = (props: PluginSurfaceProps) => <ConsumptionPage {...props} fleet={fleet} />;
   const removeSurface = client.addSurface('consumption', ConsumptionSurface);
   const removeSidebar = client.addSidebarItem({ id: 'consumption', title: ui('Token Usage', 'Token 消耗'), icon: 'ChartColumn', surface: 'consumption' });
@@ -64,6 +71,7 @@ export default function contribute(client: PluginClientContext) {
   const unsubscribePreference = preference.subscribe(sync);
   const stopWorkspaces = followWorkspaces(client.paseo, latest => { workspaces = new Set(latest); sync(); });
   return () => {
+    popovers.dispose();
     stopConsumptionSync();
     removeCommand();
     removeSidebar();
