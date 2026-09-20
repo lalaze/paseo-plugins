@@ -40,6 +40,14 @@ function elementFor(node: Node | null): Element | null {
   return node instanceof Element ? node : node?.parentElement ?? null;
 }
 
+/** Open host dialogs (react-native-web Modal, Radix Dialog); a closing Radix dialog keeps data-state="closed" while it animates out. */
+const DIALOG_SELECTOR = '[role="dialog"], [role="alertdialog"]';
+const MODAL_SELECTOR = '[role="dialog"][aria-modal="true"]:not([data-state="closed"]), [role="alertdialog"][aria-modal="true"]:not([data-state="closed"])';
+function touchesHostModal(node: Node | null) {
+  const element = elementFor(node);
+  return Boolean(element && (element.matches(DIALOG_SELECTOR) || element.querySelector(DIALOG_SELECTOR)));
+}
+
 function selectedMessage(selection: Selection): Element | null {
   const start = elementFor(selection.anchorNode), end = elementFor(selection.focusNode);
   const plugin = '[data-paseo-translate-annotation], [data-paseo-translate-block]';
@@ -398,14 +406,21 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     return editor?.closest<HTMLElement>('[data-testid="message-input-root"]') ?? editor;
   }
 
+  /** Host modals (quota details, settings) stack below the launcher, so the pair hides instead of covering them. */
+  function hostModalOpen() {
+    if (document.querySelector(MODAL_SELECTOR)) return true;
+    return launcher?.getAttribute('aria-hidden') === 'true';
+  }
+
   function positionLauncher() {
     if (!launcher || !englishGuard) return;
     const frame = composerFrame(findComposer()), rect = frame?.getBoundingClientRect();
     if (frame !== observedFrame) { frameObserver?.disconnect(); observedFrame = frame; if (frame) frameObserver?.observe(frame); }
     const right = rect ? Math.max(8, window.innerWidth - rect.right + 8) : 18;
     const bottom = rect ? Math.max(8, window.innerHeight - rect.top + 6) : 82;
-    style(launcher, { right: `${right}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto' });
-    style(englishGuard, { right: `${right + (launcher.offsetWidth || 34) + 6}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto' });
+    const visibility = hostModalOpen() ? 'hidden' : 'visible';
+    style(launcher, { right: `${right}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto', visibility });
+    style(englishGuard, { right: `${right + (launcher.offsetWidth || 34) + 6}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto', visibility });
   }
 
   async function translateComposer() {
@@ -518,6 +533,11 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   const routeChanged = () => { composerRequest++; composerBusy = false; draftUndo = null; removeTrigger(); activePolicyKey = null; refreshLauncher(); resetLauncher(); };
   const modelObserver = new MutationObserver(records => {
     const route = currentRoute(), keywords = route ? englishLockModels.get(route.serverId) ?? [] : [];
+    const modalChanged = records.some(record => {
+      if (record.type === 'attributes') return record.attributeName === 'aria-hidden' ? record.target === launcher : touchesHostModal(record.target);
+      return Array.from(record.addedNodes).some(touchesHostModal) || Array.from(record.removedNodes).some(touchesHostModal);
+    });
+    if (modalChanged) positionLauncher();
     const changed = records.some(record => {
       const target = elementFor(record.target);
       if (target && containsComposerModelControl(target, keywords)) return true;
@@ -528,7 +548,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     });
     if (changed) { activePolicyKey = null; window.setTimeout(refreshLauncher, 0); }
   });
-  modelObserver.observe(document.body, { attributes: true, attributeFilter: ['aria-label', 'title', 'data-testid'], childList: true, characterData: true, subtree: true });
+  modelObserver.observe(document.body, { attributes: true, attributeFilter: ['aria-label', 'title', 'data-testid', 'data-state', 'aria-modal', 'aria-hidden'], childList: true, characterData: true, subtree: true });
   document.addEventListener('pointerup', delayedRefresh); document.addEventListener('keyup', delayedRefresh); document.addEventListener('touchend', delayedRefresh);
   document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown, true); document.addEventListener('click', clickGuard, true); document.addEventListener('submit', submitGuard, true); document.addEventListener('input', inputChanged, true); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
   return { refresh, updateAgentModel, dispose() { composerRequest++; modelRequest++; modelObserver.disconnect(); frameObserver?.disconnect(); dismiss(); removeLauncher(); blocks.dispose(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
