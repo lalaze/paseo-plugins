@@ -152,3 +152,37 @@ test('patch applies idempotently, restores exactly, and refuses unrelated change
     for (const name of readdirSync(join(ROOT, '.state'))) if (name.startsWith(stateName)) rmSync(join(ROOT, '.state', name));
   }
 });
+
+test('upgrades the existing throttle-only patch and still restores the original provider', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'paseo-claude-upgrade-'));
+  const t = { ...target, server: dir };
+  const stateName = `claude-${sha(dir).slice(0, 20)}.json`;
+  const stateFile = join(ROOT, '.state', stateName);
+  const file = join(dir, base, 'claude.js');
+  try {
+    mkdirSync(join(dir, base), { recursive: true });
+    let original = readFileSync(join(target.server, base, 'claude.js'), 'utf8');
+    if (original.startsWith('// paseo-agy-quote:claude-throttle')) original = unpatchedClaude(original);
+    const prefix = '// paseo-agy-quote:claude-throttle\nimport { createClaudeQuotaFetch } from "./claude-quota-throttle.js";\n';
+    const after = prefix + original.replace('        this.fetchApi = options.fetch ?? fetch;', '        this.fetchApi = createClaudeQuotaFetch(options.fetch ?? fetch, options.quotaFetchOptions);');
+    const helper = readFileSync(join(ROOT, 'src/claude-quota-throttle.js'), 'utf8');
+    writeFileSync(file, after);
+    writeFileSync(join(dir, base, 'claude-quota-throttle.js'), helper);
+    writeFileSync(stateFile, JSON.stringify({server: dir,before: original,beforeHash: sha(original),afterHash: sha(after),helperHash: sha(helper)}));
+    assert.equal(checkClaude(t).helperStale, true);
+    applyClaude(t, {runTests:false});
+    assert.equal(checkClaude(t).helperStale, false);
+    assert.ok(existsSync(join(dir, base, 'claude-refresh.js')));
+    const refreshPath=join(dir,base,'claude-refresh.js');
+    const refresh=readFileSync(refreshPath,'utf8');
+    writeFileSync(refreshPath,refresh+'\n// unrelated');
+    assert.throws(()=>rollbackClaude(t),/modified|changed/);
+    writeFileSync(refreshPath,refresh);
+    rollbackClaude(t);
+    assert.equal(readFileSync(file,'utf8'),original);
+    assert.equal(existsSync(refreshPath),false);
+  } finally {
+    rmSync(dir,{recursive:true,force:true});
+    for(const name of readdirSync(join(ROOT,'.state'))) if(name.startsWith(stateName))rmSync(join(ROOT,'.state',name));
+  }
+});

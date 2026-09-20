@@ -8,7 +8,7 @@
 
 安装、更新、卸载都在本目录用 `patch.mjs` 完成，并需要重启 daemon。
 
-## Claude 额度查询限频（可选）
+## Claude 额度查询限频与自动续期（可选）
 
 `claude-patch.mjs` 适配已检查的 Paseo **0.8.0** Claude 读取器。默认 daemon 的额度缓存为 5 分钟，界面每分钟读取本机缓存；单台 daemon 正常持续打开时，每小时最多约 12 次 Claude 外部查询。此独立补丁把 Claude 查询间隔提高到 **15 分钟**，每小时最多约 4 次，多个页面和手动刷新共用限制。其他供应商的缓存不变。
 
@@ -16,15 +16,24 @@
 
 冷却截止时间保存在 `$PASEO_HOME/cache/claude-quota-throttle.json`（默认 `~/.paseo/cache/claude-quota-throttle.json`），重启不会绕过等待。该文件不保存凭证和额度响应。重启后尚在冷却期时暂不显示 Claude，等下一次允许查询后恢复。不同机器的 daemon 各自计数，同一账号在其他软件中的查询不受此补丁控制。
 
+凭证到期前 **5 分钟**，通过本机官方 Claude CLI 的交互式 `/status` 触发认证续期；不直接调用 OAuth refresh 接口、不改写凭证、不发送模型提问。Claude 自己管理跨进程锁、令牌轮换和保存。随后重新读取凭证，只有确认有效期已延长才视为续期成功。正常使用 Claude Code 时写入的新凭证也会被下一次查询读取。
+
+同一 daemon 内相同配置目录的续期请求合并，失败冷却 **60 秒**；过期后仍续期失败会显示认证恢复提示。尚未到期的凭证可继续查询。续期不会绕过额度接口的 15 分钟/429 冷却，也不会因为 429 反复续期。
+
+已实测 Claude Code **2.1.274** 的 `/status` 探测。使用 Paseo 自带的 `node-pty`，探测最多 20 秒并清理子进程。只确认 `$PASEO_HOME/cache/claude-renewal-probe` 专用目录的信任提示；安全模式禁用自定义配置、hooks、插件和 MCP，同时禁用工具与 Chrome。不会自动完成登录。可通过 `PASEO_CLAUDE_BIN` 指定 CLI 的绝对路径。默认配置保留 `~/.claude.json`；自定义目录遵守 `CLAUDE_HOME` / `CLAUDE_CONFIG_DIR`。凭证和 CLI 原始输出不写入 Paseo 日志。
+
+`probe` 会实际启动 `/status`、检查凭证有效期，只输出成功与否、令牌是否变化及到期时间；不查询额度。凭证未临近到期时，它只验证 CLI 路径可用，不证明发生了真实续期。
+
 ```bash
 cd /path/to/paseo-plugins/agy-quota
 node claude-patch.mjs check
 node claude-patch.mjs apply
+node claude-patch.mjs probe
 # 确认当前任务与终端可以中断后：
 paseo daemon restart
 ```
 
-安装时自动运行离线测试，不访问 Claude 接口。原始文件保存在 `.state/claude-*.json`，`node claude-patch.mjs rollback` 可恢复，回退后同样需重启。Paseo 升级可能覆盖补丁，需重新执行 `check` / `apply`；未知上游文件会拒绝修改。
+安装时自动运行离线测试，不访问 Claude 接口。已有的限频补丁可直接升级。原始文件保存在 `.state/claude-*.json`，`node claude-patch.mjs rollback` 可恢复，回退后同样需重启。Paseo 升级可能覆盖补丁，需重新执行 `check` / `apply`；未知上游文件会拒绝修改。
 
 ## 安装
 
