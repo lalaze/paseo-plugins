@@ -51,7 +51,7 @@ export default function contribute(client: PluginClientContext) {
       <HeaderQuotaIcon {...props} query={query} preference={preference} />
       {dialog.open ? Platform.OS !== 'web'
         ? <NativeQuotaDialog theme={props.theme} onClose={() => dialog.onOpenChange(false)}>
-          <Overview {...props} query={query} preference={preference} popover />
+          <Overview {...props} query={query} preference={preference} popover mobileDialog />
         </NativeQuotaDialog>
         // Web portal events still bubble through the icon's React ancestors.
         : <Pressable accessible={false} focusable={false} onPress={event => event.stopPropagation()}>

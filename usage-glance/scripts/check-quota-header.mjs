@@ -78,7 +78,7 @@ for (const platform of ['android', 'ios', 'web']) {
           assert.ok(scroll.findAllByType('text').some(node => node.props.children === 'Provider 11'), 'last provider stays inside the scroll content');
           const card = modal.findByProps({ accessibilityViewIsModal: true });
           assert.ok(card.props.style.height < 800 * 0.8, 'dialog stays below full-screen height');
-          assert.ok(modal.findAllByType('text').some(node => /Quota on this host|本机额度/.test(node.props.children)));
+          assert.ok(modal.findAllByType('text').some(node => /Remaining quota|可用额度/.test(node.props.children)));
           if (attempt === 0) {
             windowHeight = 360;
             await act(async () => { tree.update(React.createElement(button.icon, { ...props })); });
