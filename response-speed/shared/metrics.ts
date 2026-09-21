@@ -65,7 +65,7 @@ export function createTurnTracker(input: {
 type TimelineEvent = {
   agentId: string;
   timestamp?: string;
-  event: AgentStreamEvent | { type: "replacement"; epoch: string };
+  event: AgentStreamEvent | { type: "replacement"; epoch: string } | { type: "subscription_restored" } | { type: "error"; error: string };
 };
 
 function timestamp(value: string | undefined, fallback: number): number {
@@ -112,7 +112,7 @@ function settleBlocked(tracker: TurnTracker, at: number): void {
 }
 
 export function observeTimelineEvent(tracker: TurnTracker, update: TimelineEvent, receivedAt = Date.now()): void {
-  if (update.agentId !== tracker.agentId || update.event.type === "replacement") return;
+  if (update.agentId !== tracker.agentId || update.event.type === "replacement" || update.event.type === "subscription_restored" || update.event.type === "error") return;
   const event = update.event;
   if (!belongsToTurn(tracker, event)) return;
   const at = timestamp(update.timestamp, receivedAt);

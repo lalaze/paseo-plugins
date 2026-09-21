@@ -1,6 +1,6 @@
 # Paseo File Transfer
 
-An independent **File Transfer** workspace panel for **Paseo 0.8.0 / 0.8.x**. Files reside on the daemon host that owns the current workspace; uploads originate from, and downloads are saved to, the desktop app or browser you are using.
+An independent **File Transfer** workspace panel for **Paseo 0.8.x / 0.9.x (including prereleases)**. Files reside on the daemon host that owns the current workspace; uploads originate from, and downloads are saved to, the desktop app or browser you are using.
 
 This plugin lives in the [`file-upload/`](.) directory of the [`lalaze/paseo-plugins`](https://github.com/lalaze/paseo-plugins) multi-plugin repository. You do not need to reinstall it when switching computers that connect to the same Paseo daemon.
 
@@ -19,7 +19,7 @@ Open a workspace, press **⌘K** (**Ctrl+K** on Windows or Linux), and search fo
 
 ## Installation
 
-Install the plugin separately on each daemon. Both daemon and client must be **0.8.x**. The plugin ID is `paseo-file-upload`.
+Install the plugin separately on each daemon. Both daemon and client must be **0.8.x or 0.9.x (including prereleases)**. The plugin ID is `paseo-file-upload`.
 
 Enable plugins under Paseo **Settings → Plugins** on the target host. Make sure Git and npm are installed and that the daemon user has GitHub SSH read access to this repository, then run on that host:
 

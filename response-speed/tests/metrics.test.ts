@@ -210,3 +210,16 @@ test("tracks a model change reported during the turn", () => {
   observeTimelineEvent(tracker, update({ type: "model_changed", provider: "codex", runtimeInfo: { provider: "codex", sessionId: "session", model: "new" } }, 1_000));
   assert.equal(tracker.model, "new");
 });
+
+
+test("ignores subscription lifecycle events without counting them as model output", () => {
+  const tracker = createTurnTracker({ agentId: "agent-1", provider: "codex", startedAt: 0 });
+  observeTimelineEvent(tracker, { agentId: "agent-1", event: { type: "subscription_restored" } }, 1_000);
+  observeTimelineEvent(tracker, { agentId: "agent-1", event: { type: "error", error: "transport closed" } }, 1_100);
+  assert.equal(tracker.observedEvents, 0);
+  assert.equal(tracker.outputEvents, 0);
+  assert.equal(tracker.firstOutputAt, null);
+  observeTimelineEvent(tracker, update(text("assistant_message", "answer"), 2_000));
+  observeTimelineEvent(tracker, update(completed(100), 3_000));
+  assert.equal(finishTurn(tracker, "completed", 3_000).ttftMs, 2_000);
+});

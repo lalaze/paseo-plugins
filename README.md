@@ -1,6 +1,6 @@
 # paseo-plugins
 
-Multi-package repository of Paseo plugins and companion extensions. Enable plugins under **Settings → Plugins** on the target host first. Each package can also be installed on its own as described below; see each directory's README for updating, uninstalling and limitations.
+Multi-package repository of Paseo plugins and companion extensions. The five Paseo plugins support daemon and app versions 0.8.x and 0.9.x, including prereleases. The separate quota and notification patches retain their own version restrictions. Enable plugins under **Settings → Plugins** on the target host first. Each package can also be installed on its own as described below; see each directory's README for updating, uninstalling and limitations.
 
 Install everything at once (five plugins, the quota patch, Kimi renewal and the Hub ACP):
 

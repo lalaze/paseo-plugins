@@ -36,7 +36,7 @@
 
 本插件位于多插件仓库 [`lalaze/paseo-plugins`](https://github.com/lalaze/paseo-plugins) 的 [`director/`](.) 目录。安装到另一台主机的完整步骤见 [INSTALL.md](./INSTALL.md)。如果只是换电脑连接同一个 Paseo daemon，无需重复安装。
 
-需要 **Paseo daemon 和 app 0.8.x**、**Node.js 22.13+**、Git，以及至少一个已登录并可用的 Paseo AI provider。此次实现基于本机 Paseo **0.8.0** 校验。插件 ID 为 `paseo-director`。
+需要 **Paseo daemon 和 app 0.8.x / 0.9.x（含 beta）**、**Node.js 22.13+**、Git，以及至少一个已登录并可用的 Paseo AI provider。此次实现基于本机 Paseo **0.8.0** 校验。插件 ID 为 `paseo-director`。
 
 ### 安装
 

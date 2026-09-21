@@ -1,6 +1,6 @@
 {
   "id": "paseo-response-speed",
-  "requirements": { "paseo": ">=0.8.0 <0.9.0" },
+  "requirements": { "paseo": ">=0.8.0 <0.10.0" },
   "build": [
     ["npm", "ci", "--include=dev", "--ignore-scripts"],
     ["npm", "run", "typecheck"]
