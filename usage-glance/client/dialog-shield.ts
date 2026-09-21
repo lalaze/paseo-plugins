@@ -3,6 +3,7 @@ import type { View } from 'react-native';
 
 type Listener = (event: { stopPropagation(): void }) => void;
 type DomNode = {
+  id?: string;
   parentElement: DomNode | null;
   addEventListener(type: string, listener: Listener): void;
   removeEventListener(type: string, listener: Listener): void;
@@ -14,12 +15,12 @@ const shieldedEvents = ['pointerover', 'pointerout', 'mouseover', 'mouseout'];
 const isDomNode = (value: unknown): value is DomNode =>
   typeof value === 'object' && value !== null && 'parentElement' in value && typeof (value as DomNode).addEventListener === 'function';
 
-const isReactContainer = (node: DomNode) => Object.keys(node).some(key => key.startsWith('__reactContainer$'));
-
-/** The highest element below the React portal container that hosts this subtree. */
+/** Paseo mounts desktop modals into #overlay-root. React only puts its
+ * __reactContainer$ marker on createRoot containers, not createPortal targets.
+ * Stop below the shared overlay so sibling overlays keep their own events. */
 export function portalRoot(node: DomNode): DomNode | null {
   let root: DomNode = node;
-  while (root.parentElement && !isReactContainer(root.parentElement)) root = root.parentElement;
+  while (root.parentElement && root.parentElement.id !== 'overlay-root') root = root.parentElement;
   return root.parentElement ? root : null;
 }
 
