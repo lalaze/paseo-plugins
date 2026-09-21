@@ -3,12 +3,12 @@ import test from 'node:test';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { runCcusage } from '../server/ccusage.ts';
-import { addTokens, emptyTokens, totalTokens, type SourceId } from '../shared/consumption.ts';
+import { runCcusage, type CcusageSource } from '../server/ccusage.ts';
+import { addTokens, emptyTokens, totalTokens } from '../shared/consumption.ts';
 
 const range = { since: '2026-09-10', until: '2026-09-10', timezone: 'UTC' };
 const time = '2026-09-10T08:01:00Z';
-async function fixture(source: Exclude<SourceId, 'antigravity' | 'pi'>, files: Record<string, unknown[]>, expected: { input: number; output: number; cacheRead: number; cacheWrite: number }) {
+async function fixture(source: CcusageSource, files: Record<string, unknown[]>, expected: { input: number; output: number; cacheRead: number; cacheWrite: number }) {
   const root = await mkdtemp(join(tmpdir(), 'paseo-native-tokens-'));
   const variable = { codex: 'CODEX_HOME', claude: 'CLAUDE_CONFIG_DIR', kimi: 'KIMI_DATA_DIR', grok: 'GROK_HOME' }[source];
   try {

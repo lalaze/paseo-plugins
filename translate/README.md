@@ -16,6 +16,7 @@
 - 使用单条纯翻译提示词，同时兼容专用翻译模型与普通聊天模型，不绑定特定供应商或模型名。
 - API 地址、API Key 与模型（含可选的备用接口）按主机保存在 Paseo 插件设置中；同一时间最多处理 3 个请求。
 - 支持复制结果，单次选区最多 5000 个字符。
+- 每次翻译 API 调用返回后，把时间、模型、主/备接口和返回的 token 用量追加到本机账本 `~/.paseo/translate/usage/YYYY-MM.jsonl`；同仓库的 [`usage-glance`](../usage-glance/README.md) 会把它作为「翻译」来源计入 Token 消耗统计。
 
 ## 安装
 
@@ -48,6 +49,10 @@ paseo reload
 paseo plugin install "$PWD/translate"
 paseo reload
 ```
+
+## Token 用量账本
+
+只要 API 返回了响应（即使随后内容解析失败，token 也已消耗），插件就会向 `$PASEO_HOME/translate/usage/YYYY-MM.jsonl`（默认 `~/.paseo/translate/usage/`，可用 `PASEO_TRANSLATE_USAGE_DIR` 改到其他目录）追加一行 JSON：调用时间、模型名、`primary`/`fallback`，以及 OpenAI Chat Completions 的 `usage`（`prompt_tokens`、`completion_tokens`、`prompt_tokens_details.cached_tokens`、`completion_tokens_details.reasoning_tokens`）。接口没有返回 `usage` 时记为 `null`，统计页会提示有多少次调用缺少 token 数。账本不保存原文、译文、API 地址和 Key；写入失败不影响翻译。usage-glance 安装在同一台 daemon 主机上时会自动发现该目录，无需额外设置；删除该目录即清空历史。
 
 ## 隐私与限制
 

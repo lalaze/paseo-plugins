@@ -2,6 +2,7 @@ import type { PaseoApi } from '@getpaseo/client';
 import { enabledConsumptionSources } from '../shared/consumption';
 import { backgroundConsumptionRange } from '../shared/consumption-cache';
 import type { ConsumptionService } from './consumption';
+import { hasTranslateLedger } from './translate';
 
 /** The daemon keeps warming recent usage after the client/page disconnects. */
 export function startConsumptionSync(service: ConsumptionService, now = () => new Date()) {
@@ -11,9 +12,9 @@ export function startConsumptionSync(service: ConsumptionService, now = () => ne
     if (closed || running || !paseo) return;
     running = true;
     try {
-      const snapshot = await paseo.providers.snapshot();
+      const [snapshot, translate] = await Promise.all([paseo.providers.snapshot(), hasTranslateLedger()]);
       if (closed) return;
-      const sources = enabledConsumptionSources(snapshot.entries);
+      const sources = enabledConsumptionSources(snapshot.entries, translate ? ['translate'] : []);
       for (const timezone of timezones) service.get(backgroundConsumptionRange(timezone, now()), sources, true);
     } catch {
       // Preserve the last reading. Foreground RPCs still report connection/Provider errors.

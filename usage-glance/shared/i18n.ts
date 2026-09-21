@@ -73,6 +73,7 @@ const englishUsageMessages: Record<string, string> = {
   '本机用量读取失败，请检查数据目录和读取权限': 'Local usage could not be read. Check the data directory and permissions.',
   '本机记录暂时无法读取，请稍后重试': 'Local records are temporarily unavailable. Try again later.',
   '本机 Pi 用量记录无法读取，请检查格式和读取权限': 'Local Pi usage records could not be read. Check their format and permissions.',
+  '本机翻译用量记录无法读取，请检查格式和读取权限': 'Local translation usage records could not be read. Check their format and permissions.',
   '数据库缺少生成用量': 'The database does not contain generation usage.',
   'Antigravity 数据库无法读取，请检查读取权限或稍后重试': 'The Antigravity database could not be read. Check permissions or try again later.',
   'Antigravity 元数据格式不兼容': 'The Antigravity metadata format is incompatible.',
@@ -88,6 +89,10 @@ function englishUsagePart(part: string): string {
   if (englishUsageMessages[trimmed]) return englishUsageMessages[trimmed];
   let match = /^(\d+) 个 Pi 文件或记录未能读取，统计可能不完整$/.exec(trimmed);
   if (match) return `${match[1]} Pi files or records could not be read; totals may be incomplete.`;
+  match = /^(\d+) 条翻译记录未能读取，统计可能不完整$/.exec(trimmed);
+  if (match) return `${match[1]} translation records could not be read; totals may be incomplete.`;
+  match = /^(\d+) 次翻译调用未返回 token 数，未计入$/.exec(trimmed);
+  if (match) return `${match[1]} translation calls returned no token counts and were excluded.`;
   match = /^(\d+) 个文件或记录未能读取$/.exec(trimmed);
   if (match) return `${match[1]} files or records could not be read.`;
   match = /^(\d+) 条记录缺少日期，未计入$/.exec(trimmed);

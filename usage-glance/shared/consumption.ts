@@ -3,16 +3,19 @@ import { z } from 'zod';
 import { hostIdentitySchema, type HostIdentity } from './hosts';
 import { localizeHostLabel, localizeModelLabel, ui, uiNumberLocale } from './i18n';
 
-export const sourceIds = ['codex', 'claude', 'kimi', 'grok', 'antigravity', 'pi'] as const;
+export const sourceIds = ['codex', 'claude', 'kimi', 'grok', 'antigravity', 'pi', 'translate'] as const;
 export type SourceId = typeof sourceIds[number];
-export const sourceNames: Record<SourceId, string> = { codex: 'Codex', claude: 'Claude Code', kimi: 'Kimi', grok: 'Grok', antigravity: 'Antigravity', pi: 'Pi' };
+export const sourceNames: Record<SourceId, string> = { codex: 'Codex', claude: 'Claude Code', kimi: 'Kimi', grok: 'Grok', antigravity: 'Antigravity', pi: 'Pi', translate: ui('Translate', '翻译') };
+/** Plugin ledgers have no Provider switch; they are listed when their records exist on the host. */
+export const ledgerSourceIds: readonly SourceId[] = ['translate'];
 const providerSources = new Map<string, SourceId>([
-  ...sourceIds.map(source => [source, source] as const),
+  ...sourceIds.filter(source => !ledgerSourceIds.includes(source)).map(source => [source, source] as const),
   ['antigravity-acp', 'antigravity'], ['antigravity-hub', 'antigravity'],
 ]);
-/** Enablement comes from Paseo's host catalog, independently of login/readiness. */
-export function enabledConsumptionSources(providers: readonly { provider: string; enabled: boolean }[]): SourceId[] {
+/** Enablement comes from Paseo's host catalog, independently of login/readiness, plus any detected plugin ledgers. */
+export function enabledConsumptionSources(providers: readonly { provider: string; enabled: boolean }[], ledgers: readonly SourceId[] = []): SourceId[] {
   const selected = new Set(providers.filter(provider => provider.enabled).map(provider => providerSources.get(provider.provider)));
+  for (const ledger of ledgers) if (ledgerSourceIds.includes(ledger)) selected.add(ledger);
   return sourceIds.filter(source => selected.has(source));
 }
 export function unsupportedConsumptionProviders(providers: readonly { provider: string; enabled: boolean; label?: string }[]) {

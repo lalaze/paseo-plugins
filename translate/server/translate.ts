@@ -1,6 +1,7 @@
 import type { RpcInput } from '@getpaseo/plugin';
 import { translateSelectionRpc, type TargetLanguage, type TranslationResult } from '../shared/rpc';
 import { validateTranslationSettings } from '../shared/settings';
+import { createUsageLedger, parseUsage, type TranslationUsageRecord, type UsageLedger } from './usage';
 
 type TranslationInput = RpcInput<typeof translateSelectionRpc>;
 type Fetch = typeof globalThis.fetch;
@@ -77,9 +78,10 @@ function apiError(body: string, status: number): Error {
   return new Error(`Translation API request failed (${status})${detail ? `: ${detail}` : ''}`);
 }
 
-type TranslationEndpoint = { apiUrl: string; apiKey: string; model: string };
+type TranslationEndpoint = { apiUrl: string; apiKey: string; model: string; kind: TranslationUsageRecord['endpoint'] };
+type RecordUsage = (entry: Omit<TranslationUsageRecord, 'v'>) => void;
 
-async function requestTranslation(endpoint: TranslationEndpoint, prompt: string, fetchImpl: Fetch): Promise<string> {
+async function requestTranslation(endpoint: TranslationEndpoint, prompt: string, fetchImpl: Fetch, recordUsage: RecordUsage): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 24000);
   try {
@@ -102,6 +104,8 @@ async function requestTranslation(endpoint: TranslationEndpoint, prompt: string,
     let payload: unknown;
     try { payload = JSON.parse(body); }
     catch { throw new Error('The Translation API returned invalid JSON'); }
+    // Tokens are billed once the API answered, even if the content turns out unusable.
+    recordUsage({ at: new Date().toISOString(), model: endpoint.model, endpoint: endpoint.kind, usage: parseUsage(payload) });
     return responseContent(payload);
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw new Error('The Translation API timed out. Try again later');
@@ -115,19 +119,19 @@ function describeError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 300);
 }
 
-export async function translateSelection(input: TranslationInput, fetchImpl: Fetch = globalThis.fetch): Promise<TranslationResult> {
+export async function translateSelection(input: TranslationInput, fetchImpl: Fetch = globalThis.fetch, recordUsage: RecordUsage = () => {}): Promise<TranslationResult> {
   const settings = validateTranslationSettings(input.settings);
   const target = resolveTarget(input.text, input.target);
   const prompt = buildTranslationPrompt(input.text, target);
-  const primary: TranslationEndpoint = { apiUrl: settings.apiUrl, apiKey: settings.apiKey, model: settings.model };
+  const primary: TranslationEndpoint = { apiUrl: settings.apiUrl, apiKey: settings.apiKey, model: settings.model, kind: 'primary' };
   try {
-    const content = await requestTranslation(primary, prompt, fetchImpl);
+    const content = await requestTranslation(primary, prompt, fetchImpl, recordUsage);
     return { ...parseTranslationOutput(content), target, model: primary.model };
   } catch (primaryError) {
     if (!settings.fallbackApiUrl || !settings.fallbackModel) throw primaryError;
-    const fallback: TranslationEndpoint = { apiUrl: settings.fallbackApiUrl, apiKey: settings.fallbackApiKey, model: settings.fallbackModel };
+    const fallback: TranslationEndpoint = { apiUrl: settings.fallbackApiUrl, apiKey: settings.fallbackApiKey, model: settings.fallbackModel, kind: 'fallback' };
     try {
-      const content = await requestTranslation(fallback, prompt, fetchImpl);
+      const content = await requestTranslation(fallback, prompt, fetchImpl, recordUsage);
       return { ...parseTranslationOutput(content), target, model: fallback.model };
     } catch (fallbackError) {
       throw new Error(`The Translation API failed on both primary and fallback endpoints (${describeError(primaryError)}; ${describeError(fallbackError)})`);
@@ -135,12 +139,14 @@ export async function translateSelection(input: TranslationInput, fetchImpl: Fet
   }
 }
 
-export function createTranslationHandler() {
+export function createTranslationHandler(ledger: UsageLedger = createUsageLedger()) {
   let active = 0;
+  // Ledger writes are fire-and-forget: usage statistics must never delay or fail a translation.
+  const recordUsage: RecordUsage = entry => { void ledger.record(entry); };
   return async (input: TranslationInput) => {
     if (active >= 3) throw new Error('Too many translations are running. Try again later');
     active++;
-    try { return await translateSelection(input); }
+    try { return await translateSelection(input, globalThis.fetch, recordUsage); }
     finally { active--; }
   };
 }

@@ -25,6 +25,7 @@
 打开侧边栏 **「Token 消耗」** 页面。分别跟随所选各主机 **Providers** 的启用开关，统计已启用来源在各 daemon 主机上保留的用量记录，也包括在终端直接运行的 CLI 会话。
 
 - 支持 **Codex、Claude Code、Kimi、Grok、Antigravity、Pi**。只有本机 Providers 中已启用的来源才会采集、显示和计入合计。例如关闭 Claude Code 后，即使磁盘上仍有其历史记录，这些记录也不会进入 Provider 或模型厂商的合计。已启用但尚未适配的 Provider（如 Copilot）显示「暂不支持消耗统计」，不按零处理，也不计入已读取合计。
+- 另外计入同仓库 [`translate`](../translate/README.md) 插件的翻译 API 用量，来源名为「翻译」。它不是 Paseo Provider，没有开关：只要本机存在翻译用量账本目录就会列出并计入合计；未安装翻译插件或尚未翻译过的主机不显示该来源。翻译请求不属于任何 Agent 会话，在「按 Workspace」中归入「未归属 Workspace」。
 - 时间范围：今日、近 7 天、本月、自定义（最多 366 天），按查看页面的客户端时区归日，页面显示具体时区。
 - 默认「按 Provider」分组，可切换「按 Workspace」「按模型」「按模型厂商」或「按主机」。「按模型」按记录中的完整模型名称汇总，所选主机内的同名模型跨 Provider 合并，按消耗从高到低排列；展开可查看各主机、Provider 的精确用量。不同名称、版本或别名分别保留，缺少模型名的记录显示为「未记录模型」。手机端分类入口自动换行。
 - 在 Claude Code 已启用时，其 GLM 记录可按厂商归到智谱，模型明细仍保留 Claude Code 来源。自定义中转的实际调用渠道无法仅凭模型名确认；未识别的模型单独展示。
@@ -69,8 +70,9 @@
 | Grok | `~/.grok/sessions` | ccusage，读取 `updates.jsonl` 中已完成轮次的 usage；不再叠加 `usage.json` 会话总量 |
 | Pi | `~/.pi/agent/sessions` | 插件只读解析 v1–v3 JSONL 会话中的 assistant usage 和已记录的压缩/分支摘要用量，去重分支及副本历史 |
 | Antigravity | `~/.gemini/antigravity*/conversations` 中支持的目录 | 插件只读解析 SQLite 的生成/步骤用量元数据，按响应标识去重 |
+| 翻译 | `~/.paseo/translate/usage/YYYY-MM.jsonl` | 插件只读解析 translate 插件追加的 JSONL 账本：每次 API 调用的时间、模型和返回的 token 用量；缺少 `usage` 的调用不计入并提示次数 |
 
-来源目录可通过 daemon 的环境变量 `CODEX_HOME`、`CLAUDE_CONFIG_DIR`、`KIMI_DATA_DIR`、`GROK_HOME`、`ANTIGRAVITY_DATA_DIR`、`PI_CODING_AGENT_DIR` 指定。Antigravity 默认检查 `.gemini` 下的 `antigravity`、`antigravity-cli`、`antigravity-ide`、`antigravity-backup` 和 `~/.config/antigravity`；其覆盖变量支持逗号分隔的数据根目录或 `conversations` 目录。
+来源目录可通过 daemon 的环境变量 `CODEX_HOME`、`CLAUDE_CONFIG_DIR`、`KIMI_DATA_DIR`、`GROK_HOME`、`ANTIGRAVITY_DATA_DIR`、`PI_CODING_AGENT_DIR`、`PASEO_TRANSLATE_USAGE_DIR` 指定（翻译账本默认位于 `$PASEO_HOME/translate/usage`，两个插件读取同一规则）。Antigravity 默认检查 `.gemini` 下的 `antigravity`、`antigravity-cli`、`antigravity-ide`、`antigravity-backup` 和 `~/.config/antigravity`；其覆盖变量支持逗号分隔的数据根目录或 `conversations` 目录。
 
 Pi 的 `PI_CODING_AGENT_DIR` 指向 agent 数据根目录（其下为 `sessions`），支持 `~` 展开；Pi CLI 用 `--session-dir` 保存到其他位置的记录需放在该扫描目录内才能统计。Pi 输入合计包含普通输入、缓存读取和缓存写入；推理属于输出子集，缺少细分时显示「未提供」。保留所有分支中实际发生的调用，分支复制的历史只计一次；日志中已记录的压缩与分支摘要 usage 也计入，缺少模型名时归到「未记录模型」。旧版未持久化的摘要调用无法补回。该接入提供 Token 消耗统计，账号剩余额度仍以 Paseo 返回的额度数据为准。格式参考 [Pi 会话源码](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/session-manager.ts)。
 
