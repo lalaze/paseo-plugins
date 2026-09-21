@@ -1,5 +1,7 @@
 # Response Speed
 
+> Archived / 停用：生成速度数据参考价值有限，此插件已从首页展示和一键安装、更新流程中移除。源码仅保留备份，不再推荐安装。
+
 Shows the generation speed of the current provider / model after every AI reply:
 
 - Generation speed (t/s)

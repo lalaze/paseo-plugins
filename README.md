@@ -1,8 +1,8 @@
 # paseo-plugins
 
-Multi-package repository of Paseo plugins and companion extensions. The four active Paseo plugins support daemon and app versions 0.8.x and 0.9.x, including prereleases. The separate quota and notification patches retain their own version restrictions. Enable plugins under **Settings → Plugins** on the target host first. Each active package can also be installed on its own as described below; see each directory's README for updating, uninstalling and limitations.
+Multi-package repository of Paseo plugins and companion extensions. The three active Paseo plugins support daemon and app versions 0.8.x and 0.9.x, including prereleases. The separate quota and notification patches retain their own version restrictions. Enable plugins under **Settings → Plugins** on the target host first. Each active package can also be installed on its own as described below; see each directory's README for updating, uninstalling and limitations.
 
-Install the active packages at once (four plugins, the quota patch, Kimi renewal and the Hub ACP):
+Install the active packages at once (three plugins, the quota patch, Kimi renewal and the Hub ACP):
 
 ```bash
 ./install-all.sh
@@ -16,7 +16,7 @@ Update the active packages that are installed:
 ./update-all.sh
 ```
 
-This runs `git pull`, then updates active items that were installed from this repo. Items that are not installed are skipped. `--skip-pull` updates without pulling. The archived `file-upload/` source is retained, but neither script installs, updates, or individually reloads it, even if it is already installed.
+This runs `git pull`, then updates active items that were installed from this repo. Items that are not installed are skipped. `--skip-pull` updates without pulling. The archived `file-upload/` and `response-speed/` sources are retained, but neither script installs, updates, or individually reloads these plugins, even if they are already installed.
 
 On macOS `~/.local/bin` is not on the PATH by default, and nvm gets ahead of it. Set up the wrapper like this:
 
@@ -55,16 +55,6 @@ paseo plugin add lalaze/paseo-plugins --path usage-glance
 ```
 
 Details: [usage-glance/README.md](usage-glance/README.md)
-
-## [Response Speed](response-speed)
-
-After every AI reply, shows that provider / model's generation speed (t/s), output tokens, time to first token (TTFT), overall speed and total duration. Only provider-reported tokens are used; nothing is guessed from character counts. Plugin ID: `paseo-response-speed`.
-
-```bash
-paseo plugin add lalaze/paseo-plugins --path response-speed
-```
-
-Details: [response-speed/README.md](response-speed/README.md)
 
 ## [Pi Qwen thinking levels](pi-qwen-thinking)
 
