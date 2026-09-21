@@ -20,6 +20,8 @@ for (const platform of ['android', 'ios', 'web']) {
     if (name === 'react-native') return {
       Platform: { OS: platform }, View: 'view', Text: 'text', Pressable: 'pressable', ScrollView: 'scroll-view',
       Modal: 'native-modal', SafeAreaView: 'safe-area',
+      Animated: { View: 'animated-view', Value: class { setValue() {} }, spring: () => ({ start: noop }) },
+      PanResponder: { create: config => ({ panHandlers: { onMoveShouldSetResponder: config.onMoveShouldSetPanResponder, onResponderRelease: config.onPanResponderRelease } }) },
       useWindowDimensions: () => ({ width: 400, height: windowHeight }),
     };
     if (name === '@getpaseo/plugin/client/react-native') return { Modal };
@@ -61,7 +63,7 @@ for (const platform of ['android', 'ios', 'web']) {
       props.workspaceId = workspaceId;
       assert.equal(button.behavior.kind, 'action', 'quota must not nest its scroller inside a host menu sheet');
       await act(async () => { tree = create(React.createElement(button.icon, props)); });
-      for (let attempt = 0; attempt < 3; attempt++) {
+      for (let attempt = 0; attempt < 4; attempt++) {
         // The host temporarily replaces action icons with a pending spinner.
         await act(async () => { tree.update(null); button.behavior.onPress(); });
         await act(async () => { tree.update(React.createElement(button.icon, props)); });
@@ -85,6 +87,13 @@ for (const platform of ['android', 'ios', 'web']) {
             assert.ok(modal.findByProps({ accessibilityViewIsModal: true }).props.style.height < 360 * 0.8, 'landscape retains a bounded dialog');
             await act(async () => { modal.props.onRequestClose(); });
             windowHeight = 800;
+          }
+          else if (attempt === 3) {
+            const header = modal.find(node => typeof node.props.onMoveShouldSetResponder === 'function');
+            assert.equal(header.props.onMoveShouldSetResponder({}, { dx: 0, dy: -40 }), false, 'upward swipes do not drag the sheet');
+            assert.equal(header.props.onMoveShouldSetResponder({}, { dx: 40, dy: 10 }), false, 'horizontal swipes do not drag the sheet');
+            assert.equal(header.props.onMoveShouldSetResponder({}, { dx: 0, dy: 80 }), true);
+            await act(async () => { header.props.onResponderRelease({}, { dy: 80, vy: 0.2 }); });
           }
           else {
             const control = modal.findAllByType('pressable').find(node =>
