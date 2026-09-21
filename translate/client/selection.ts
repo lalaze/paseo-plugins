@@ -89,7 +89,7 @@ function place(element: HTMLElement, rect: DOMRect, width = 0) {
 }
 
 function visibleEditor(element: HTMLElement) {
-  if (element.closest('[data-paseo-translate]')) return false;
+  if (element.closest('[data-paseo-translate], [hidden], [aria-hidden="true"]')) return false;
   if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
     if (element.disabled || element.readOnly) return false;
   } else if (!element.isContentEditable) return false;
@@ -97,12 +97,17 @@ function visibleEditor(element: HTMLElement) {
   return rect.width >= 160 && rect.height >= 24 && rect.bottom > window.innerHeight * .45 && computed.display !== 'none' && computed.visibility !== 'hidden';
 }
 
+// Only known chat inputs qualify: file editors also expose textareas and textboxes.
+const COMPOSER_SELECTOR = '[data-testid="message-input-root"] textarea, [data-testid="message-input-root"] [contenteditable="true"], [data-testid*="composer"] textarea, [data-testid*="composer"] [contenteditable="true"], [data-testid="agent-chat-input"], [data-testid="agent-composer-input"]';
+
 function findComposer(): HTMLElement | null {
-  const preferred = '[data-testid*="composer"] textarea, [data-testid*="composer"] [contenteditable="true"], textarea[placeholder*="@files"], textarea[placeholder*="/commands"], [data-testid="agent-chat-input"], [data-testid="agent-composer-input"]';
-  const fallback = 'textarea, input[type="text"], [contenteditable="true"][role="textbox"]';
-  const candidates = Array.from(document.querySelectorAll<HTMLElement>(preferred)).filter(visibleEditor);
-  const pool = candidates.length ? candidates : Array.from(document.querySelectorAll<HTMLElement>(fallback)).filter(visibleEditor);
-  return pool.sort((left, right) => right.getBoundingClientRect().bottom - left.getBoundingClientRect().bottom || right.getBoundingClientRect().width - left.getBoundingClientRect().width)[0] ?? null;
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>(COMPOSER_SELECTOR)).filter(visibleEditor);
+  return candidates.sort((left, right) => right.getBoundingClientRect().bottom - left.getBoundingClientRect().bottom || right.getBoundingClientRect().width - left.getBoundingClientRect().width)[0] ?? null;
+}
+
+function touchesComposer(node: Node | null): boolean {
+  const element = elementFor(node);
+  return Boolean(element && (element.matches(COMPOSER_SELECTOR) || element.querySelector(COMPOSER_SELECTOR)));
 }
 
 function visibleControl(element: HTMLElement) {
@@ -416,8 +421,9 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     if (!launcher || !englishGuard) return;
     const frame = composerFrame(findComposer()), rect = frame?.getBoundingClientRect();
     if (frame !== observedFrame) { frameObserver?.disconnect(); observedFrame = frame; if (frame) frameObserver?.observe(frame); }
-    const right = rect ? Math.max(8, window.innerWidth - rect.right + 8) : 18;
-    const bottom = rect ? Math.max(8, window.innerHeight - rect.top + 6) : 82;
+    if (!rect) { removeLauncher(); return; }
+    const right = Math.max(8, window.innerWidth - rect.right + 8);
+    const bottom = Math.max(8, window.innerHeight - rect.top + 6);
     const visibility = hostModalOpen() ? 'hidden' : 'visible';
     style(launcher, { right: `${right}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto', visibility });
     style(englishGuard, { right: `${right + (launcher.offsetWidth || 34) + 6}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto', visibility });
@@ -459,7 +465,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
 
   function refreshLauncher() {
     const route = currentRoute();
-    if (!route || !runtimes.has(route.serverId)) { activePolicyKey = null; modelRequest++; applyAutomaticEnglishLock(null, []); removeLauncher(); return; }
+    if (!route || !runtimes.has(route.serverId) || !findComposer()) { activePolicyKey = null; modelRequest++; applyAutomaticEnglishLock(null, []); removeLauncher(); return; }
     if (!launcher) {
       launcher = button(ui('Translate', '译'), ui('Translate the current chat draft and replace the original (Alt/Option + T)', '翻译当前聊天输入并替换原文（Alt/Option + T）')); launcher.dataset.paseoTranslate = 'launcher';
       style(launcher, { position: 'fixed', zIndex: '2147482999', minWidth: '34px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
@@ -507,7 +513,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     removeTrigger();
   };
   const keydown = (event: KeyboardEvent) => {
-    if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && event.key.toLowerCase() === 't' && !event.isComposing) { event.preventDefault(); void translateComposer(); }
+    if (findComposer() && event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && event.key.toLowerCase() === 't' && !event.isComposing) { event.preventDefault(); void translateComposer(); }
     else if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       const editor = findComposer(), target = event.target as Node | null;
       if (editor && target && (target === editor || editor.contains(target)) && blockNonEnglishDraft(event)) return;
@@ -538,6 +544,10 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
       return Array.from(record.addedNodes).some(touchesHostModal) || Array.from(record.removedNodes).some(touchesHostModal);
     });
     if (modalChanged) positionLauncher();
+    const composerChanged = records.some(record => {
+      if (record.type === 'attributes') return touchesComposer(record.target);
+      return Array.from(record.addedNodes).some(touchesComposer) || Array.from(record.removedNodes).some(touchesComposer);
+    });
     const changed = records.some(record => {
       const target = elementFor(record.target);
       if (target && containsComposerModelControl(target, keywords)) return true;
@@ -546,9 +556,9 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
         return Boolean(element && containsComposerModelControl(element, keywords));
       });
     });
-    if (changed) { activePolicyKey = null; window.setTimeout(refreshLauncher, 0); }
+    if (changed || composerChanged) { activePolicyKey = null; window.setTimeout(refreshLauncher, 0); }
   });
-  modelObserver.observe(document.body, { attributes: true, attributeFilter: ['aria-label', 'title', 'data-testid', 'data-state', 'aria-modal', 'aria-hidden'], childList: true, characterData: true, subtree: true });
+  modelObserver.observe(document.body, { attributes: true, attributeFilter: ['aria-label', 'title', 'data-testid', 'data-state', 'aria-modal', 'aria-hidden', 'hidden', 'style', 'class', 'disabled', 'readonly'], childList: true, characterData: true, subtree: true });
   document.addEventListener('pointerup', delayedRefresh); document.addEventListener('keyup', delayedRefresh); document.addEventListener('touchend', delayedRefresh);
   document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown, true); document.addEventListener('click', clickGuard, true); document.addEventListener('submit', submitGuard, true); document.addEventListener('input', inputChanged, true); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
   return { refresh, updateAgentModel, dispose() { composerRequest++; modelRequest++; modelObserver.disconnect(); frameObserver?.disconnect(); dismiss(); removeLauncher(); blocks.dispose(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };

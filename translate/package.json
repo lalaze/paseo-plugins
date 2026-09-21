@@ -11,10 +11,12 @@
   },
   "devDependencies": {
     "@getpaseo/plugin": "0.8.0",
+    "@types/jsdom": "^21.1.7",
     "@types/node": "^22.0.0",
     "@types/react": "~19.2.0",
     "@types/react-dom": "^19.1.0",
     "esbuild": "^0.25.12",
+    "jsdom": "^20.0.3",
     "react": "19.1.0",
     "react-dom": "^19.1.0",
     "react-native": "0.81.5",
