@@ -1,8 +1,8 @@
 # paseo-plugins
 
-Multi-package repository of Paseo plugins and companion extensions. The five Paseo plugins support daemon and app versions 0.8.x and 0.9.x, including prereleases. The separate quota and notification patches retain their own version restrictions. Enable plugins under **Settings → Plugins** on the target host first. Each package can also be installed on its own as described below; see each directory's README for updating, uninstalling and limitations.
+Multi-package repository of Paseo plugins and companion extensions. The four active Paseo plugins support daemon and app versions 0.8.x and 0.9.x, including prereleases. The separate quota and notification patches retain their own version restrictions. Enable plugins under **Settings → Plugins** on the target host first. Each active package can also be installed on its own as described below; see each directory's README for updating, uninstalling and limitations.
 
-Install everything at once (five plugins, the quota patch, Kimi renewal and the Hub ACP):
+Install the active packages at once (four plugins, the quota patch, Kimi renewal and the Hub ACP):
 
 ```bash
 ./install-all.sh
@@ -10,13 +10,13 @@ Install everything at once (five plugins, the quota patch, Kimi renewal and the 
 
 By default this installs from the local checkout, so keep this directory around. `--git` installs the plugins from GitHub instead; `--replace` removes the old single-repo sources before installing; `--dry-run` only previews. `--skip-quota` / `--skip-kimi` / `--skip-hub` skip the corresponding items.
 
-Update everything that is installed:
+Update the active packages that are installed:
 
 ```bash
 ./update-all.sh
 ```
 
-This runs `git pull`, then updates every item that was installed from this repo. Items that are not installed are skipped. `--skip-pull` updates without pulling.
+This runs `git pull`, then updates active items that were installed from this repo. Items that are not installed are skipped. `--skip-pull` updates without pulling. The archived `file-upload/` source is retained, but neither script installs, updates, or individually reloads it, even if it is already installed.
 
 On macOS `~/.local/bin` is not on the PATH by default, and nvm gets ahead of it. Set up the wrapper like this:
 
@@ -79,13 +79,9 @@ node pi-qwen-thinking/install.mjs
 
 Details: [pi-qwen-thinking/README.md](pi-qwen-thinking/README.md)
 
-## [File Transfer](file-upload)
+## [File Transfer — archived source](file-upload)
 
-A workspace file transfer panel: browse the directory tree and upload/download files on the current daemon host. Plugin ID: `paseo-file-upload`.
-
-```bash
-paseo plugin add lalaze/paseo-plugins --path file-upload
-```
+The local source for the former workspace file transfer panel is preserved in `file-upload/` for reference. Plugin ID: `paseo-file-upload`. It is no longer part of the installation, update, or migration workflow; do not install it as part of repository setup.
 
 Details: [file-upload/README.md](file-upload/README.md)
 
@@ -135,7 +131,8 @@ The former single-purpose repositories were merged here by directory. On hosts w
 
 - `paseo-sub-agnet` → [Director](director/README.md)
 - `paseo-agy-quote` → [Usage Glance](usage-glance/README.md), [quota patch](agy-quota/README.md), [Hub ACP](antigravity-hub/README.md)
-- `paseo-file-upload` → [File Transfer](file-upload/README.md)
+
+The former `paseo-file-upload` repository is preserved as [archived source](file-upload/README.md) only; it does not need to be migrated or reinstalled.
 
 ## Mobile runtime regression check
 

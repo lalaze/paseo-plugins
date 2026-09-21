@@ -16,8 +16,8 @@ usage() {
   cat <<'EOF'
 用法: ./install-all.sh [选项]
 
-从本仓库安装全部包：
-  - paseo-director / paseo-usage-glance / paseo-response-speed / paseo-file-upload / paseo-translate
+从本仓库安装启用的包：
+  - paseo-director / paseo-usage-glance / paseo-response-speed / paseo-translate
   - Antigravity 额度补丁、Kimi 按需续期
   - Antigravity Hub ACP
 
@@ -295,7 +295,6 @@ install_hub() {
 install_plugin director paseo-director
 install_plugin usage-glance paseo-usage-glance
 install_plugin response-speed paseo-response-speed
-install_plugin file-upload paseo-file-upload
 install_plugin translate paseo-translate
 
 if [ "$SKIP_QUOTA" = 1 ]; then

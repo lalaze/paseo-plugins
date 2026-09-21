@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import type { PluginClientContext, PluginButtonRegistration, PluginButtonIconProps, PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { Modal } from '@getpaseo/plugin/client/react-native';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { HeaderQuotaIcon, Overview } from './client/overview';
 import { ConsumptionPage } from './client/consumption-page';
@@ -17,6 +17,7 @@ import { headerSummary, isStale } from './shared/usage';
 import { ui } from './client/i18n';
 import { createQuotaDialogController, useQuotaDialog } from './client/quota-dialog';
 import { useDialogTooltipShield } from './client/dialog-shield';
+import { NativeQuotaDialog } from './client/native-quota-dialog';
 
 export default function contribute(client: PluginClientContext) {
   const quotaDialog = createQuotaDialogController();
@@ -48,10 +49,15 @@ export default function contribute(client: PluginClientContext) {
     const dialog = useQuotaDialog(quotaDialog, props.workspaceId);
     return <>
       <HeaderQuotaIcon {...props} query={query} preference={preference} />
-      {/* Portal events still bubble through the icon's React ancestors. */}
-      {dialog.open ? <Pressable accessible={false} focusable={false} onPress={event => event.stopPropagation()}>
-        <QuotaDialog {...props} onOpenChange={dialog.onOpenChange} />
-      </Pressable> : null}
+      {dialog.open ? Platform.OS !== 'web'
+        ? <NativeQuotaDialog theme={props.theme} onClose={() => dialog.onOpenChange(false)}>
+          <Overview {...props} query={query} preference={preference} popover />
+        </NativeQuotaDialog>
+        // Web portal events still bubble through the icon's React ancestors.
+        : <Pressable accessible={false} focusable={false} onPress={event => event.stopPropagation()}>
+          <QuotaDialog {...props} onOpenChange={dialog.onOpenChange} />
+        </Pressable>
+        : null}
     </>;
   };
   const ConsumptionSurface = (props: PluginSurfaceProps) => <ConsumptionPage {...props} fleet={fleet} />;
@@ -64,7 +70,8 @@ export default function contribute(client: PluginClientContext) {
     const stale = result.isError || isStale(result.data);
     const header = headerSummary(result.data?.providers ?? [], preference.get());
     const headerLabel = result.isPending ? ui('Quota · Loading…', '额度 · 读取中…') : stale ? ui('Quota · Update needed', '额度 · 待更新') : header.label;
-    const headerTitle = stale ? ui('Quota needs updating. Click to view the previous data and retry.', '额度待更新，点击查看上次数据并重试') : result.isPending ? ui('Loading quota', '正在读取额度') : header.detail;
+    const headerTitle = Platform.OS !== 'web' ? ui('Quota details', '额度明细')
+      : stale ? ui('Quota needs updating. Click to view the previous data and retry.', '额度待更新，点击查看上次数据并重试') : result.isPending ? ui('Loading quota', '正在读取额度') : header.detail;
     for (const [id, registration] of headers) {
       if (!workspaces.has(id)) { registration.remove(); headers.delete(id); }
     }

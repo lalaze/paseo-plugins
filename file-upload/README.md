@@ -1,8 +1,10 @@
-# Paseo File Transfer
+# Paseo File Transfer — archived source
+
+This plugin's source is retained for reference and local development only. Do not install or update it as part of repository setup. `install-all.sh` and `update-all.sh` exclude it, including when an older copy is already installed. Archiving the source does not uninstall an existing copy.
 
 An independent **File Transfer** workspace panel for **Paseo 0.8.x / 0.9.x (including prereleases)**. Files reside on the daemon host that owns the current workspace; uploads originate from, and downloads are saved to, the desktop app or browser you are using.
 
-This plugin lives in the [`file-upload/`](.) directory of the [`lalaze/paseo-plugins`](https://github.com/lalaze/paseo-plugins) multi-plugin repository. You do not need to reinstall it when switching computers that connect to the same Paseo daemon.
+The preserved source lives in the [`file-upload/`](.) directory of the [`lalaze/paseo-plugins`](https://github.com/lalaze/paseo-plugins) multi-plugin repository.
 
 ## Features
 
@@ -16,52 +18,6 @@ This plugin lives in the [`file-upload/`](.) directory of the [`lalaze/paseo-plu
 This is a standalone panel and does not modify Paseo's built-in **Files** or **Changes** lists. Native drag-out to Finder is not currently available, so downloads use a button.
 
 Open a workspace, press **⌘K** (**Ctrl+K** on Windows or Linux), and search for **File Transfer: Upload and Download**. It opens in the right-hand Explorer panel by default. You can also add **File Transfer** from the Explorer panel settings. Because the plugin is hosted only in the right-hand Explorer, it does not appear in the **+** menu of the center tab bar.
-
-## Installation
-
-Install the plugin separately on each daemon. Both daemon and client must be **0.8.x or 0.9.x (including prereleases)**. The plugin ID is `paseo-file-upload`.
-
-Enable plugins under Paseo **Settings → Plugins** on the target host. Make sure Git and npm are installed and that the daemon user has GitHub SSH read access to this repository, then run on that host:
-
-```bash
-paseo plugin add lalaze/paseo-plugins --path file-upload
-paseo plugin ls paseo-file-upload --json
-```
-
-SSH source:
-
-```bash
-paseo plugin install git@github.com:lalaze/paseo-plugins.git:file-upload --ref main
-```
-
-`--path file-upload` or `:file-upload` selects the plugin subdirectory in this multi-plugin repository. Installation automatically runs `npm ci --include=dev --ignore-scripts` with locked dependencies and a type check before Paseo compiles and loads the plugin.
-
-After the status becomes `running`, open a workspace, press **⌘K**, and search for **File Transfer: Upload and Download**.
-
-## Updating
-
-For a GitHub-source installation:
-
-```bash
-paseo plugin update paseo-file-upload
-paseo plugin ls paseo-file-upload --json
-```
-
-A local-directory installation cannot use `paseo plugin update`. After replacing the source, run:
-
-```bash
-npm ci --include=dev --ignore-scripts
-npm run check
-paseo plugin reload paseo-file-upload
-```
-
-If you previously installed from a local directory or the old `paseo-file-upload` repository, remove it before installing from this repository:
-
-```bash
-paseo plugin remove paseo-file-upload
-paseo plugin add lalaze/paseo-plugins --path file-upload
-paseo plugin ls paseo-file-upload --json
-```
 
 ## Uninstallation
 
@@ -82,11 +38,9 @@ If the repository is already cloned, run the following in `file-upload`:
 ```bash
 npm ci --include=dev --ignore-scripts
 npm run check
-paseo plugin install "$PWD"
-paseo plugin ls paseo-file-upload --json
 ```
 
-`paseo plugin install` records the directory path. If you move this repository, reinstall any plugin installed from that path.
+These commands only prepare dependencies and check the preserved source; they do not install it into the daemon.
 
 ## Compatibility and limitations
 

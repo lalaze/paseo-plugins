@@ -1,6 +1,6 @@
 {
   "name": "paseo-usage-glance",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "private": true,
   "type": "module",
   "description": "Per-host quotas and multi-host token consumption summaries for Paseo",
@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
     "build": "node scripts/build.mjs",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run typecheck && npm test && npm run build && node scripts/check-quota-header.mjs"
   },
   "devDependencies": {
     "@getpaseo/client": "0.8.0",
