@@ -12,7 +12,7 @@ export function NativeQuotaDialog({ theme, onClose, children }: {
 }) {
   const { height } = useWindowDimensions();
   return <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-    <SafeAreaView style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end', alignItems: 'center' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
       <Pressable accessibilityRole="button" accessibilityLabel={ui('Dismiss quota details', '收起额度明细')} onPress={onClose}
         style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }} />
       <View accessibilityViewIsModal style={{

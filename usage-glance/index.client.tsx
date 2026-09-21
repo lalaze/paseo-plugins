@@ -77,10 +77,12 @@ export default function contribute(client: PluginClientContext) {
     }
     for (const workspaceId of workspaces) {
       const existing = headers.get(workspaceId);
+      // Hermes dynamic eval can share a loop binding between closures. Capture
+      // the workspace as a bound argument so every button opens its own dialog.
       if (existing) existing.update({ label: headerLabel, title: headerTitle });
       else headers.set(workspaceId, client.addHeaderButton({
         id: 'usage', workspaceId,
-        button: { label: headerLabel, title: headerTitle, icon: HeaderIcon, behavior: { kind: 'action', onPress: () => quotaDialog.toggle(workspaceId) } },
+        button: { label: headerLabel, title: headerTitle, icon: HeaderIcon, behavior: { kind: 'action', onPress: quotaDialog.toggle.bind(quotaDialog, workspaceId) } },
       }));
     }
   }

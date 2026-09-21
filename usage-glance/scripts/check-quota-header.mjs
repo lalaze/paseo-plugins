@@ -26,7 +26,9 @@ for (const platform of ['android', 'ios', 'web']) {
     return require(name);
   };
   const contribute = (0, eval)(source)(runtimeRequire).default;
-  let button, tree, removed = false;
+  const buttons = new Map();
+  const workspaceIds = ['workspace-first', 'workspace-middle', 'workspace-last'];
+  let tree, removed = 0;
   const client = {
     paseo: {
       providers: { listUsage: async () => ({
@@ -35,12 +37,13 @@ for (const platform of ['android', 'ios', 'web']) {
           windows: [{ id: 'weekly', label: 'Weekly', remainingPct: 80 }],
         })), fetchedAt: new Date().toISOString(),
       }), subscribe: () => noop },
-      workspaces: { subscribe: () => noop, list: async () => ({ entries: [{ id: 'workspace' }], pageInfo: { hasMore: false } }) },
+      workspaces: { subscribe: () => noop, list: async () => ({ entries: workspaceIds.map(id => ({ id })), pageInfo: { hasMore: false } }) },
     },
     rpc: async (_contract, input) => input.range ? { range: input.range, sources: [], scanning: false } : {},
     addHeaderButton: contribution => {
-      button = contribution.button;
-      return { update: patch => Object.assign(button, patch), remove: () => { removed = true; } };
+      const button = contribution.button;
+      buttons.set(contribution.workspaceId, button);
+      return { update: patch => Object.assign(button, patch), remove: () => { removed++; } };
     },
     addSurface: () => noop, addSidebarItem: () => noop, addCommandCenterItem: () => noop,
   };
@@ -48,50 +51,56 @@ for (const platform of ['android', 'ios', 'web']) {
   const props = {
     theme: { colors: { foreground: '#fff', foregroundMuted: '#aaa', surface0: '#111', surface1: '#222', surface2: '#333', border: '#444', accent: '#acf' } },
     host: { id: platform, label: 'Test host' }, layout: { compact: platform !== 'web', platform },
-    context: 'workspace', workspaceId: 'workspace', size: 16, color: '#aaa',
+    context: 'workspace', workspaceId: workspaceIds[0], size: 16, color: '#aaa',
   };
   try {
     await new Promise(resolve => setImmediate(resolve));
-    assert.ok(button, `${platform}: workspace registers its quota button`);
-    assert.equal(button.behavior.kind, 'action', 'quota must not nest its scroller inside a host menu sheet');
-    await act(async () => { tree = create(React.createElement(button.icon, props)); });
-    for (let attempt = 0; attempt < 3; attempt++) {
-      // The host temporarily replaces action icons with a pending spinner.
-      await act(async () => { tree.update(null); button.behavior.onPress(); });
-      await act(async () => { tree.update(React.createElement(button.icon, props)); });
-      if (platform === 'web') {
-        assert.equal(tree.root.findAllByType('modal').length, 1);
-        await act(async () => { tree.root.findByType('modal').props.onOpenChange(false); });
-        assert.equal(tree.root.findAllByType('modal').length, 0);
-      } else {
-        const modal = tree.root.findByType('native-modal');
-        assert.equal(modal.props.visible, true);
-        assert.equal(tree.root.findAllByType('modal').length, 0, 'no host bottom sheet competes for gestures');
-        assert.equal(modal.findAllByType('scroll-view').length, 1, 'one native scroll container owns the list');
-        const scroll = modal.findByType('scroll-view');
-        assert.ok(scroll.findAllByType('text').some(node => node.props.children === 'Provider 11'), 'last provider stays inside the scroll content');
-        const card = modal.findByProps({ accessibilityViewIsModal: true });
-        assert.ok(card.props.style.height < 800 * 0.8, 'dialog stays below full-screen height');
-        assert.ok(modal.findAllByType('text').some(node => /Quota on this host|本机额度/.test(node.props.children)));
-        if (attempt === 0) {
-          windowHeight = 360;
-          await act(async () => { tree.update(React.createElement(button.icon, { ...props })); });
-          assert.ok(modal.findByProps({ accessibilityViewIsModal: true }).props.style.height < 360 * 0.8, 'landscape retains a bounded dialog');
-          await act(async () => { modal.props.onRequestClose(); });
-          windowHeight = 800;
+    assert.equal(buttons.size, workspaceIds.length, `${platform}: all workspaces register quota buttons`);
+    for (const workspaceId of workspaceIds) {
+      const button = buttons.get(workspaceId);
+      props.workspaceId = workspaceId;
+      assert.equal(button.behavior.kind, 'action', 'quota must not nest its scroller inside a host menu sheet');
+      await act(async () => { tree = create(React.createElement(button.icon, props)); });
+      for (let attempt = 0; attempt < 3; attempt++) {
+        // The host temporarily replaces action icons with a pending spinner.
+        await act(async () => { tree.update(null); button.behavior.onPress(); });
+        await act(async () => { tree.update(React.createElement(button.icon, props)); });
+        if (platform === 'web') {
+          assert.equal(tree.root.findAllByType('modal').length, 1);
+          await act(async () => { tree.root.findByType('modal').props.onOpenChange(false); });
+          assert.equal(tree.root.findAllByType('modal').length, 0);
+        } else {
+          const modal = tree.root.findByType('native-modal');
+          assert.equal(modal.props.visible, true);
+          assert.equal(tree.root.findAllByType('modal').length, 0, 'no host bottom sheet competes for gestures');
+          assert.equal(modal.findAllByType('scroll-view').length, 1, 'one native scroll container owns the list');
+          const scroll = modal.findByType('scroll-view');
+          assert.ok(scroll.findAllByType('text').some(node => node.props.children === 'Provider 11'), 'last provider stays inside the scroll content');
+          const card = modal.findByProps({ accessibilityViewIsModal: true });
+          assert.ok(card.props.style.height < 800 * 0.8, 'dialog stays below full-screen height');
+          assert.ok(modal.findAllByType('text').some(node => /Quota on this host|本机额度/.test(node.props.children)));
+          if (attempt === 0) {
+            windowHeight = 360;
+            await act(async () => { tree.update(React.createElement(button.icon, { ...props })); });
+            assert.ok(modal.findByProps({ accessibilityViewIsModal: true }).props.style.height < 360 * 0.8, 'landscape retains a bounded dialog');
+            await act(async () => { modal.props.onRequestClose(); });
+            windowHeight = 800;
+          }
+          else {
+            const control = modal.findAllByType('pressable').find(node =>
+              new RegExp(attempt === 1 ? 'Close quota|关闭额度' : 'Dismiss quota|收起额度').test(node.props.accessibilityLabel));
+            assert.ok(control, 'close button and backdrop are available');
+            await act(async () => { control.props.onPress(); });
+          }
+          assert.equal(tree.root.findAllByType('native-modal').length, 0);
         }
-        else {
-          const control = modal.findAllByType('pressable').find(node =>
-            new RegExp(attempt === 1 ? 'Close quota|关闭额度' : 'Dismiss quota|收起额度').test(node.props.accessibilityLabel));
-          assert.ok(control, 'close button and backdrop are available');
-          await act(async () => { control.props.onPress(); });
-        }
-        assert.equal(tree.root.findAllByType('native-modal').length, 0);
       }
+      await act(async () => { tree.unmount(); });
+      tree = undefined;
     }
   } finally {
     await act(async () => { tree?.unmount(); cleanup(); });
   }
-  assert.ok(removed, 'unloading removes the header');
-  console.log(`PASS ${platform}: quota content opens, closes and reopens`);
+  assert.equal(removed, workspaceIds.length, 'unloading removes every header');
+  console.log(`PASS ${platform}: quota opens, closes and reopens in all three workspaces`);
 }
