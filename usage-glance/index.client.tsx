@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import type { PluginClientContext, PluginButtonRegistration, PluginButtonIconProps, PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { Modal } from '@getpaseo/plugin/client/react-native';
-import { Pressable } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { HeaderQuotaIcon, Overview } from './client/overview';
 import { ConsumptionPage } from './client/consumption-page';
@@ -16,6 +16,7 @@ import { readWorkspaceConsumption } from './shared/consumption';
 import { headerSummary, isStale } from './shared/usage';
 import { ui } from './client/i18n';
 import { createQuotaDialogController, useQuotaDialog } from './client/quota-dialog';
+import { useDialogTooltipShield } from './client/dialog-shield';
 
 export default function contribute(client: PluginClientContext) {
   const quotaDialog = createQuotaDialogController();
@@ -36,6 +37,12 @@ export default function contribute(client: PluginClientContext) {
   void client.rpc(readHostIdentity, {}).then(identity => { registration.identify(identity); workspaceRegistration.identify(identity); }).catch(() => {});
   const headers = new Map<string, PluginButtonRegistration>();
   let workspaces = new Set<string>();
+  const QuotaDialog = (props: PluginButtonIconProps & { onOpenChange(open: boolean): void }) => {
+    const shield = useDialogTooltipShield();
+    return <Modal title={ui('Quota details', '额度明细')} open onOpenChange={props.onOpenChange}>
+      <Modal.Content><View ref={shield}><Overview {...props} query={query} preference={preference} popover /></View></Modal.Content>
+    </Modal>;
+  };
   const HeaderIcon = (props: PluginButtonIconProps) => {
     useEffect(() => { registration.identify(props.host, true); workspaceRegistration.identify(props.host, true); }, [props.host.id, props.host.label]);
     const dialog = useQuotaDialog(quotaDialog, props.workspaceId);
@@ -43,9 +50,7 @@ export default function contribute(client: PluginClientContext) {
       <HeaderQuotaIcon {...props} query={query} preference={preference} />
       {/* Portal events still bubble through the icon's React ancestors. */}
       {dialog.open ? <Pressable accessible={false} focusable={false} onPress={event => event.stopPropagation()}>
-        <Modal title={ui('Quota details', '额度明细')} open onOpenChange={dialog.onOpenChange}>
-          <Modal.Content><Overview {...props} query={query} preference={preference} popover /></Modal.Content>
-        </Modal>
+        <QuotaDialog {...props} onOpenChange={dialog.onOpenChange} />
       </Pressable> : null}
     </>;
   };
