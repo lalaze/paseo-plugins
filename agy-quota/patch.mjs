@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, existsSync, realpathSync, mkdirSync, renameSync, unlinkSync, mkdtempSync, cpSync, symlinkSync, rmSync, readdirSync } from 'node:fs';
-import { resolve, dirname, join, delimiter } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync, mkdtempSync, cpSync, symlinkSync, rmSync, readdirSync } from 'node:fs';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { createRequire } from 'node:module';
+import { locatePaseoInstallation as locate } from '../scripts/paseo-installation.mjs';
 import { execFileSync } from 'node:child_process';
 
 export const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -19,36 +19,7 @@ const json = path => JSON.parse(readFileSync(path, 'utf8'));
 const read = path => readFileSync(path, 'utf8');
 const atomic = (path, text) => { const tmp = `${path}.${process.pid}.tmp`; writeFileSync(tmp, text, { mode: 0o600 }); renameSync(tmp, path); };
 
-export function locate(cliOverride) {
-  let cli = cliOverride && resolve(cliOverride);
-  if (!cli) {
-    const candidates = (process.env.PATH || '')
-      .split(delimiter)
-      .map(p => join(p, 'paseo'))
-      .filter(existsSync);
-    for (const executable of candidates) {
-      const candidate = dirname(dirname(realpathSync(executable)));
-      try {
-        if (json(join(candidate, 'package.json')).name === '@getpaseo/cli') {
-          cli = candidate;
-          break;
-        }
-      } catch {
-        // PATH may intentionally contain a stable wrapper before the npm CLI.
-      }
-    }
-    if (!cli) throw new Error('Paseo CLI package not found on PATH; pass --cli /absolute/path/to/@getpaseo/cli');
-  }
-  if (json(join(cli, 'package.json')).name !== '@getpaseo/cli') throw new Error('Not a Paseo CLI package');
-  const req = createRequire(join(cli, 'package.json'));
-  let server = dirname(req.resolve('@getpaseo/server'));
-  while (!existsSync(join(server, 'package.json'))) {
-    const parent = dirname(server);
-    if (parent === server) throw new Error('Cannot find Paseo server package');
-    server = parent;
-  }
-  return { cli, server, req, version: json(join(server, 'package.json')).version };
-}
+export { locate };
 
 export function patchedManifest(original) {
   if (/antigravity/i.test(original)) throw new Error('Antigravity registration already exists; inspect upstream support first');

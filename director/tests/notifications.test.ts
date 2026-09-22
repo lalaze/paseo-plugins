@@ -58,8 +58,43 @@ test('host patch is reversible and suppresses both push and in-app delivery whil
 
 test('installed Paseo dispatcher matches the guarded patch and rolls back byte-for-byte', t => {
   let target;
-  try { target = locate(); } catch (error) { if (error instanceof Error && error.message.startsWith('Paseo CLI not found')) { t.skip('Paseo CLI is not installed'); return; } throw error; }
+  try { target = locate(process.env.PASEO_PATCH_TEST_CLI); } catch (error) { if (error instanceof Error && error.message.startsWith('Paseo CLI not found')) { t.skip('Paseo CLI is not installed'); return; } throw error; }
   const source = readFileSync(target.path, 'utf8');
   const original = transform(source, true), patched = transform(original);
   assert.equal(transform(patched, true), original);
+});
+
+test('0.9 filtered notification recipients retain selection and event delivery', async () => {
+  const source = `class Server {
+    async broadcastAgentAttention(params) {
+        const agent = this.agentManager.getAgent(params.agentId);
+        const clientEntries = [];
+        clientEntries.push({ ws: 'events-only' }, { ws: 'notifications' });
+        const notificationEntries = clientEntries.slice(1);
+        const plan = { shouldPush: true, inAppRecipientIndex: params.recipient };
+        if (plan.shouldPush) { this.pushes++; }
+        for (const { ws } of clientEntries) {
+            const shouldNotify = plan.inAppRecipientIndex !== null &&
+                notificationEntries[plan.inAppRecipientIndex]?.ws === ws;
+            this.events.push({ ws, shouldNotify });
+        }
+    }
+    async broadcastTerminalAttention(params) {}
+}`;
+  const patched = transform(source);
+  assert.equal(transform(patched), patched);
+  assert.equal(transform(patched, true), source);
+  assert.throws(() => transform(source.replace('notificationEntries[plan.inAppRecipientIndex]?.ws', 'clientEntries[plan.inAppRecipientIndex]?.ws')), /anchor changed/);
+  const Server = new Function(patched + '; return Server;')();
+  const worker = { labels: { 'director-run': 'run', 'director-role': 'worker' } };
+  for (const [agent, reason, muted] of [[worker, 'finished', true], [worker, 'permission', false], [worker, 'error', false], [{ labels: {} }, 'finished', false]] as const) {
+    for (const recipient of [null, 0, 1]) {
+      const host = new Server();
+      host.pushes = 0; host.events = [];
+      host.agentManager = { getAgent: () => agent, getTimeline: () => [] };
+      await host.broadcastAgentAttention({ agentId: 'a', reason, recipient });
+      assert.equal(host.pushes, muted ? 0 : 1);
+      assert.deepEqual(host.events, [{ ws: 'events-only', shouldNotify: false }, { ws: 'notifications', shouldNotify: !muted && recipient === 0 }]);
+    }
+  }
 });

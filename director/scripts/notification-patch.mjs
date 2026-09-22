@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, renameSync, existsSync, realpathSync, statSync } from 'node:fs';
-import { dirname, join, resolve, delimiter } from 'node:path';
-import { createRequire } from 'node:module';
+import { readFileSync, writeFileSync, renameSync, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { locatePaseoInstallation } from '../../scripts/paseo-installation.mjs';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { shouldMuteDirectorFinish } from './notification-policy.mjs';
@@ -13,7 +13,11 @@ const injection = marker + `        const directorMuteFinished = (${shouldMuteDi
 const replacements = [
   ['        const clientEntries = [];', injection + '        const clientEntries = [];'],
   ['        if (plan.shouldPush) {', '        if (plan.shouldPush && !directorMuteFinished) {'],
+];
+// 0.9 selects recipients from notification subscribers, not all event subscribers.
+const recipientReplacements = [
   ['            const shouldNotify = clientIndex === plan.inAppRecipientIndex;', '            const shouldNotify = !directorMuteFinished && clientIndex === plan.inAppRecipientIndex;'],
+  ['            const shouldNotify = plan.inAppRecipientIndex !== null &&\n                notificationEntries[plan.inAppRecipientIndex]?.ws === ws;', '            const shouldNotify = !directorMuteFinished && plan.inAppRecipientIndex !== null &&\n                notificationEntries[plan.inAppRecipientIndex]?.ws === ws;'],
 ];
 
 export function transform(source, rollback = false) {
@@ -26,7 +30,9 @@ export function transform(source, rollback = false) {
     return source;
   }
   let body = source.slice(start, stop);
-  for (const pair of replacements) {
+  const recipients = recipientReplacements.filter(pair => body.includes(pair[rollback ? 1 : 0]));
+  if (recipients.length !== 1) throw new Error('Paseo notification recipient anchor changed; patch refused');
+  for (const pair of [...replacements, ...recipients]) {
     const [from, to] = rollback ? [pair[1], pair[0]] : pair;
     if (body.split(from).length !== 2) throw new Error('Paseo notification anchor changed; patch refused');
     body = body.replace(from, to);
@@ -35,18 +41,9 @@ export function transform(source, rollback = false) {
 }
 
 export function locate(cliOverride) {
-  const candidates = cliOverride ? [resolve(cliOverride)] : (process.env.PATH ?? '').split(delimiter).map(path => join(path, 'paseo')).filter(existsSync).map(path => dirname(dirname(realpathSync(path))));
-  for (const cli of candidates) {
-    try {
-      if (JSON.parse(readFileSync(join(cli, 'package.json'), 'utf8')).name !== '@getpaseo/cli') continue;
-      let server = dirname(createRequire(join(cli, 'package.json')).resolve('@getpaseo/server'));
-      while (!existsSync(join(server, 'package.json'))) { const parent = dirname(server); if (parent === server) throw new Error('Paseo package not found'); server = parent; }
-      const version = JSON.parse(readFileSync(join(server, 'package.json'), 'utf8')).version;
-      if (!/^0\.8\./.test(version)) throw new Error(`Unsupported Paseo version ${version}`);
-      return { path: join(server, 'dist/server/server/websocket-server.js'), version };
-    } catch (error) { if (cliOverride || error.message.startsWith('Unsupported')) throw error; }
-  }
-  throw new Error('Paseo CLI not found; pass --cli /path/to/@getpaseo/cli');
+  const { server, version } = locatePaseoInstallation(cliOverride);
+  if (!/^0\.(8|9)\./.test(version)) throw new Error(`Unsupported Paseo version ${version}`);
+  return { path: join(server, 'dist/server/server/websocket-server.js'), version };
 }
 
 export function update(path, command) {

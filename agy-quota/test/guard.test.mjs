@@ -4,7 +4,8 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { locate } from '../patch.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const GUARD = join(ROOT, 'bin/paseo');
@@ -68,6 +69,33 @@ test('restart reapplies quota and Director notification patches before launching
   } finally {
     f.cleanup();
   }
+});
+
+test('fork startup reaches Paseo after real quota and Director compatibility checks', t => {
+  const target = locate(process.env.PASEO_PATCH_TEST_CLI);
+  if (!/^0\.(8|9)\./.test(target.version)) {
+    t.skip('Director companion patches require Paseo 0.8.x or 0.9.x');
+    return;
+  }
+  const f = fixture();
+  try {
+    writeFileSync(join(f.cliDir, 'package.json'), JSON.stringify({ name: '@lalaze/paseo-cli' }));
+    symlinkSync(join(target.cli, 'node_modules'), join(f.cliDir, 'node_modules'));
+    const cases = [
+      ['google-patch.mjs', join(ROOT, 'patch.mjs'), 'check'],
+      ['kimi-patch.mjs', join(ROOT, 'kimi-patch.mjs'), 'checkKimi'],
+      ['grok-patch.mjs', join(ROOT, 'grok-patch.mjs'), 'checkGrok'],
+    ];
+    for (const [filename, script, check] of cases) {
+      writeFileSync(join(f.dir, filename), `import { locate } from ${JSON.stringify(pathToFileURL(join(ROOT, 'patch.mjs')).href)};\nimport { ${check} } from ${JSON.stringify(pathToFileURL(script).href)};\n${check}(locate(process.argv[4]));\n`);
+    }
+    const director = pathToFileURL(join(ROOT, '../director/scripts/notification-patch.mjs')).href;
+    const header = pathToFileURL(join(ROOT, '../director/scripts/header-order-patch.mjs')).href;
+    writeFileSync(join(f.dir, 'director-patch.mjs'), `import { locate, update } from ${JSON.stringify(director)};\nimport { locate as header, update as updateHeader } from ${JSON.stringify(header)};\nupdate(locate(process.argv[4]).path, 'check');\nupdateHeader(header(process.argv[4]).path, 'check');\n`);
+    const result = spawnSync(f.guard, ['daemon', 'start'], { env: f.env, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(f.realLog, 'utf8'), 'daemon\nstart\n');
+  } finally { f.cleanup(); }
 });
 
 test('an incompatible Google patch blocks restart without invoking Paseo', () => {

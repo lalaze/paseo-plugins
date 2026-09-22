@@ -4,7 +4,7 @@
 
 **直接查看额度：** Paseo 0.8.x 可安装 [额度速览插件](../usage-glance/README.md)，电脑端工作区右上角默认显示最低剩余额度及供应商，也可在展开后固定某一个供应商。切换聊天、终端或文件仍可查看。点击顶部额度展开全部明细，不必进入设置。该展示插件独立安装，复用已有额度数据。
 
-支持基线：Paseo `0.7.2`、Node.js `22+`、Linux 或 macOS、已登录的 Antigravity `agy`。使用 Paseo 自带的 `node-pty`；测试需要 `openssl` 和绑定本机回环端口的权限。macOS 用系统自带的 `/usr/sbin/lsof` 和 `/bin/ps` 查找本进程拥有的端口。没有额外 npm 依赖，不需要 `npm install`。
+支持基线：Paseo `0.7.2`、Node.js `22+`、Linux 或 macOS、已登录的 Antigravity `agy`。已核对 `@lalaze/paseo-cli@0.9.0-beta.2.lalaze.1` 的额度模块、协议和续期补丁边界与基线一致。使用 Paseo 自带的 `node-pty`；测试需要 `openssl` 和绑定本机回环端口的权限。macOS 用系统自带的 `/usr/sbin/lsof` 和 `/bin/ps` 查找本进程拥有的端口。没有额外 npm 依赖，不需要 `npm install`。
 
 安装、更新、卸载都在本目录用 `patch.mjs` 完成，并需要重启 daemon。
 
@@ -51,10 +51,12 @@ paseo daemon restart
 
 `live` 只读取额度，不发送模型提示词，不消耗生成 token；它会打印当前账号的额度，但不输出账号标识或凭证。后台 `agy` 可能正常刷新它自己管理的登录状态。界面沿用 Paseo 原有缓存和 Refresh 行为。
 
-脚本从 PATH 中的 `paseo` 定位安装。nvm 切换后，确认 PATH 指向实际运行的 Paseo；也可指定：
+脚本从 PATH 中的 `paseo` 定位安装，支持官方 `@getpaseo/cli` 和 fork `@lalaze/paseo-cli`，按当前 CLI 的依赖解析 daemon。nvm 切换后，确认 PATH 指向实际运行的 Paseo；也可指定：
 
 ```bash
 node patch.mjs check --cli /absolute/path/to/node_modules/@getpaseo/cli
+# fork 安装：
+node patch.mjs check --cli /absolute/path/to/node_modules/@lalaze/paseo-cli
 ```
 
 所有命令均支持 `--cli`。需拥有目标安装目录写权限，脚本不会自动执行 sudo 或更新 Paseo。本目录路径必须保持可用。
