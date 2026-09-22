@@ -7,23 +7,17 @@ type Runtime = { translate(text: string, target: TargetLanguage): Promise<Transl
 type BlockTranslator = { dispose(): void };
 
 // Paseo's web UI is React Native Web: markdown blocks are <div>s tagged with data-paseo-markdown-tag,
-// list items are flex rows of [marker, content], and user messages are a single plain Text element.
+// and list items are flex rows of [marker, content].
 const MARKDOWN_BLOCK_SELECTOR = ['p', 'li', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].map(tag => `[data-paseo-markdown-tag="${tag}"]`).join(', ');
 const MESSAGE_SELECTOR = '[data-testid="assistant-message"], [data-testid="user-message"]';
 const PLUGIN_SELECTOR = '[data-paseo-translate-group], [data-paseo-translate-block], [data-paseo-translate]';
 const MAX_BLOCK_CHARS = 5000;
 
-/** Hoverable text block inside a chat message, excluding the plugin's own nodes. */
-function hoveredBlock(target: EventTarget | null): Element | null {
-  const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+/** Hoverable text block inside an assistant message, excluding the plugin's own nodes. */
+function hoveredBlock(element: Element | null): Element | null {
   if (!element || element.closest(PLUGIN_SELECTOR)) return null;
   const message = element.closest(MESSAGE_SELECTOR);
-  if (!message?.closest('[data-testid="agent-chat-scroll"]')) return null;
-  if (message.matches('[data-testid="user-message"]')) {
-    if (element.closest('[data-testid="user-message-trailing-row"]')) return null;
-    const text = element.closest('[dir="auto"]');
-    return text && message.contains(text) && (text.textContent ?? '').trim() ? text : null;
-  }
+  if (!message?.matches('[data-testid="assistant-message"]') || !message.closest('[data-testid="agent-chat-scroll"]')) return null;
   const block = element.closest(MARKDOWN_BLOCK_SELECTOR);
   return block && !block.closest('[data-paseo-markdown-tag="pre"]') ? block : null;
 }
@@ -155,7 +149,10 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
 
   const pointerMove = (event: PointerEvent) => {
     if (trigger?.contains(event.target as Node | null)) return;
-    const block = hoveredBlock(event.target);
+    const element = event.target instanceof Element ? event.target : event.target instanceof Node ? event.target.parentElement : null;
+    // User messages must dismiss the button even inside the gap tolerance around an AI reply.
+    if (element?.closest('[data-testid="user-message"]')) { hide(); return; }
+    const block = hoveredBlock(element);
     if (!block) { if (!nearHovered(event.clientX, event.clientY)) hide(); return; }
     if (block !== hovered) show(block);
   };
