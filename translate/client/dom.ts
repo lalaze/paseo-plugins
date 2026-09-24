@@ -1,3 +1,6 @@
+// Body-mounted translation controls stay below Paseo's overlay-root (z-index 1).
+export const FLOATING_CONTROL_Z_INDEX = '0';
+
 export function style(element: HTMLElement, values: Partial<CSSStyleDeclaration>) { Object.assign(element.style, values); }
 
 export function button(label: string, title = label) {

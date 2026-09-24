@@ -2,7 +2,7 @@ import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { settingsRpc } from '@getpaseo/plugin';
 import { parseConversationRoute } from './route';
 import { createBlockTranslator } from './blocks';
-import { button, style } from './dom';
+import { button, style, FLOATING_CONTROL_Z_INDEX } from './dom';
 import { isEnglishCompatibleDraft, matchesEnglishLockModel, normalizeComposerModelLabel, parseEnglishLockModels } from './english';
 import { translateSelectionRpc, type TargetLanguage, type TranslationResult } from '../shared/rpc';
 import { translationSettings, validateTranslationSettings } from '../shared/settings';
@@ -411,7 +411,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     return editor?.closest<HTMLElement>('[data-testid="message-input-root"]') ?? editor;
   }
 
-  /** Host modals (quota details, settings) stack below the launcher, so the pair hides instead of covering them. */
+  /** Hide controls while a host modal owns interaction, including non-overlapping controls. */
   function hostModalOpen() {
     if (document.querySelector(MODAL_SELECTOR)) return true;
     return launcher?.getAttribute('aria-hidden') === 'true';
@@ -468,14 +468,14 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     if (!route || !runtimes.has(route.serverId) || !findComposer()) { activePolicyKey = null; modelRequest++; applyAutomaticEnglishLock(null, []); removeLauncher(); return; }
     if (!launcher) {
       launcher = button(ui('Translate', '译'), ui('Translate the current chat draft and replace the original (Alt/Option + T)', '翻译当前聊天输入并替换原文（Alt/Option + T）')); launcher.dataset.paseoTranslate = 'launcher';
-      style(launcher, { position: 'fixed', zIndex: '2147482999', minWidth: '34px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
+      style(launcher, { position: 'fixed', zIndex: FLOATING_CONTROL_Z_INDEX, minWidth: '34px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
       launcher.addEventListener('pointerdown', event => event.preventDefault());
       launcher.addEventListener('click', () => { void translateComposer(); });
       document.body.append(launcher);
     }
     if (!englishGuard) {
       englishGuard = button('EN', ui('Turn on strict English mode', '开启严格英文模式')); englishGuard.dataset.paseoTranslate = 'english-guard';
-      style(englishGuard, { position: 'fixed', zIndex: '2147482999', minWidth: '38px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
+      style(englishGuard, { position: 'fixed', zIndex: FLOATING_CONTROL_Z_INDEX, minWidth: '38px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
       englishGuard.addEventListener('pointerdown', event => event.preventDefault());
       englishGuard.addEventListener('click', () => {
         clearGuardTimer();
@@ -495,7 +495,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     if (!runtime) return;
     trigger = button(ui('Translate', '翻译'), ui('Translate the selected text', '翻译选中的文字'));
     trigger.dataset.paseoTranslate = 'trigger';
-    style(trigger, { position: 'fixed', zIndex: '2147483000', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
+    style(trigger, { position: 'fixed', zIndex: FLOATING_CONTROL_Z_INDEX, boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
     trigger.addEventListener('pointerdown', event => event.preventDefault());
     trigger.addEventListener('click', () => { removeTrigger(); void translateInline(snapshot, runtime); });
     document.body.append(trigger); place(trigger, snapshot.rect);

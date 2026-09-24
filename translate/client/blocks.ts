@@ -1,6 +1,6 @@
 import type { TargetLanguage, TranslationResult } from '../shared/rpc';
 import { parseConversationRoute } from './route';
-import { button, style } from './dom';
+import { button, style, FLOATING_CONTROL_Z_INDEX } from './dom';
 import { localizeTranslationError, ui } from './i18n';
 
 type Runtime = { translate(text: string, target: TargetLanguage): Promise<TranslationResult> };
@@ -121,7 +121,7 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
     if (!trigger) {
       trigger = button(ui('Translate', '译'), ui('Translate this block', '翻译这一段'));
       trigger.dataset.paseoTranslate = 'block-trigger';
-      style(trigger, { position: 'fixed', zIndex: '2147483000', padding: '2px 7px', boxShadow: '0 4px 14px rgba(0,0,0,.28)' });
+      style(trigger, { position: 'fixed', zIndex: FLOATING_CONTROL_Z_INDEX, padding: '2px 7px', boxShadow: '0 4px 14px rgba(0,0,0,.28)' });
       trigger.addEventListener('pointerdown', event => event.preventDefault());
       trigger.addEventListener('click', () => {
         const runtime = currentRuntime();
