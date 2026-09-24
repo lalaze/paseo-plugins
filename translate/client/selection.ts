@@ -227,24 +227,30 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     const annotation = existing ?? document.createElement('div');
     if (!existing) {
       annotation.dataset.paseoTranslateAnnotation = ''; annotation.dataset.paseoTranslateKey = selectionKey;
-      style(annotation, { display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: '3px 5px', maxWidth: '100%', padding: '3px 6px', border: '1px solid rgba(96,165,250,.24)', borderRadius: '6px', background: 'rgba(59,130,246,.10)', color: '#e4e4e7', font: '12px/1.45 system-ui, sans-serif' });
+      // Short translations sit inline after the source; longer ones drop below it at full width. × is pinned to the corner so it never takes a line.
+      style(annotation, { position: 'relative', display: 'inline-flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '2px 6px', maxWidth: '100%', boxSizing: 'border-box', padding: '4px 28px 4px 6px', border: '1px solid rgba(96,165,250,.28)', borderRadius: '8px', background: 'rgba(24,31,46,.94)', boxShadow: '0 2px 8px rgba(0,0,0,.25)', color: '#e4e4e7', font: '13px/20px system-ui, sans-serif' });
+      const head = document.createElement('span');
+      style(head, { display: 'inline-flex', alignItems: 'center', gap: '6px', flex: '0 1 auto', minWidth: '0', maxWidth: '100%' });
       const source = document.createElement('span'); source.dataset.paseoTranslateSource = '';
       // The selected text is already highlighted in the message, so the echo is a clipped label and the translation keeps the room.
-      style(source, { flex: '0 1 auto', maxWidth: 'min(100%, 20em)', padding: '0 5px', borderRadius: '4px', background: 'rgba(59,130,246,.32)', color: '#dbeafe', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' });
-      const arrow = document.createElement('span'); arrow.textContent = '→'; arrow.setAttribute('aria-hidden', 'true'); style(arrow, { color: '#93c5fd' });
-      const output = document.createElement('span'); output.dataset.paseoTranslateOutput = ''; style(output, { flex: '1 1 14em', minWidth: '0', overflowWrap: 'anywhere' });
-      const remove = button('×', ui('Remove this translation', '移除这条翻译')); style(remove, { flex: '0 0 auto', padding: '0 5px', border: '0', background: 'transparent', color: '#a1a1aa', fontSize: '15px', lineHeight: '1.3' });
+      style(source, { flex: '0 1 auto', minWidth: '0', maxWidth: '14em', padding: '0 6px', borderRadius: '5px', background: 'rgba(59,130,246,.30)', color: '#bfdbfe', fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' });
+      const arrow = document.createElement('span'); arrow.textContent = '→'; arrow.setAttribute('aria-hidden', 'true'); style(arrow, { flex: '0 0 auto', color: '#60a5fa' });
+      head.append(source, arrow);
+      const output = document.createElement('span'); output.dataset.paseoTranslateOutput = ''; style(output, { flex: '0 1 auto', minWidth: '0', overflowWrap: 'anywhere' });
+      const remove = button('×', ui('Remove this translation', '移除这条翻译')); style(remove, { position: 'absolute', top: '4px', right: '4px', width: '20px', height: '20px', padding: '0', border: '0', borderRadius: '5px', background: 'transparent', color: '#a1a1aa', fontSize: '15px', lineHeight: '20px' });
+      remove.addEventListener('mouseenter', () => style(remove, { background: 'rgba(255,255,255,.08)', color: '#fafafa' }));
+      remove.addEventListener('mouseleave', () => style(remove, { background: 'transparent', color: '#a1a1aa' }));
       remove.addEventListener('click', () => {
         const group = annotation.parentElement; highlightedRanges.delete(annotation); annotation.remove();
         if (group?.matches('[data-paseo-translate-group]') && !group.childElementCount) group.remove();
         syncHighlights();
       });
-      annotation.append(source, arrow, output, remove);
+      annotation.append(head, output, remove);
       const groupAnchor = anchor ?? message;
       let group = annotationGroups.get(groupAnchor);
       if (!group?.isConnected) {
         group = document.createElement('div'); group.dataset.paseoTranslateGroup = '';
-        style(group, { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '5px', marginTop: '6px' });
+        style(group, { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '6px', marginTop: '6px' });
         annotationGroups.set(groupAnchor, group);
         if (groupAnchor !== message && !groupAnchor.matches('li')) groupAnchor.insertAdjacentElement('afterend', group);
         else groupAnchor.append(group);
