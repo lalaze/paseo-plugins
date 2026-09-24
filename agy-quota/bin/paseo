@@ -50,14 +50,7 @@ if [ "$ensure_usage" = true ]; then
   node "$google_patch" apply --cli "$cli_dir"
   node "$kimi_patch" apply --cli "$cli_dir"
   node "$grok_patch" apply --cli "$cli_dir"
-  director_notifications="${PASEO_USAGE_GUARD_DIRECTOR_PATCH_SCRIPT:-$root/../director/scripts/notification-patch.mjs}"
-  if [ -f "$director_notifications" ]; then
-    node "$director_notifications" apply --cli "$cli_dir"
-  fi
-  director_header_order="$root/../director/scripts/header-order-patch.mjs"
-  if [ -f "$director_header_order" ]; then
-    node "$director_header_order" apply --cli "$cli_dir"
-  fi
+
 fi
 
 exec "$real_paseo" "$@"

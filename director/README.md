@@ -1,3 +1,12 @@
+# AI 协作（Director）— 已归档
+
+协作功能已并入 Paseo 源码。本目录仅保留旧插件源码供查阅，不再作为插件安装或更新；仓库的一键安装、更新和默认移动端检查均跳过它。
+
+使用包含内置协作的新构建前，先停用旧 `paseo-director` 插件，保留 `$PASEO_HOME/director`（或 `PASEO_DIRECTOR_DATA_DIR`）中的配置、任务和成果。内置功能会接管这些数据；不要同时运行两个调度器。归档源码不会自动停用或卸载现有安装。
+
+<details>
+<summary>旧插件文档（历史实现，仅供查阅）</summary>
+
 # AI 协作：原生主对话与子 Agent
 
 在 Paseo 正常聊天界面里提出需求、讨论方案和追加修改。主 Agent 通过 MCP 管理任务；后台按保存的分工串行派发子 Agent，统一审核后等待你验收。插件保留协作设置，不再提供独立的任务仪表盘。
@@ -176,3 +185,5 @@ node director/scripts/header-order-patch.mjs apply
 ```
 
 撤销：`node director/scripts/header-order-patch.mjs rollback`，随后刷新网页；守卫下次启动会重新应用。补丁支持 Paseo 0.8.x / 0.9.x 的网页资源，发现宿主代码不匹配时拒绝改写；原生客户端不受影响。
+
+</details>

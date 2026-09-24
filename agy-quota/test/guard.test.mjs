@@ -59,22 +59,22 @@ test('ordinary Paseo commands bypass the patch guard', () => {
   }
 });
 
-test('restart reapplies quota and Director notification patches before launching Paseo', () => {
+test('restart reapplies quota patches before launching Paseo', () => {
   const f = fixture();
   try {
     const result = spawnSync(f.guard, ['daemon', 'restart', '--json'], { env: f.env });
     assert.equal(result.status, 0);
-    assert.equal(readFileSync(f.patchLog, 'utf8'), `google\napply\n--cli\n${f.cliDir}\nkimi\napply\n--cli\n${f.cliDir}\ngrok\napply\n--cli\n${f.cliDir}\ndirector\napply\n--cli\n${f.cliDir}\n`);
+    assert.equal(readFileSync(f.patchLog, 'utf8'), `google\napply\n--cli\n${f.cliDir}\nkimi\napply\n--cli\n${f.cliDir}\ngrok\napply\n--cli\n${f.cliDir}\n`);
     assert.equal(readFileSync(f.realLog, 'utf8'), 'daemon\nrestart\n--json\n');
   } finally {
     f.cleanup();
   }
 });
 
-test('fork startup reaches Paseo after real quota and Director compatibility checks', t => {
+test('fork startup reaches Paseo after real quota compatibility checks', t => {
   const target = locate(process.env.PASEO_PATCH_TEST_CLI);
   if (!/^0\.(8|9)\./.test(target.version)) {
-    t.skip('Director companion patches require Paseo 0.8.x or 0.9.x');
+    t.skip('Quota compatibility fixture requires Paseo 0.8.x or 0.9.x');
     return;
   }
   const f = fixture();
@@ -89,9 +89,6 @@ test('fork startup reaches Paseo after real quota and Director compatibility che
     for (const [filename, script, check] of cases) {
       writeFileSync(join(f.dir, filename), `import { locate } from ${JSON.stringify(pathToFileURL(join(ROOT, 'patch.mjs')).href)};\nimport { ${check} } from ${JSON.stringify(pathToFileURL(script).href)};\n${check}(locate(process.argv[4]));\n`);
     }
-    const director = pathToFileURL(join(ROOT, '../director/scripts/notification-patch.mjs')).href;
-    const header = pathToFileURL(join(ROOT, '../director/scripts/header-order-patch.mjs')).href;
-    writeFileSync(join(f.dir, 'director-patch.mjs'), `import { locate, update } from ${JSON.stringify(director)};\nimport { locate as header, update as updateHeader } from ${JSON.stringify(header)};\nupdate(locate(process.argv[4]).path, 'check');\nupdateHeader(header(process.argv[4]).path, 'check');\n`);
     const result = spawnSync(f.guard, ['daemon', 'start'], { env: f.env, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(f.realLog, 'utf8'), 'daemon\nstart\n');
@@ -130,11 +127,12 @@ test('an incompatible Grok patch blocks restart without invoking Paseo', () => {
 });
 
 
-test('an incompatible Director notification patch blocks restart before launching Paseo', () => {
+test('archived Director patches are ignored even with the legacy override configured', () => {
   const f = fixture({ directorPatchExit: 44 });
   try {
     const result = spawnSync(f.guard, ['restart'], { env: f.env });
-    assert.equal(result.status, 44);
-    assert.equal(existsSync(f.realLog), false);
+    assert.equal(result.status, 0);
+    assert.equal(readFileSync(f.realLog, 'utf8'), 'restart\n');
+    assert.equal(readFileSync(f.patchLog, 'utf8').includes('director'), false);
   } finally { f.cleanup(); }
 });

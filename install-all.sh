@@ -17,9 +17,11 @@ usage() {
 用法: ./install-all.sh [选项]
 
 从本仓库安装启用的包：
-  - paseo-director / paseo-usage-glance / paseo-translate
+  - paseo-usage-glance / paseo-translate
   - Antigravity 额度补丁、Kimi 按需续期
   - Antigravity Hub ACP
+
+Director 已归档，请使用 Paseo 内置协作；即使已安装也不会处理旧插件。
 
 已从本仓库安装的会跳过。仍指向旧单仓库的默认只警告，加 --replace 才会卸掉再装。
 
@@ -292,7 +294,7 @@ install_hub() {
   fi
 }
 
-install_plugin director paseo-director
+# Director 已迁入 Paseo 内置协作；归档源码不参与安装、更新或单独 reload。
 install_plugin usage-glance paseo-usage-glance
 install_plugin translate paseo-translate
 
