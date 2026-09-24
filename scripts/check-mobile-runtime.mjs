@@ -8,26 +8,29 @@ import { createRequire } from 'node:module';
 // Use the same dynamic evaluation boundary as Paseo, not Node's module loader.
 // HERMES_BIN=/path/to/hermes node scripts/check-mobile-runtime.mjs
 const root = resolve(import.meta.dirname, '..');
-const require = createRequire(join(root, 'director/package.json'));
+const require = createRequire(join(root, 'translate/package.json'));
 const { build } = require('esbuild');
 assert.ok(process.env.HERMES_BIN, 'Set HERMES_BIN to the Hermes CLI executable');
 const probes = [
-  ['director', `
-    import { createLaunchRequests } from './client/launch';
-    import { createDraftWriter } from './client/draft-writer';
+  ['translate', `
+    import { splitReply, installReplyTranslations } from './client/reply-translation';
     export function run() {
-      const requests = createLaunchRequests();
-      let notices = 0;
-      const stop = requests.subscribe(() => notices++);
-      requests.set('workspace', { status: 'setup', goal: 'test', requestId: 'request' });
-      if (requests.get('workspace')?.goal !== 'test' || notices !== 1) throw Error('launch state');
-      stop(); requests.clear();
-      if (requests.get('workspace') !== null) throw Error('launch cleanup');
-      const writer = createDraftWriter(3, input => Promise.resolve({ ...input, revision: input.revision + 1 }));
-      writer.enqueue(null);
-      return writer.flush().then(() => {
-        if (writer.revision !== 4 || writer.busy || writer.error) throw Error('draft write');
-      });
+      const text = 'a'.repeat(4999) + '😀' + 'b'.repeat(6000);
+      const chunks = splitReply(text);
+      if (chunks.join('') !== text || chunks.some(chunk => chunk.length > 5000)) throw Error('reply chunks');
+      let registration, renderers = 0;
+      const client = {
+        supportsTimelineAfter: true,
+        addTimelineRenderer: () => { renderers++; return () => renderers--; },
+        addTimelineTransformer: value => { registration = value; return () => registration = null; },
+      };
+      const stop = installReplyTranslations(client, () => null);
+      if (registration.placement !== 'after') throw Error('reply placement');
+      const result = registration.transform({ item: { type: 'assistant_message', text }, phase: 'complete' });
+      if (result.items[0].data.text !== text) throw Error('reply source');
+      stop();
+      if (registration !== null || renderers !== 0) throw Error('reply cleanup');
+      return Promise.resolve();
     }`],
   ['usage-glance', `
     import { createHostRegistry, getHostRegistry } from './client/hosts';
@@ -73,7 +76,7 @@ try {
       function runtimeRequire(name) {
         if (name === 'react') return {};
         if (name === 'zod') return { z: schema };
-        if (name === '@getpaseo/plugin') return { defineRpc: function(value) { return value; } };
+        if (name === '@getpaseo/plugin') return { defineRpc: function(value) { return value; }, defineSettings: function(value) { return value; } };
         if (name === '@tanstack/react-query') return { isCancelledError: function() { return false; } };
         throw Error('Unexpected module ' + name);
       }

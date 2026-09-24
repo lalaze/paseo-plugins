@@ -4,6 +4,7 @@ import { copyText } from '@getpaseo/plugin/client/react-native';
 import { MAX_SOURCE_LENGTH, translateSelectionRpc, type TargetLanguage, type TranslationResult } from '../shared/rpc';
 import { translationSettings, validateTranslationSettings } from '../shared/settings';
 import { localizeTranslationError, ui } from './i18n';
+import { splitReply } from './reply-translation';
 
 export { MAX_SOURCE_LENGTH };
 
@@ -43,7 +44,7 @@ export function useTranslation() {
   const setTarget = (value: TargetLanguage) => { setTargetValue(value); clear(); };
 
   /** Translates `text` (the current source by default) into the current target. */
-  const run = async (text = source) => {
+  const run = async (text = source, wholeReply = false) => {
     const trimmed = text.trim();
     if (!trimmed || settings.status !== 'ready' || busy) return;
     const sequence = ++request.current;
@@ -52,7 +53,14 @@ export function useTranslation() {
     setCopied(false);
     try {
       const configured = validateTranslationSettings(settings.values);
-      const translated = await translate({ text: trimmed, target, settings: configured });
+      const chunks = wholeReply ? splitReply(trimmed) : [trimmed];
+      const translations: TranslationResult[] = [];
+      for (const chunk of chunks) {
+        if (sequence !== request.current) return;
+        if (!chunk.trim()) continue;
+        translations.push(await translate({ text: chunk, target: wholeReply ? 'zh-CN' : target, settings: configured }));
+      }
+      const translated = { ...translations[0], translation: translations.map(part => part.translation).join('\n\n') };
       if (sequence === request.current) setResult(translated);
     } catch (reason) {
       if (sequence === request.current) setError(localizeTranslationError(reason));
@@ -74,5 +82,5 @@ export function useTranslation() {
   };
 
   const configured = settings.status === 'ready';
-  return { settings, configured, source, setSource, target, setTarget, result, error, setError, busy, copied, run, copy, canTranslate: configured && source.trim().length > 0 && !busy };
+  return { settings, configured, source, setSource, target, setTarget, result, error, setError, busy, copied, run, runReply: (text: string) => run(text, true), copy, canTranslate: configured && source.trim().length > 0 && !busy };
 }

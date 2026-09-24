@@ -7,13 +7,17 @@ import { ComposerTranslator } from './client/composer';
 import { installComposerPills } from './client/pills';
 import { ui } from './client/i18n';
 import { runtimeInfoRpc } from './shared/rpc';
+import { installReplyTranslations, type ReplyTranslationProps } from './client/reply-translation';
+import { ReplyTranslator } from './client/reply-translator';
 
 export default function contribute(client: PluginClientContext) {
   let disposed = false, unregister = () => {};
   const unregisterSettings = client.addSettingsScreen({ id: 'translate-settings', title: ui('Translation API', '翻译 API'), icon: 'Settings', Component: TranslationSettingsScreen });
   const cleanups: (() => void)[] = [unregisterSettings];
   if (typeof document === 'undefined') {
-    // iOS/Android: only the native composer pill; its popover covers drafts and the latest reply.
+    // iOS/Android: inline reply controls require the companion app capability.
+    const Reply = (props: ReplyTranslationProps) => createElement(ReplyTranslator, { ...props, key: props.item.data.text, openSettings: () => client.openSettings('translate-settings') });
+    cleanups.push(installReplyTranslations(client, Reply));
     const Composer = (props: PluginButtonContentProps) => createElement(ComposerTranslator, { ...props, paseo: client.paseo, openSettings: () => { props.close(); client.openSettings('translate-settings'); } });
     cleanups.push(installComposerPills(client, Composer));
   } else {

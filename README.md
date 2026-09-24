@@ -1,8 +1,8 @@
 # paseo-plugins
 
-Multi-package repository of Paseo plugins and companion extensions. The three active Paseo plugins support daemon and app versions 0.8.x and 0.9.x, including prereleases. The separate quota and notification patches retain their own version restrictions. Enable plugins under **Settings → Plugins** on the target host first. Each active package can also be installed on its own as described below; see each directory's README for updating, uninstalling and limitations.
+Multi-package repository of Paseo plugins and companion extensions. The two active Paseo plugins support daemon and app versions 0.8.x and 0.9.x, including prereleases. The separate quota and notification patches retain their own version restrictions. Enable plugins under **Settings → Plugins** on the target host first. Each active package can also be installed on its own as described below; see each directory's README for updating, uninstalling and limitations.
 
-Install the active packages at once (three plugins, the quota patch, Kimi renewal and the Hub ACP):
+Install the active packages at once (two plugins, the quota patch, Kimi renewal and the Hub ACP):
 
 ```bash
 ./install-all.sh
@@ -16,7 +16,7 @@ Update the active packages that are installed:
 ./update-all.sh
 ```
 
-This runs `git pull`, then updates active items that were installed from this repo. Items that are not installed are skipped. `--skip-pull` updates without pulling. The archived `file-upload/` and `response-speed/` sources are retained, but neither script installs, updates, or individually reloads these plugins, even if they are already installed.
+This runs `git pull`, then updates active items that were installed from this repo. Items that are not installed are skipped. `--skip-pull` updates without pulling. The archived `director/`, `file-upload/` and `response-speed/` sources are retained, but neither script installs, updates, or individually reloads these plugins, even if they are already installed.
 
 On macOS `~/.local/bin` is not on the PATH by default, and nvm gets ahead of it. Set up the wrapper like this:
 
@@ -35,16 +35,6 @@ node -e 'console.log(require("fs").realpathSync(process.argv[1]))' "$(which pase
 It should print `.../paseo-plugins/agy-quota/bin/paseo`.
 
 Plugins and patches run with the daemon user's privileges; read the source in the corresponding directory before installing.
-
-## [AI collaboration (Director)](director)
-
-Pick the design, implementation and review AIs yourself, and run design, implementation, review and acceptance as a collaboration. Plugin ID: `paseo-director`.
-
-```bash
-paseo plugin add lalaze/paseo-plugins --path director
-```
-
-Details: [director/README.md](director/README.md)
 
 ## [Usage Glance](usage-glance)
 
@@ -77,7 +67,7 @@ Details: [file-upload/README.md](file-upload/README.md)
 
 ## [Selection Translate](translate)
 
-Select text in a user message or AI reply and translate it in place through a custom OpenAI-compatible translation API, with the result copied; no local agent is created and the chat history is left untouched. On iOS/Android a native "Translate" pill next to the composer translates a draft and sends it, or translates the latest AI reply. Plugin ID: `paseo-translate`.
+Select text in a user message or AI reply and translate it in place through a custom OpenAI-compatible translation API; no local agent is created and the chat history is left untouched. On iOS/Android a native "Translate" pill next to the composer translates a draft for sending or copying, or translates the latest AI reply. A [companion app patch](translate/README.md#手机端每条回复下方的翻译按钮) adds a button below each completed AI reply to expand or collapse its Chinese translation. Plugin ID: `paseo-translate`.
 
 ```bash
 paseo plugin add lalaze/paseo-plugins --path translate
@@ -119,19 +109,20 @@ Details: [antigravity-hub/README.md](antigravity-hub/README.md)
 
 The former single-purpose repositories were merged here by directory. On hosts where they are installed, remove the old sources first, then install with the commands above:
 
-- `paseo-sub-agnet` → [Director](director/README.md)
 - `paseo-agy-quote` → [Usage Glance](usage-glance/README.md), [quota patch](agy-quota/README.md), [Hub ACP](antigravity-hub/README.md)
+
+AI collaboration has moved into Paseo itself. The former `paseo-sub-agnet` / `paseo-director` plugin is [archived source](director/README.md); use the built-in feature instead of reinstalling it. Disable the old plugin before enabling built-in collaboration, and retain `$PASEO_HOME/director` (or `PASEO_DIRECTOR_DATA_DIR`) for migration.
 
 The former `paseo-file-upload` repository is preserved as [archived source](file-upload/README.md) only; it does not need to be migrated or reinstalled.
 
 ## Mobile runtime regression check
 
-The client state of Director and Usage Glance is built with factory functions. When Hermes evaluates the esbuild output dynamically, instantiating anonymous classes can fail with `Cannot read property 'prototype' of undefined`, so dynamic loading must be verified even after the Node tests pass.
+The client state of Usage Glance is built with factory functions. When Hermes evaluates the esbuild output dynamically, instantiating anonymous classes can fail with `Cannot read property 'prototype' of undefined`, so dynamic loading must be verified even after the Node tests pass. The check also covers Translate's native reply registration and long-reply splitting.
 
-Install the dev dependencies of both plugins, get the [official Hermes CLI](https://github.com/facebook/hermes/releases/tag/v0.13.0), and run from the repo root:
+Install the dev dependencies of the two active plugins, get the [official Hermes CLI](https://github.com/facebook/hermes/releases/tag/v0.13.0), and run from the repo root:
 
 ```bash
 HERMES_BIN=/path/to/hermes node scripts/check-mobile-runtime.mjs
 ```
 
-The check loads the compiled output through `eval` and verifies creation and cleanup of collaboration requests, draft writes and multi-host registration state. RPC, schema and query-cancellation detection use stubs; the mobile UI still needs verification on a real device.
+The check loads the compiled output through `eval` and verifies creation and cleanup of multi-host registration state and reply translations. RPC, schema and query-cancellation detection use stubs; the mobile UI still needs verification on a real device.

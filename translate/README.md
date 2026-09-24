@@ -6,7 +6,8 @@
 
 - 只在对话中的用户消息和 AI 回复内显示划词入口，不修改聊天记录。
 - 桌面端和 Web 端可从命令中心打开独立的「翻译」页面：输入或粘贴文字后翻译，可选择目标语言并复制结果。
-- iOS/Android 只保留对话输入框旁的原生「译」按钮：在弹出面板中输入或粘贴文字翻译后，可「发送」到当前对话或复制；「最新回复」会读取当前对话最后一条 AI 回复并直接翻译。点击「发送」之前不会发出任何消息。
+- iOS/Android 支持在每条已完成的 AI 回复下方显示「翻译」：点击展开中文译文，可收起、重新展开和复制。长回复会按每次最多 5000 个字符分段翻译全文。这个入口需要安装包含[客户端补丁](#手机端每条回复下方的翻译按钮)的 App，保留原回复的 Markdown、代码块和复制功能。
+- 手机输入框旁的原生「译」按钮继续提供草稿翻译、发送和复制；「最新回复」会读取当前对话最后一条 AI 回复并直接翻译。点击「发送」之前不会发出任何消息。旧版 App 仍使用这个入口。
 - 鼠标悬停在 AI 回复的段落、列表项、引用或标题，或用户消息正文上时，旁边会浮现「译」按钮；点击后整段译文会以独立的段落块显示在原段落正下方，再次点击「收起」会隐藏译文、「展开」重新显示而不重复请求；块内的「×」会移除译文。
 - 划词后点击「翻译」会直接在原消息下方生成行内翻译标签，不打开弹窗；同一段的多个标签紧凑横排、空间不足时自动换行，并可单独移除。
 - 对话输入框旁提供「译」按钮：直接翻译当前草稿并原地替换，不自动发送；也可按 `Alt/Option + T`。翻译后按钮变为「撤销」，继续编辑后撤销自动失效。
@@ -54,9 +55,25 @@ paseo reload
 
 只要 API 返回了响应（即使随后内容解析失败，token 也已消耗），插件就会向 `$PASEO_HOME/translate/usage/YYYY-MM.jsonl`（默认 `~/.paseo/translate/usage/`，可用 `PASEO_TRANSLATE_USAGE_DIR` 改到其他目录）追加一行 JSON：调用时间、模型名、`primary`/`fallback`，以及 OpenAI Chat Completions 的 `usage`（`prompt_tokens`、`completion_tokens`、`prompt_tokens_details.cached_tokens`、`completion_tokens_details.reasoning_tokens`）。接口没有返回 `usage` 时记为 `null`，统计页会提示有多少次调用缺少 token 数。账本不保存原文、译文、API 地址和 Key；写入失败不影响翻译。usage-glance 安装在同一台 daemon 主机上时会自动发现该目录，无需额外设置；删除该目录即清空历史。
 
+## 手机端每条回复下方的翻译按钮
+
+当前 Paseo 插件接口只能替换消息显示，不能在保留原生消息的同时追加按钮。本目录的 [`patches/native-reply-actions.patch`](patches/native-reply-actions.patch) 给客户端增加 `supportsTimelineAfter` 能力和 `placement: "after"` 时间线扩展。补丁基于 Paseo 提交 `bbbedd791ff25d66fcd08d5dc77ee94649b2ead4`（0.9.0-beta.2），没有改动服务端协议。
+
+在 Paseo 源码目录应用补丁，随后按该项目的 Android/iOS 构建流程重新打包并安装手机 App：
+
+```bash
+git apply --check /absolute/path/to/paseo-plugins/translate/patches/native-reply-actions.patch
+git apply /absolute/path/to/paseo-plugins/translate/patches/native-reply-actions.patch
+npm run build:plugin
+```
+
+主机上也需要更新此翻译插件。单独执行 `paseo reload` 或更新 daemon 不会更新已安装的手机 App；旧版 App 不注册这个扩展，避免误把原文替换成按钮。
+
+按钮支持已加载的历史回复，AI 回复完成后才出现。译文仅保存在当前消息组件内，收起再展开不会重复请求；退出对话或消息被列表回收后再次翻译会重新请求。译文不会发送给 AI，也不会写入聊天记录。长回复的各分段分别计入翻译用量。
+
 ## 隐私与限制
 
-选中文字、在独立翻译页或「译」面板中提交的文字会由当前 Paseo 主机直接发送给你填写的 API，并消耗该服务的模型额度。API Key 保存在 daemon 主机的 Paseo 插件设置中，不会写入插件代码或仓库；非空 Key 会作为 `Authorization: Bearer` 请求头发送。行内翻译批注仅在当前页面会话中保留，不会写入或修改聊天记录。划词浮层、段落「译」按钮、输入框原地替换和 EN 锁依赖浏览器 API，仅支持 Paseo 桌面端和 Web 端；iOS/Android 只提供输入框旁的原生「译」按钮（翻译后发送或复制，不能原地替换草稿），不提供侧边栏入口和独立页面。「最新回复」只读取当前对话的时间线，最多翻译回复开头的 5000 个字符。
+选中文字、在独立翻译页或「译」面板中提交的文字，以及点击回复下方「翻译」时的回复正文，会由当前 Paseo 主机直接发送给你填写的 API，并消耗该服务的模型额度。API Key 保存在 daemon 主机的 Paseo 插件设置中，不会写入插件代码或仓库；非空 Key 会作为 `Authorization: Bearer` 请求头发送。行内翻译批注不会写入或修改聊天记录。划词浮层、段落「译」按钮、输入框原地替换和 EN 锁依赖浏览器 API，仅支持 Paseo 桌面端和 Web 端；iOS/Android 的输入框旁「译」按钮只能翻译后发送或复制，不能原地替换草稿，不提供侧边栏入口和独立页面。该面板中的「最新回复」最多翻译回复开头的 5000 个字符；新加的回复下方按钮则会分段翻译全文。
 
 ## 开发检查
 
