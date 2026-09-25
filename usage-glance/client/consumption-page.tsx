@@ -19,7 +19,7 @@ export function ConsumptionPage({ theme, host, layout, fleet }: PluginSurfacePro
   useEffect(() => { query.mount(); return () => query.dispose(); }, [query]);
   useEffect(() => { workspaceQuery.mount(); return () => workspaceQuery.dispose(); }, [workspaceQuery]);
   const visible = hosts.filter(host => selected === null || host.id === selected);
-  return <ScrollView style={{ flex: 1, backgroundColor: theme.colors.surface0 }} contentContainerStyle={{ padding: layout.compact ? 16 : 28 }}>
+  return <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: layout.compact ? 16 : 28 }}>
     <View style={{ width: '100%', maxWidth: 880, alignSelf: 'center', gap: 24 }}>
       <View style={{ flexDirection: layout.compact ? 'column' : 'row', alignItems: layout.compact ? 'stretch' : 'center', gap: 16 }}>
         <View style={{ flex: 1, minWidth: 0, gap: 6 }}>
@@ -28,7 +28,7 @@ export function ConsumptionPage({ theme, host, layout, fleet }: PluginSurfacePro
         </View>
         <View style={{ width: layout.compact ? '100%' : 280, maxWidth: '100%' }}><HostPicker hosts={hosts} selected={selected} onSelect={selectHost} theme={theme} /></View>
       </View>
-      <View style={{ padding: layout.compact ? 14 : 24, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface1 }}>
+      <View style={{ padding: layout.compact ? 14 : 24, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border }}>
         {!visible.length ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18, padding: 12 }}>{ui('Waiting for connected hosts to load the usage plugin…', '等待已连接主机加载统计插件…')}</Text> : <Consumption query={query} workspaceQuery={workspaceQuery} theme={theme} layout={layout} scopeLabel={selected === null ? ui('Cross-host usage', '跨主机消耗') : visible[0].label} />}
       </View>
     </View>
