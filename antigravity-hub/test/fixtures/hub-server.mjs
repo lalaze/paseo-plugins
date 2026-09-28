@@ -4,6 +4,16 @@ import { createServer } from 'node:http';
 import { appendFileSync } from 'node:fs';
 const port = Number(process.argv.find(a => a.startsWith('--hub-port=')).split('=')[1]);
 const streams = new Map(), actions = new Map(), started = new Set();
+// Like agy: discover a conversation's MCP servers when its first message arrives.
+const discovered = new Set();
+async function discover(id, spec) {
+  if (discovered.has(id)) return; discovered.add(id);
+  for (const server of spec?.builtinAgent?.customizationDiscovery?.mcp?.servers ?? []) {
+    if (!server.serverUrl) continue;
+    const res = await fetch(server.serverUrl, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2026-07-28', ...server.headers }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) });
+    record({ discovered: id, status: res.status, body: await res.text() });
+  }
+}
 const record = value => appendFileSync(process.env.HUB_FIXTURE_LOG, JSON.stringify(value) + '\n');
 function frame(id, update) {
   const res = streams.get(id); if (!res) return;
@@ -43,6 +53,8 @@ const server = createServer(async (req, res) => {
   if (method === 'StartCascade') { started.add(body.cascadeId); res.end(JSON.stringify({ cascadeId: body.cascadeId })); return; }
   if (method === 'SendUserCascadeMessage') {
     res.end('{}'); const id = body.cascadeId; const prompt = body.items.map(i => i.text).join('');
+    discover(id, body.customAgentSpec).catch(error => record({ discovered: id, error: error.message }));
+    if (prompt.startsWith('[Paseo session setup')) { steps(id, [{ type: 'CORTEX_STEP_TYPE_USER_INPUT', status: 'CORTEX_STEP_STATUS_DONE', userInput: { userResponse: prompt } }], true); return; }
     setTimeout(() => {
       if (prompt === 'rendering') {
         const output = '@@ -1 +1,2 @@\n ```\n+added\n';

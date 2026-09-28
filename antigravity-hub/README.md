@@ -68,7 +68,9 @@ Plan 模式：`session/new` 声明 `default` 与 `plan`。Plan 下只探索并�
 
 接受 `session/new` 和 `session/load` 的 `mcpServers`，支持 Paseo 的无 `type` stdio 格式以及 HTTP/SSE 格式。逐项转换命令、参数、环境变量、URL 和认证头，stdio 工作目录使用会话 cwd。MCP 配置限定于会话，不写入 Antigravity 全局 MCP 文件；桥接自己的会话状态只保存 ID、工作目录和模型，恢复时使用 Paseo 本次传入的地址与凭证。Hub 本身仍管理其会话历史。
 
-HTTP 类型的 MCP 经桥接进程内的回环代理转发（`src/hub/mcp-proxy.mjs`）。agy `1.2.12` 在初始化协商出旧版本后，后续请求仍带 `MCP-Protocol-Version: 2026-07-28`；Paseo 使用的 `@modelcontextprotocol/sdk` 1.x 会对此返回 400，agy 随即丢弃全部 Paseo 工具，协作工具因此不可用。代理遇到该 400 时去掉版本头重试一次，服务端改用协商版本。SSE 与 stdio 不经代理。
+HTTP 类型的 MCP 经桥接进程内的回环代理转发（`src/hub/mcp-proxy.mjs`）。agy `1.2.12` 先以 `MCP-Protocol-Version: 2026-07-28` 发送 `server/discover`；Paseo 使用的 `@modelcontextprotocol/sdk` 1.x 对不认识的版本头返回 400，agy 随即丢弃全部 Paseo 工具，协作工具因此不可用。代理遇到该 400 时去掉版本头重试一次，服务端回 `Method not found`，agy 再退回 `initialize` 与 `tools/list`。SSE 与 stdio 不经代理。
+
+agy 只在会话收到消息时才发现 MCP 服务，而该轮的工具列表在发现完成前已确定，新会话首轮因此没有 Paseo 工具。协作接管消息正是首轮。新会话若带 HTTP MCP，桥接在返回 `session/new` 前发送一条占位消息并立即取消，等代理转发完 `tools/list` 后再留 1 秒给 agy 注册工具。占位消息不产生模型回复，回放和 Paseo 界面都不显示，但模型能看到会话里有这条已取消的消息。`session/load` 恢复的会话首轮已有工具，不做预热。
 
 Paseo `0.7.2` 默认关闭内置 MCP 自动注入。仅开启 provider 的能力声明不会产生 MCP 服务列表。若要让 Paseo 注入自己的内置工具，需要在 Paseo 配置中设置：
 
@@ -85,6 +87,6 @@ Paseo `0.7.2` 默认关闭内置 MCP 自动注入。仅开启 provider 的能力
 
 合并进现有配置后执行 `paseo reload` 并新建会话。这个开关影响整个 daemon 的 agent，`hub.mjs install` 不会自动修改它。独立测试 daemon 可使用单独的 `--home` 和回环端口验证，避免改变现有 agent。
 
-**当前限制：** 本机 Hub `2.12.2` 在新会话首次发送消息时，注入的 MCP 工具有首轮发现滞后；随后同一会话的工具调用正常。已用真实 stdio、HTTP 测试服务复现并确认调用结果；独立 Paseo daemon 的带认证 HTTP 注入也已实测，第二轮成功调用 `list_agents` 并返回 `agents_count=1`，尚不能保证首轮可用。桥接不发送隐藏的模型预热提示词，也不自动重复用户工具操作。遇到工具尚未可用时需再次发送请求。这仍是 preview，不能视为首轮 MCP 完整验收通过。
+**当前限制：** 首轮预热只覆盖 HTTP MCP；stdio 与 SSE 服务在新会话首轮仍不可用，从第二轮起正常。预热等待 `tools/list` 最多 10 秒，超时后会话照常创建，工具从第二轮起可用。注册工具的 1 秒余量来自 agy `1.2.12` 实测（300 毫秒即可），agy 更新后可能需要调整。
 
 协议依据：[ACP 会话与 MCP 配置](https://agentclientprotocol.com/protocol/session-setup)、[Session Modes](https://agentclientprotocol.com/protocol/session-modes)。Hub 字段依据本机客户端 protobuf 描述符和真实 RPC 验证。自动测试覆盖图片转换、输入拒绝、三种 MCP 配置、恢复时凭证更新、审批/拒绝/取消、Plan 模式 Proceed 确认与回复确认、provider 升级与精确回退；`npm test` 不调用真实模型。

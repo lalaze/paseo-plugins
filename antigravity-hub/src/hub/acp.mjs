@@ -58,8 +58,11 @@ async function save(s) {
 async function makeSession(params, load = false) {
   const customAgentSpec = mcpSpec(params.mcpServers, params.cwd);
   // Streamable HTTP servers go through the version-tolerant proxy; legacy SSE and stdio stay direct.
+  const proxied = [];
   for (const server of customAgentSpec.builtinAgent.customizationDiscovery.mcp.servers) {
-    if (server.disableStandaloneSse) server.serverUrl = await mcpProxy.route(server.serverUrl);
+    if (!server.disableStandaloneSse) continue;
+    proxied.push(server.serverUrl);
+    server.serverUrl = await mcpProxy.route(server.serverUrl);
   }
   if (load && sessions.get(params.sessionId)?.controller) throw new Error('Session already running');
   let saved;
@@ -75,9 +78,41 @@ async function makeSession(params, load = false) {
   customAgentSpec.builtinAgent.model = catalog.find(m => m.modelId === chosen).modelOrAlias.model;
   const s = { id: saved?.id || randomUUID(), cwd: params.cwd, model: chosen, mode: saved?.mode === 'plan' ? 'plan' : 'default', locale: resolveUiLocale(params.locale || clientLocale), catalog, customAgentSpec, texts: new Map(), assistantTexts: new Map(), tools: new Map(), permissions: new Set(), pendingPermissions: new Set(), controller: null, planText: '', proceedAsked: false, reviewIndex: null };
   if (!load) await rpc('StartCascade', { cascadeId: s.id, source: 'CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT', requestedModel: customAgentSpec.builtinAgent.model, workspaceUris: [pathToFileURL(s.cwd).href], customAgentSpec });
+  if (!load && proxied.length) await discoverMcpTools(s, proxied);
   sessions.set(s.id, s); await save(s);
   if (load) await replay(s);
   return sessionInfo(s);
+}
+// agy discovers session MCP servers only when a message is sent, after that turn's tool list is
+// fixed, so the user's first prompt would run without Paseo tools. A cancelled placeholder message
+// starts discovery; the proxy reports when agy has listed the tools. Replay hides the placeholder.
+const MCP_WARMUP_TEXT = '[Paseo session setup: loading tools. No reply needed.]';
+async function discoverMcpTools(s, upstreams) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('Hub MCP warm-up timed out')), 10000);
+  const aborted = new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true }));
+  aborted.catch(() => {});
+  const listed = Promise.all(upstreams.map(url => mcpProxy.toolsListed(url)));
+  try {
+    const iterator = updates(s, controller.signal)[Symbol.asyncIterator]();
+    if ((await iterator.next()).done) throw new Error('Hub stream closed before MCP warm-up');
+    await rpc('SendUserCascadeMessage', { cascadeId: s.id, items: [{ text: MCP_WARMUP_TEXT }], customAgentSpec: s.customAgentSpec }, controller.signal);
+    await rpc('CancelCascadeInvocation', { cascadeId: s.id }, controller.signal);
+    // The next message is rejected until the cancelled input has been processed.
+    let active = false;
+    while (true) {
+      const { value: u, done } = await iterator.next();
+      if (done) break;
+      if (u.status?.endsWith('_RUNNING') || u.mainTrajectoryUpdate?.stepsUpdate?.steps?.length) active = true;
+      if (active && u.fullyIdle) break;
+    }
+    await Promise.race([listed, aborted]);
+    // agy registers listed tools asynchronously; 300 ms was enough in testing with agy 1.2.12.
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  } catch (error) {
+    // Without discovery the tools still arrive from the second turn on; do not fail the session.
+    process.stderr.write(`agy-hub-acp: MCP warm-up incomplete: ${error.message}\n`);
+  } finally { clearTimeout(timer); controller.abort(); }
 }
 async function applyMode(s, mode) {
   if (!availableModes(s.locale).some(m => m.id === mode)) throw new Error(`Unknown session mode: ${mode}`);
@@ -231,6 +266,7 @@ async function handleUpdate(s, u, signal, replaying = false) {
     const key = `${u.trajectoryId}:${index}`;
     if (step.userInput) {
       const text = step.userInput.userResponse || (step.userInput.items || []).map(i => i.text || '').join('');
+      if (text === MCP_WARMUP_TEXT) continue;
       if (replaying) textUpdate(s, key, text, 'user_message_chunk');
       else { s.texts.set(key, text); s.texts.set(`${key}:media`, 'sent'); }
     }

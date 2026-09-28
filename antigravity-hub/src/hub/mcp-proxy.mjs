@@ -11,6 +11,10 @@ import { Readable } from 'node:stream';
 const DROP_REQUEST = new Set(['host', 'connection', 'keep-alive', 'content-length', 'transfer-encoding', 'accept-encoding']);
 const DROP_RESPONSE = new Set(['connection', 'keep-alive', 'content-length', 'transfer-encoding', 'content-encoding']);
 
+function jsonRpcMethod(body) {
+  try { return JSON.parse(body).method; } catch { return undefined; }
+}
+
 async function readBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -18,16 +22,19 @@ async function readBody(req) {
 }
 
 export function createMcpProxy() {
-  const routes = new Map(), byUpstream = new Map();
+  const routes = new Map(), byUpstream = new Map(), listWaiters = new Map();
   let listening = null;
 
   async function relay(req, res) {
-    const upstream = routes.get(req.url.slice('/mcp/'.length));
+    const token = req.url.slice('/mcp/'.length), upstream = routes.get(token);
     if (!req.url.startsWith('/mcp/') || !upstream) { res.writeHead(404).end(); return; }
     const controller = new AbortController();
     res.on('close', () => controller.abort());
     const headers = Object.fromEntries(Object.entries(req.headers).filter(([name]) => !DROP_REQUEST.has(name)));
     const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readBody(req);
+    if (body && listWaiters.has(token) && jsonRpcMethod(body) === 'tools/list') {
+      res.on('close', () => { for (const resolve of listWaiters.get(token) ?? []) resolve(); listWaiters.delete(token); });
+    }
     const send = h => fetch(upstream, { method: req.method, headers: h, body, signal: controller.signal });
     let reply = await send(headers);
     if (headers['mcp-protocol-version'] && reply.status === 400) {
@@ -62,6 +69,15 @@ export function createMcpProxy() {
         routes.set(token, upstream); byUpstream.set(upstream, token);
       }
       return `http://127.0.0.1:${server.address().port}/mcp/${byUpstream.get(upstream)}`;
+    },
+    /** Resolves after the next tools/list exchange through this route finishes. */
+    toolsListed(upstream) {
+      const token = byUpstream.get(upstream);
+      if (!token) return Promise.reject(new Error('Unknown MCP route'));
+      return new Promise(resolve => {
+        if (!listWaiters.has(token)) listWaiters.set(token, new Set());
+        listWaiters.get(token).add(resolve);
+      });
     },
     close: () => new Promise(resolve => { server.closeAllConnections?.(); server.close(() => resolve()); if (!server.listening) resolve(); }),
   };

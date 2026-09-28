@@ -67,3 +67,19 @@ test('MCP proxy forwards supported versions once and passes other errors through
     assert.equal(await proxy.route(up.url), local, 'same upstream reuses its route');
   } finally { await proxy.close(); await up.close(); }
 });
+
+test('MCP proxy reports when a tools/list exchange through a route finishes', async () => {
+  const up = await upstream(), proxy = createMcpProxy();
+  try {
+    const local = await proxy.route(up.url);
+    let listed = false;
+    const waiting = proxy.toolsListed(up.url).then(() => { listed = true; });
+    await fetch(local, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: 'Bearer secret' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }) }).then(r => r.text());
+    await new Promise(r => setTimeout(r, 50));
+    assert.equal(listed, false, 'initialize does not count');
+    await (await post(local, '2026-07-28')).text();
+    await waiting;
+    assert.equal(listed, true);
+    await assert.rejects(proxy.toolsListed('http://127.0.0.1:1/unrouted'), /Unknown MCP route/);
+  } finally { await proxy.close(); await up.close(); }
+});

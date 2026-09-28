@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, copyFileSync, chmodSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -238,4 +239,36 @@ test('Hub ACP submits structured question answers with actual option IDs, multi-
     assert.deepEqual(await cancelled.running, { stopReason: 'cancelled' });
     assert.equal(interactions().filter(x => x.body.cascadeId === cancelled.sessionId).length, 0);
   } finally { await c.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Hub ACP lists injected HTTP MCP tools before a new session is returned', { timeout: 30000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hub-acp-mcp-'));
+  copyFileSync(join(ROOT, 'test/fixtures/hub-server.mjs'), join(dir, 'fake-hub.mjs')); chmodSync(join(dir, 'fake-hub.mjs'), 0o700);
+  writeFileSync(join(dir, 'rpc.jsonl'), '');
+  // Mirrors @modelcontextprotocol/sdk 1.x rejecting agy's newer protocol version header.
+  const listed = [];
+  const upstream = createServer((req, res) => {
+    let body = ''; req.on('data', c => { body += c; });
+    req.on('end', () => {
+      if (req.headers['mcp-protocol-version'] === '2026-07-28') { res.writeHead(400); res.end('{"error":{"message":"Bad Request: Unsupported protocol version: 2026-07-28"}}'); return; }
+      listed.push(req.headers.authorization);
+      res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ jsonrpc: '2.0', id: JSON.parse(body).id, result: { tools: [{ name: 'get_conversation_status' }] } }));
+    });
+  }).listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  const c = client(dir);
+  const rpcLog = () => readFileSync(join(dir, 'rpc.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+  try {
+    await c.request('initialize', { protocolVersion: 1 });
+    const { sessionId } = await c.request('session/new', { cwd: dir, mcpServers: [{ type: 'http', name: 'paseo', url: `http://127.0.0.1:${upstream.address().port}/mcp`, headers: [{ name: 'Authorization', value: 'Bearer t' }] }] });
+    assert.deepEqual(listed, ['Bearer t'], 'tools were listed through the proxy before session/new returned');
+    const log = rpcLog();
+    const warmup = log.findIndex(x => x.method === 'SendUserCascadeMessage' && x.body.cascadeId === sessionId);
+    assert.match(log[warmup].body.items[0].text, /^\[Paseo session setup/);
+    assert.ok(log.findIndex(x => x.method === 'CancelCascadeInvocation' && x.body.cascadeId === sessionId) > warmup);
+    assert.equal(log.find(x => x.discovered === sessionId).status, 200);
+    assert.deepEqual(await c.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hello' }] }), { stopReason: 'end_turn' });
+    assert.equal(listed.length, 1, 'discovery runs once per conversation');
+    assert.ok(!c.notifications.some(n => /Paseo session setup/.test(JSON.stringify(n))), 'the placeholder never reaches Paseo');
+  } finally { await c.close(); upstream.close(); rmSync(dir, { recursive: true, force: true }); }
 });
