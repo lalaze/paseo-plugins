@@ -8,6 +8,15 @@ import { createMultiHostConsumption } from './multi-host-consumption';
 import { ui } from './i18n';
 
 type FleetContext = { registry: HostRegistry; registration: HostRegistration; workspaceRegistry: HostRegistry; workspaceRegistration: HostRegistration };
+
+// Host wallpapers sit behind the surface. An opaque page fill covers them; the same color at partial alpha still matches a solid host background.
+function withAlpha(color: string, alpha: number) {
+  const hex = /^#([\da-f]{6})$/i.exec(color.trim());
+  if (!hex) return color;
+  const value = Number.parseInt(hex[1], 16);
+  return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
+}
+
 export function ConsumptionPage({ theme, host, layout, fleet }: PluginSurfaceProps & { fleet: FleetContext }) {
   const hosts = useSyncExternalStore(fleet.registry.subscribe, fleet.registry.getSnapshot, fleet.registry.getSnapshot);
   const [selected, setSelected] = useState<string | null>(null);
@@ -28,7 +37,7 @@ export function ConsumptionPage({ theme, host, layout, fleet }: PluginSurfacePro
         </View>
         <View style={{ width: layout.compact ? '100%' : 280, maxWidth: '100%' }}><HostPicker hosts={hosts} selected={selected} onSelect={selectHost} theme={theme} /></View>
       </View>
-      <View style={{ padding: layout.compact ? 14 : 24, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border }}>
+      <View style={{ padding: layout.compact ? 14 : 24, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: withAlpha(theme.colors.surface1, 0.55) }}>
         {!visible.length ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18, padding: 12 }}>{ui('Waiting for connected hosts to load the usage plugin…', '等待已连接主机加载统计插件…')}</Text> : <Consumption query={query} workspaceQuery={workspaceQuery} theme={theme} layout={layout} scopeLabel={selected === null ? ui('Cross-host usage', '跨主机消耗') : visible[0].label} />}
       </View>
     </View>
