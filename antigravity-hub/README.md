@@ -56,6 +56,8 @@ paseo reload
 
 Plan 模式：`session/new` 声明 `default` 与 `plan`。Plan 下只探索并写出实现计划，回合结束会发出 ACP `switch_mode` 权限（Proceed / Stay in plan）。点 Proceed 或回复「确认」后切回 default，并通知 Hub 开始执行。`implementation_plan.md` / `plan.md` 作为计划正文展示，同时发送 ACP `plan` 条目。不提供权限绕过模式。
 
+默认模式下，Hub 自己写出请求审阅（`RequestFeedback`）的计划后若停下等待（Hub 的计划审阅策略不是自动批准时），同样弹出 Proceed / Stay in plan；点 Proceed 会通知 Hub 开始执行。Hub 自动批准并继续执行时不会弹出。
+
 问题选择：Hub 的 `askQuestion` 使用中文标题、单选/多选提示、分段编号选项和推荐标记展示，隐藏原始 JSON 与内部工具字段。下方使用简短编号按钮，按原始选项 ID 提交结构化答案；工具卡片、选择弹窗和恢复的历史使用相同的正文格式。多题逐题回答；多选题点击选项切换选中状态，再点「提交所选答案」。支持跳过此题或取消整组回答；取消不会提交已选的部分答案。当前使用 ACP 权限按钮承载选项，不支持卡片内输入自由文本，需要文字回答时请取消后在聊天中回复。普通工具审批仍使用 Allow once / Reject。
 
 ### 图片

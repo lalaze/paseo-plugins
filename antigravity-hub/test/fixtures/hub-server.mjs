@@ -71,6 +71,16 @@ const server = createServer(async (req, res) => {
           { type: 'CORTEX_STEP_TYPE_USER_INPUT', status: 'CORTEX_STEP_STATUS_DONE', userInput: { userResponse: 'permission' } },
           { type: 'CORTEX_STEP_TYPE_GENERIC', status: 'CORTEX_STEP_STATUS_WAITING', metadata: { sourceTrajectoryStepInfo: { trajectoryId: id, stepIndex: 1 }, toolCall: { id: 'fixture-tool', name: 'run_command', argumentsJson: '{"CommandLine":"printf fixture"}' } }, requestedInteraction: { permission: { resource: { action: 'command', target: 'printf fixture' } } } },
         ], true); return;
+      } else if (prompt === 'auto-review') {
+        // Automatic review policy: the Hub approves the plan itself and continues.
+        steps(id, [
+          { type: 'CORTEX_STEP_TYPE_USER_INPUT', status: 'CORTEX_STEP_STATUS_DONE', userInput: { userResponse: 'auto-review' } },
+          { type: 'CORTEX_STEP_TYPE_CODE_ACTION', status: 'CORTEX_STEP_STATUS_DONE', metadata: { toolCall: { id: 'auto-plan', name: 'write_to_file', argumentsJson: JSON.stringify({ TargetFile: '/tmp/.gemini/antigravity/brain/abc/implementation_plan.md', CodeContent: '# Plan\n\n- Do it\n', ArtifactMetadata: { RequestFeedback: true, UserFacing: true } }) } } },
+          text('plan written'),
+          { type: 'CORTEX_STEP_TYPE_SYSTEM_MESSAGE', status: 'CORTEX_STEP_STATUS_DONE', systemMessage: { message: 'The user has automatically approved the artifact through their review policy. Proceed to execution.' } },
+          text('implemented'),
+        ]);
+        frame(id, { fullyIdle: true, status: 'CASCADE_RUN_STATUS_IDLE' }); return;
       } else if (prompt.includes('plan-turn')) {
         const plan = '# Implementation Plan\n\n- Inspect the renderer\n- Apply the patch\n';
         steps(id, [

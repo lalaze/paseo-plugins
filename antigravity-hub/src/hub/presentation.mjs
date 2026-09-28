@@ -96,6 +96,14 @@ export function toolKind(name = '') {
   return 'other';
 }
 
+// Hub marks plans awaiting review with RequestFeedback. Under an automatic
+// review policy it approves them itself and keeps working; otherwise the turn
+// ends and the IDE shows Proceed.
+export function requestsReview(input = {}) {
+  const meta = input.ArtifactMetadata || input.artifactMetadata || {};
+  return Boolean(meta.RequestFeedback ?? meta.requestFeedback);
+}
+
 function planBody(input) {
   const meta = input.ArtifactMetadata || input.artifactMetadata || {};
   const path = input.TargetFile || input.targetFile || input.path || input.AbsolutePath || input.absolutePath;

@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { rpc, updates, stopHub } from './runtime.mjs';
 import { mcpSpec, promptContent } from './content.mjs';
-import { markdownSnapshot, toolPresentation, questionPresentation, questionOptionText, PLAN_MODE_INJECTION, isPlanConfirmation, isPlanFile, planEntries } from './presentation.mjs';
+import { markdownSnapshot, toolPresentation, questionPresentation, questionOptionText, PLAN_MODE_INJECTION, isPlanConfirmation, isPlanFile, planEntries, requestsReview } from './presentation.mjs';
 import { resolveUiLocale, ui } from './i18n.mjs';
 
 if (process.argv.includes('--version')) { console.log('agy-hub-acp 0.3.0'); process.exit(0); }
@@ -68,7 +68,7 @@ async function makeSession(params, load = false) {
   const chosen = (catalog.some(m => m.modelId === saved?.model) ? saved.model : null) || catalog.find(m => m.modelId === 'gemini-3.8-flash-high')?.modelId || catalog[0]?.modelId;
   if (!chosen) throw new Error('Hub returned no models; sign in through the Antigravity extension first.');
   customAgentSpec.builtinAgent.model = catalog.find(m => m.modelId === chosen).modelOrAlias.model;
-  const s = { id: saved?.id || randomUUID(), cwd: params.cwd, model: chosen, mode: saved?.mode === 'plan' ? 'plan' : 'default', locale: resolveUiLocale(params.locale || clientLocale), catalog, customAgentSpec, texts: new Map(), assistantTexts: new Map(), tools: new Map(), permissions: new Set(), pendingPermissions: new Set(), controller: null, planText: '', proceedAsked: false };
+  const s = { id: saved?.id || randomUUID(), cwd: params.cwd, model: chosen, mode: saved?.mode === 'plan' ? 'plan' : 'default', locale: resolveUiLocale(params.locale || clientLocale), catalog, customAgentSpec, texts: new Map(), assistantTexts: new Map(), tools: new Map(), permissions: new Set(), pendingPermissions: new Set(), controller: null, planText: '', proceedAsked: false, reviewIndex: null };
   if (!load) await rpc('StartCascade', { cascadeId: s.id, source: 'CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT', requestedModel: customAgentSpec.builtinAgent.model, workspaceUris: [pathToFileURL(s.cwd).href], customAgentSpec });
   sessions.set(s.id, s); await save(s);
   if (load) await replay(s);
@@ -202,8 +202,8 @@ async function handlePermission(s, step, tool, signal) {
   }
 }
 async function requestPlanProceed(s, signal) {
-  if (s.proceedAsked || s.mode !== 'plan') return false;
-  s.proceedAsked = true;
+  if (s.proceedAsked || (s.mode !== 'plan' && s.reviewIndex === null)) return false;
+  s.proceedAsked = true; s.reviewIndex = null;
   const planText = s.planText || s.lastAssistant || '';
   const options = permissionOptions(true, s.locale);
   const result = await requestClient('session/request_permission', {
@@ -243,6 +243,11 @@ async function handleUpdate(s, u, signal, replaying = false) {
       textUpdate(s, key, markdownSnapshot(raw, final));
     }
     const tool = toolUpdate(s, step, index, u);
+    if (!replaying) {
+      // A plan awaiting review only blocks if the Hub did nothing after it.
+      if (tool?.status === 'completed' && requestsReview(tool.rawInput)) s.reviewIndex = index;
+      else if (s.reviewIndex !== null && index > s.reviewIndex && !step.plannerResponse) s.reviewIndex = null;
+    }
     if (step.errorMessage?.error) {
       const error = step.errorMessage.error;
       if (!replaying) s.turnError = error.shortError || error.userErrorMessage || 'Hub execution failed';
@@ -255,7 +260,7 @@ async function handleUpdate(s, u, signal, replaying = false) {
   if (u.fullyIdle) {
     for (const [key, raw] of s.assistantTexts) textUpdate(s, key, markdownSnapshot(raw, true));
     s.assistantTexts.clear();
-    if (!asked && !replaying && s.mode === 'plan' && !s.proceedAsked && (s.planText || s.lastAssistant)) asked = await requestPlanProceed(s, signal);
+    if (!asked && !replaying && (s.mode === 'plan' || s.reviewIndex !== null) && !s.proceedAsked && (s.planText || s.lastAssistant)) asked = await requestPlanProceed(s, signal);
   }
   return asked;
 }
@@ -287,7 +292,7 @@ async function prompt(params) {
   const selected = s.catalog.find(m => m.modelId === s.model);
   if (!selected) throw new Error('Selected model unavailable');
   const controller = new AbortController(); s.controller = controller; s.cancelled = false; s.turnError = null;
-  s.permissions = new Set(); s.pendingPermissions = new Set(); s.proceedAsked = false;
+  s.permissions = new Set(); s.pendingPermissions = new Set(); s.proceedAsked = false; s.reviewIndex = null;
   const timer = setTimeout(() => controller.abort(new Error('Hub turn timed out')), 30 * 60 * 1000);
   try {
     // Seed texts from the pre-prompt snapshot; replaying skips permissions and turn errors.

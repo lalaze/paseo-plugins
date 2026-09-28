@@ -92,7 +92,7 @@ test('Hub ACP forwards only explicit once-approval, rejects malformed decisions,
   } finally { await c.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('Hub ACP plan mode shows Proceed, starts execution, and restores the saved mode', { timeout: 30000 }, async () => {
+test('Hub ACP shows Proceed for plan mode and pending plan reviews, starts execution, and restores the saved mode', { timeout: 30000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'hub-acp-plan-'));
   copyFileSync(join(ROOT, 'test/fixtures/hub-server.mjs'), join(dir, 'fake-hub')); chmodSync(join(dir, 'fake-hub'), 0o700);
   writeFileSync(join(dir, 'rpc.jsonl'), '');
@@ -140,11 +140,28 @@ test('Hub ACP plan mode shows Proceed, starts execution, and restores the saved 
     assert.match(confirmText, /approved the implementation plan/);
     assert.doesNotMatch(confirmText, /PLANNING MODE/);
 
+    // Default mode: a plan that the Hub leaves pending review still gets Proceed.
+    const review = await c.request('session/new', { cwd: dir, mcpServers: [] });
+    const reviewing = c.request('session/prompt', { sessionId: review.sessionId, prompt: [{ type: 'text', text: 'plan-turn' }] });
+    const pendingReview = await c.permission();
+    assert.equal(pendingReview.params.toolCall.kind, 'switch_mode');
+    assert.match(pendingReview.params.toolCall.content[0].content.text, /Inspect the renderer/);
+    c.send({ id: pendingReview.id, result: { outcome: { outcome: 'selected', optionId: 'default' } } });
+    assert.deepEqual(await reviewing, { stopReason: 'end_turn' });
+    const reviewSent = rpcLog().filter(x => x.method === 'SendUserCascadeMessage' && x.body.cascadeId === review.sessionId).map(x => x.body.items.map(i => i.text).join('\n'));
+    assert.doesNotMatch(reviewSent[0], /PLANNING MODE/);
+    assert.match(reviewSent.at(-1), /approved the implementation plan/);
+
+    // Automatic review policy: the Hub continues by itself, so no Proceed.
+    const auto = await c.request('session/new', { cwd: dir, mcpServers: [] });
+    assert.deepEqual(await c.request('session/prompt', { sessionId: auto.sessionId, prompt: [{ type: 'text', text: 'auto-review' }] }), { stopReason: 'end_turn' });
+    assert.equal(rpcLog().filter(x => x.method === 'SendUserCascadeMessage' && x.body.cascadeId === auto.sessionId).length, 1);
+
     const approval = await c.request('session/new', { cwd: dir, mcpServers: [] });
     const waiting = c.request('session/prompt', { sessionId: approval.sessionId, prompt: [{ type: 'text', text: 'approval' }] });
-    const review = await c.permission();
-    assert.equal(review.params.toolCall.kind, 'switch_mode');
-    c.send({ id: review.id, result: { outcome: { outcome: 'selected', optionId: 'default' } } });
+    const approvalRequest = await c.permission();
+    assert.equal(approvalRequest.params.toolCall.kind, 'switch_mode');
+    c.send({ id: approvalRequest.id, result: { outcome: { outcome: 'selected', optionId: 'default' } } });
     assert.deepEqual(await waiting, { stopReason: 'end_turn' });
     assert.equal(rpcLog().filter(x => x.interaction).at(-1).interaction.approvalInteraction.confirm, true);
   } finally { await c.close(); rmSync(dir, { recursive: true, force: true }); }
