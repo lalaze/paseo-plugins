@@ -9,8 +9,9 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+// Assertions use the English control copy; pin it so the host locale cannot switch it.
 function client(dir) {
-  const child = spawn(process.execPath, [join(ROOT, 'hub.mjs'), 'run'], { env: { ...process.env, AGY_HUB_BIN: join(dir, 'fake-hub'), AGY_HUB_STATE_DIR: join(dir, 'state'), HUB_FIXTURE_LOG: join(dir, 'rpc.jsonl') }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [join(ROOT, 'hub.mjs'), 'run'], { env: { ...process.env, LC_ALL: 'en_US.UTF-8', AGY_HUB_BIN: join(dir, 'fake-hub'), AGY_HUB_STATE_DIR: join(dir, 'state'), HUB_FIXTURE_LOG: join(dir, 'rpc.jsonl') }, stdio: ['pipe', 'pipe', 'pipe'] });
   const pending = new Map(), queue = [], waiters = [], notifications = []; let counter = 0;
   const send = msg => child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
   createInterface({ input: child.stdout }).on('line', line => {
