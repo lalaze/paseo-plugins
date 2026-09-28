@@ -68,6 +68,8 @@ Plan 模式：`session/new` 声明 `default` 与 `plan`。Plan 下只探索并�
 
 接受 `session/new` 和 `session/load` 的 `mcpServers`，支持 Paseo 的无 `type` stdio 格式以及 HTTP/SSE 格式。逐项转换命令、参数、环境变量、URL 和认证头，stdio 工作目录使用会话 cwd。MCP 配置限定于会话，不写入 Antigravity 全局 MCP 文件；桥接自己的会话状态只保存 ID、工作目录和模型，恢复时使用 Paseo 本次传入的地址与凭证。Hub 本身仍管理其会话历史。
 
+HTTP 类型的 MCP 经桥接进程内的回环代理转发（`src/hub/mcp-proxy.mjs`）。agy `1.2.12` 在初始化协商出旧版本后，后续请求仍带 `MCP-Protocol-Version: 2026-07-28`；Paseo 使用的 `@modelcontextprotocol/sdk` 1.x 会对此返回 400，agy 随即丢弃全部 Paseo 工具，协作工具因此不可用。代理遇到该 400 时去掉版本头重试一次，服务端改用协商版本。SSE 与 stdio 不经代理。
+
 Paseo `0.7.2` 默认关闭内置 MCP 自动注入。仅开启 provider 的能力声明不会产生 MCP 服务列表。若要让 Paseo 注入自己的内置工具，需要在 Paseo 配置中设置：
 
 ```json

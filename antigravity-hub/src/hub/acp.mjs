@@ -6,12 +6,13 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { rpc, updates, stopHub } from './runtime.mjs';
 import { mcpSpec, promptContent } from './content.mjs';
+import { createMcpProxy } from './mcp-proxy.mjs';
 import { markdownSnapshot, toolPresentation, questionPresentation, questionOptionText, PLAN_MODE_INJECTION, isPlanConfirmation, isPlanFile, planEntries, requestsReview } from './presentation.mjs';
 import { resolveUiLocale, ui } from './i18n.mjs';
 
 if (process.argv.includes('--version')) { console.log('agy-hub-acp 0.3.0'); process.exit(0); }
 
-const sessions = new Map(), pending = new Map();
+const sessions = new Map(), pending = new Map(), mcpProxy = createMcpProxy();
 const stateDir = process.env.AGY_HUB_STATE_DIR || join(homedir(), '.local/state/agy-hub-acp');
 let nextId = 0, closing = false, clientLocale = resolveUiLocale();
 const send = obj => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...obj }) + '\n');
@@ -56,6 +57,10 @@ async function save(s) {
 }
 async function makeSession(params, load = false) {
   const customAgentSpec = mcpSpec(params.mcpServers, params.cwd);
+  // Streamable HTTP servers go through the version-tolerant proxy; legacy SSE and stdio stay direct.
+  for (const server of customAgentSpec.builtinAgent.customizationDiscovery.mcp.servers) {
+    if (server.disableStandaloneSse) server.serverUrl = await mcpProxy.route(server.serverUrl);
+  }
   if (load && sessions.get(params.sessionId)?.controller) throw new Error('Session already running');
   let saved;
   if (load) {
@@ -350,6 +355,7 @@ async function shutdown() {
   if (closing) return; closing = true;
   for (const s of sessions.values()) { if (s.controller) { s.cancelled = true; s.controller.abort(); } }
   await stopHub();
+  await mcpProxy.close();
   process.exit(0);
 }
 const lines = createInterface({ input: process.stdin });
