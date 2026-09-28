@@ -15,6 +15,17 @@ async function withTranslator(run: (harness: {
     <div data-testid="agent-chat-scroll">
       <div data-testid="assistant-message">
         <div id="reply" data-paseo-markdown-tag="p">Hello <span id="emphasis">world</span></div>
+        <div id="outer" data-paseo-markdown-tag="li" data-rect="40,200,360,80">
+          <div data-paseo-markdown-list-marker>•</div>
+          <div id="outer-content">Dev setup
+            <div id="inner-list" data-paseo-markdown-tag="ul">
+              <div id="inner" data-paseo-markdown-tag="li" data-rect="70,230,330,44">
+                <div data-paseo-markdown-list-marker>•</div>
+                <div id="inner-text">Restart the app</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       <div id="user" data-testid="user-message">
         <div id="user-text" dir="auto">当前这套 vllm 是多少 t/s？</div>
@@ -28,7 +39,7 @@ async function withTranslator(run: (harness: {
   for (const key of keys) Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] });
   dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
     const isTrigger = this.matches(triggerSelector);
-    const x = isTrigger ? 66 : 100, y = 100, width = isTrigger ? 28 : 300, height = 22;
+    const [x, y, width, height] = this.dataset.rect?.split(',').map(Number) ?? [isTrigger ? 66 : 100, 100, isTrigger ? 28 : 300, 22];
     return { x, y, left: x, top: y, right: x + width, bottom: y + height, width, height, toJSON() { return {}; } };
   };
   const calls: { text: string; target: TargetLanguage }[] = [];
@@ -94,5 +105,23 @@ test('assistant paragraphs still translate on click and the button survives cros
     assert.deepEqual(calls, [{ text: 'Hello world', target: 'auto' }]);
     assert.equal(document.querySelector('#reply + [data-paseo-translate-block] [data-paseo-translate-block-text]')?.textContent, '你好，世界');
     assert.equal(document.querySelector('#user [data-paseo-translate-block]'), null);
+  });
+});
+
+test('the button of a nested list item survives crossing the enclosing item\'s indent', async () => {
+  await withTranslator(async ({ document, move, calls }) => {
+    move('#inner-text', 150, 240);
+    const button = document.querySelector<HTMLButtonElement>(triggerSelector);
+    assert.ok(button);
+    // Left of the nested item, inside the outer item's indent, where the button is placed.
+    move('#inner-list', 55, 240);
+    move('#outer-content', 50, 245);
+    assert.equal(button.style.left, `${70 - 28 - 6}px`);
+    button.click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, [{ text: 'Restart the app', target: 'auto' }]);
+    // The outer item's own line still takes the button over.
+    move('#outer-content', 150, 210);
+    assert.equal(button.style.left, `${40 - 28 - 6}px`);
   });
 });

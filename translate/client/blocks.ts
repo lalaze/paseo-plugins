@@ -147,6 +147,13 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
       || (x >= own.left - slack && x <= own.right + slack && y >= own.top - slack && y <= own.bottom + slack);
   }
 
+  /** A nested list item's button sits in the indent, which belongs to the enclosing item; crossing it must not hand the button over. */
+  function inHoveredIndent(block: Element, x: number, y: number) {
+    if (!hovered || block === hovered || !block.contains(hovered)) return false;
+    const rect = hovered.getBoundingClientRect();
+    return x < rect.left && y >= rect.top && y <= rect.bottom;
+  }
+
   const pointerMove = (event: PointerEvent) => {
     if (trigger?.contains(event.target as Node | null)) return;
     const element = event.target instanceof Element ? event.target : event.target instanceof Node ? event.target.parentElement : null;
@@ -154,7 +161,7 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
     if (element?.closest('[data-testid="user-message"]')) { hide(); return; }
     const block = hoveredBlock(element);
     if (!block) { if (!nearHovered(event.clientX, event.clientY)) hide(); return; }
-    if (block !== hovered) show(block);
+    if (block !== hovered && !inHoveredIndent(block, event.clientX, event.clientY)) show(block);
   };
   const pointerLeave = () => hide();
   document.addEventListener('pointermove', pointerMove, { passive: true });
