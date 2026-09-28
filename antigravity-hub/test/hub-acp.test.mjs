@@ -10,8 +10,9 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 // Assertions use the English control copy; pin it so the host locale cannot switch it.
+// fake-hub.mjs keeps a stray package.json above tmpdir from changing how Node loads the fixture.
 function client(dir) {
-  const child = spawn(process.execPath, [join(ROOT, 'hub.mjs'), 'run'], { env: { ...process.env, LC_ALL: 'en_US.UTF-8', AGY_HUB_BIN: join(dir, 'fake-hub'), AGY_HUB_STATE_DIR: join(dir, 'state'), HUB_FIXTURE_LOG: join(dir, 'rpc.jsonl') }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [join(ROOT, 'hub.mjs'), 'run'], { env: { ...process.env, LC_ALL: 'en_US.UTF-8', AGY_HUB_BIN: join(dir, 'fake-hub.mjs'), AGY_HUB_STATE_DIR: join(dir, 'state'), HUB_FIXTURE_LOG: join(dir, 'rpc.jsonl') }, stdio: ['pipe', 'pipe', 'pipe'] });
   const pending = new Map(), queue = [], waiters = [], notifications = []; let counter = 0;
   const send = msg => child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
   createInterface({ input: child.stdout }).on('line', line => {
@@ -30,7 +31,7 @@ function client(dir) {
 
 test('Hub ACP forwards only explicit once-approval, rejects malformed decisions, cancels, resumes and reports errors', { timeout: 30000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'hub-acp-test-'));
-  copyFileSync(join(ROOT, 'test/fixtures/hub-server.mjs'), join(dir, 'fake-hub')); chmodSync(join(dir, 'fake-hub'), 0o700);
+  copyFileSync(join(ROOT, 'test/fixtures/hub-server.mjs'), join(dir, 'fake-hub.mjs')); chmodSync(join(dir, 'fake-hub.mjs'), 0o700);
   writeFileSync(join(dir, 'rpc.jsonl'), '');
   let c = client(dir);
   const rpcLog = () => readFileSync(join(dir, 'rpc.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
@@ -95,7 +96,7 @@ test('Hub ACP forwards only explicit once-approval, rejects malformed decisions,
 
 test('Hub ACP shows Proceed for plan mode and pending plan reviews, starts execution, and restores the saved mode', { timeout: 30000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'hub-acp-plan-'));
-  copyFileSync(join(ROOT, 'test/fixtures/hub-server.mjs'), join(dir, 'fake-hub')); chmodSync(join(dir, 'fake-hub'), 0o700);
+  copyFileSync(join(ROOT, 'test/fixtures/hub-server.mjs'), join(dir, 'fake-hub.mjs')); chmodSync(join(dir, 'fake-hub.mjs'), 0o700);
   writeFileSync(join(dir, 'rpc.jsonl'), '');
   const c = client(dir);
   const rpcLog = () => readFileSync(join(dir, 'rpc.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
@@ -170,7 +171,7 @@ test('Hub ACP shows Proceed for plan mode and pending plan reviews, starts execu
 
 test('Hub ACP submits structured question answers with actual option IDs, multi-select, skip and cancellation', { timeout: 30000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'hub-acp-questions-'));
-  copyFileSync(join(ROOT, 'test/fixtures/hub-server.mjs'), join(dir, 'fake-hub')); chmodSync(join(dir, 'fake-hub'), 0o700);
+  copyFileSync(join(ROOT, 'test/fixtures/hub-server.mjs'), join(dir, 'fake-hub.mjs')); chmodSync(join(dir, 'fake-hub.mjs'), 0o700);
   writeFileSync(join(dir, 'rpc.jsonl'), '');
   const c = client(dir);
   const interactions = () => readFileSync(join(dir, 'rpc.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse).filter(x => x.method === 'HandleCascadeUserInteraction');

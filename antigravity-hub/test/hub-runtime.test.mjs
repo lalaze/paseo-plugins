@@ -10,8 +10,9 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 test('Hub start failure is retried instead of sticking to the first rejection', { timeout: 15000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'hub-runtime-'));
-  const fail = join(dir, 'fail-hub');
-  const ok = join(dir, 'ok-hub');
+  // .mjs keeps a stray package.json above tmpdir from changing how Node loads the fakes.
+  const fail = join(dir, 'fail-hub.mjs');
+  const ok = join(dir, 'ok-hub.mjs');
   writeFileSync(fail, '#!/usr/bin/env node\nprocess.exit(1);\n');
   chmodSync(fail, 0o700);
   copyFileSync(join(ROOT, 'test/fixtures/hub-server.mjs'), ok);
