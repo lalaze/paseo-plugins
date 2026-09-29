@@ -2,7 +2,7 @@
 
 This plugin's source is retained for reference and local development only. Do not install or update it as part of repository setup. `install-all.sh` and `update-all.sh` exclude it, including when an older copy is already installed. Archiving the source does not uninstall an existing copy.
 
-An independent **File Transfer** workspace panel for **Paseo 0.8.x / 0.9.x (including prereleases)**. Files reside on the daemon host that owns the current workspace; uploads originate from, and downloads are saved to, the desktop app or browser you are using.
+An independent **File Transfer** workspace panel for **Paseo 0.8.x through 0.11.x (including prereleases)**. Files reside on the daemon host that owns the current workspace; uploads originate from, and downloads are saved to, the desktop app or browser you are using.
 
 The preserved source lives in the [`file-upload/`](.) directory of the [`lalaze/paseo-plugins`](https://github.com/lalaze/paseo-plugins) multi-plugin repository.
 
