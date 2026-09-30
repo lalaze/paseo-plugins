@@ -178,14 +178,29 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
         </Menu> : null}
       </View>
       <View style={{ flex: 1 }} />
-      <Button label={ui('New task', '新建任务')} icon="Plus" onPress={() => { setMenu(null); setEditorOpen(true); }} colors={colors} disabled={Boolean(loadError)} />
+      {/* With no tasks the centre tile is the one way in; the toolbar button joins once there is a board. */}
+      {loaded && tasks.length > 0 ? <Button label={ui('New task', '新建任务')} icon="Plus" onPress={() => { setMenu(null); setEditorOpen(true); }} colors={colors} disabled={Boolean(loadError)} /> : null}
     </View>
     {loadError ? <Text style={{ marginHorizontal: 16, marginBottom: 8, padding: 10, borderRadius: 10, color: colors.statusDanger, backgroundColor: tint(colors.statusDanger, 0.12), fontSize: 12 }}>{parseTodoError(`todo-error:${loadError}`)}</Text> : null}
 
-    {!loaded ? null : tasks.length === 0 ? <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 32 }}>
-      <Icon name="ListTodo" size={40} color={tint(colors.foregroundMuted, 0.4)} />
-      <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: '600' }}>{ui('No tasks yet', '还没有任务')}</Text>
-      <Text style={{ color: colors.foregroundMuted, fontSize: 12, textAlign: 'center', maxWidth: 360, lineHeight: 18 }}>{ui('Write down what needs doing. Each task runs in its own worktree and waits for your review before it merges.', '写下要做的事。每个任务在独立工作树里执行，验收后才会合并。')}</Text>
+    {!loaded ? null : tasks.length === 0 ? <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={ui('New task', '新建任务')}
+        disabled={Boolean(loadError)}
+        onPress={() => { setMenu(null); setEditorOpen(true); }}
+        style={({ pressed }) => ({
+          width: 440, maxWidth: '100%', alignItems: 'center', gap: 10, paddingVertical: 36, paddingHorizontal: 28, borderRadius: 20,
+          borderWidth: 1.5, borderStyle: 'dashed', borderColor: tint(colors.foreground, pressed ? 0.45 : 0.22),
+          backgroundColor: tint(colors.surface1, pressed ? 0.75 : 0.55), opacity: loadError ? 0.5 : 1,
+        })}
+      >
+        <View style={{ width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.foreground, marginBottom: 6 }}>
+          <Icon name="Plus" size={30} color={colors.surface0} />
+        </View>
+        <Text style={{ color: colors.foreground, fontSize: 17, fontWeight: '700' }}>{ui('New task', '新建任务')}</Text>
+        <Text style={{ color: colors.foregroundMuted, fontSize: 12, textAlign: 'center', lineHeight: 18 }}>{ui('Write down what needs doing. Each task runs in its own worktree and waits for your review before it merges.', '写下要做的事。每个任务在独立工作树里执行，验收后才会合并。')}</Text>
+      </Pressable>
     </View> : wide ? <View style={{ flex: 1, minHeight: 0, flexDirection: 'row', gap: 16, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16 }}>
       {BOARD_COLUMNS.map(column => <View key={column} style={{ flex: 1, minWidth: 0, gap: 8 }}>
         {header(column)}
