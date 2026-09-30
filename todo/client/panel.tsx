@@ -148,7 +148,9 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     {column === 'todo' && drafts > 1 ? <Button label={ui('Start all', '全部开始')} onPress={() => { void run(() => props.rpc(startQueue, { repository: scoped ?? projectFilter })); }} colors={colors} variant="ghost" size="xs" disabled={busy || Boolean(loadError)} /> : null}
   </View>;
   const cards = (column: BoardColumn) => columns[column].map(task => <TaskCard key={task.id} task={task} colors={colors} now={now} busy={busy} action={cardAction(task)} onOpen={() => setOpenId(task.id)} />);
-  const empty = (column: BoardColumn, grow: boolean) => <View style={{ flex: grow ? 1 : undefined, minHeight: 64, alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(colors.foregroundMuted, 0.3), backgroundColor: tint(colors.surface1, 0.35) }}>
+  // Every column sits in the same translucent well, with or without cards, so a busy column does not look bare.
+  const well = { borderRadius: 14, borderWidth: 1, borderColor: tint(colors.foreground, 0.08), backgroundColor: tint(colors.surface1, 0.35) } as const;
+  const empty = (column: BoardColumn) => <View style={{ flex: 1, minHeight: 64, alignItems: 'center', justifyContent: 'center' }}>
     <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui(...COLUMN_EMPTY[column])}</Text>
   </View>;
 
@@ -204,12 +206,16 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     </View> : wide ? <View style={{ flex: 1, minHeight: 0, flexDirection: 'row', gap: 16, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16 }}>
       {BOARD_COLUMNS.map(column => <View key={column} style={{ flex: 1, minWidth: 0, gap: 8 }}>
         {header(column)}
-        {columns[column].length === 0 ? empty(column, true) : <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 12, paddingBottom: 4 }}>{cards(column)}</ScrollView>}
+        <View style={[well, { flex: 1, minHeight: 0, overflow: 'hidden' }]}>
+          {columns[column].length === 0 ? empty(column) : <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 10, padding: 8 }}>{cards(column)}</ScrollView>}
+        </View>
       </View>)}
     </View> : <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24, gap: 20 }}>
       {BOARD_COLUMNS.map(column => <View key={column} style={{ gap: 8 }}>
         {header(column)}
-        {columns[column].length === 0 ? empty(column, false) : cards(column)}
+        <View style={[well, { gap: 10, padding: columns[column].length === 0 ? 0 : 8 }]}>
+          {columns[column].length === 0 ? empty(column) : cards(column)}
+        </View>
       </View>)}
     </ScrollView>}
 
