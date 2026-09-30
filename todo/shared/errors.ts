@@ -10,6 +10,7 @@ const messages = {
   'agent-busy': ['The session is still running or waiting for permission, so this review cannot be merged.', '会话仍在执行或等待权限，不能合并这次验收。'],
   'cancel-rejected': ['This task cannot be canceled right now.', '当前不能取消这个任务。'],
   'start-rejected': ['Only a draft can be started.', '只有草稿可以开始。'],
+  'cleanup-rejected': ['Only a merged task can be cleaned up.', '只有已合并的任务可以清理。'],
   'retry-rejected': ['This task cannot be retried.', '当前不能重试这个任务。'],
   'continue-rejected': ['This task cannot take a follow-up.', '当前不能继续修改这个任务。'],
   'task-missing': ['The task no longer exists.', '任务不存在。'],

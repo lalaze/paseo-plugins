@@ -44,7 +44,12 @@ function harness(options: {
   apply?: GitPort['applyMerge'];
   target?: () => Promise<string>;
   cancel?: (agentId: string) => Promise<void>;
+  archive?: () => Promise<void>;
+  removeWorktree?: GitPort['removeWorktree'];
 } = {}) {
+  const archived: Array<{ taskId: string; workspaceId: string | null; worktree: string | null }> = [];
+  const removed: string[] = [];
+  const deleted: Array<{ branch: string; expectedHead: string; targetBranch: string }> = [];
   const created: string[] = [];
   const prompts: string[] = [];
   const cancels: string[] = [];
@@ -65,6 +70,7 @@ function harness(options: {
     async cancel(agentId) { cancels.push(agentId); await options.cancel?.(agentId); },
     inspect: options.inspect ?? (async () => idle()),
     findByOperation: options.find ?? (async () => null),
+    async archiveTask(input) { await options.archive?.(); archived.push(input); },
   };
   const prepared = (input: Parameters<GitPort['prepareMerge']>[0]): PrepareOk => ({
     ok: true, mergeCommit: M, checkout: null, root: input.root, worktree: input.worktree,
@@ -82,10 +88,12 @@ function harness(options: {
     async diff() { return { patch: '', files: [], truncated: false }; },
     prepareMerge: options.prepare ?? (async input => { prepares.push(1); return prepared(input); }),
     applyMerge: options.apply ?? (async input => ({ ok: true, mergeCommit: input.mergeCommit, method: 'update-ref' })),
+    async removeWorktree(input) { await options.removeWorktree?.(input); removed.push(input.worktree); },
+    async deleteMergedBranch(input) { deleted.push({ branch: input.branch, expectedHead: input.expectedHead, targetBranch: input.targetBranch }); },
   };
   let now = 1;
   return {
-    created, sent, captures, prepares, prompts, cancels, agents, git,
+    created, sent, captures, prepares, prompts, cancels, archived, removed, deleted, agents, git,
     engine: null as unknown as TodoEngine,
     async open(dir: string) {
       const store = await TaskStore.open(dir);
@@ -105,8 +113,8 @@ async function seed(dir: string, patch: Partial<Task>): Promise<Task> {
     branch: 'paseo-todo/seeded', worktree: '/wt/seeded', baseCommit: B, agentId: 'agent-seeded', workspaceId: 'ws-1',
     operationId: '00000000-0000-4000-8000-00000000beef', operationIds: ['00000000-0000-4000-8000-00000000beef'], review: null,
     lastOutcome: null, pendingMergeCommit: null, mergeCommit: null, mergeMethod: null, errorCode: null, errorDetail: null,
-    createdAt: 1, updatedAt: 1, ...patch,
-  };
+    cleanup: null, createdAt: 1, updatedAt: 1, ...patch,
+  } as Task;
   await store.insert(task);
   await store.dispose();
   return task;
@@ -628,9 +636,68 @@ describe('engine failure paths', () => {
       const canceling = engine.cancel(second.id);
       await Promise.all([starting, canceling]);
       assert.equal(statusOf(engine, second.id), 'canceled');
-      await new Promise(resolve => setTimeout(resolve, 50));
+      // Wait for the other draft to be dispatched, then check the canceled one was not dispatched with it.
+      await waitFor(() => box.created.length === 1);
       assert.equal(statusOf(engine, second.id), 'canceled');
       assert.equal(box.created.length, 1);
     });
   });
 });
+
+describe('cleanup after a merge', () => {
+  it('archives the sessions, then removes the worktree, then deletes the merged branch', async () => {
+    const box = harness();
+    await withEngine(box, async engine => {
+      const task = await reviewed(box, engine, 'tidy');
+      const merged = await engine.accept(task.id, reviewOf(task));
+      assert.equal(merged.status, 'merged');
+      assert.deepEqual(box.archived, [{ taskId: task.id, workspaceId: 'ws-1', worktree: `/wt/${task.id}` }]);
+      assert.deepEqual(box.removed, [`/wt/${task.id}`]);
+      assert.deepEqual(box.deleted, [{ branch: `paseo-todo/${task.id}`, expectedHead: R, targetBranch: 'main' }]);
+      assert.deepEqual({ ...merged.cleanup, at: 0 }, { sessions: true, worktree: true, branch: true, error: null, at: 0 });
+    });
+  });
+
+  it('leaves the worktree and branch while the sessions cannot be archived, and finishes on a retry', async () => {
+    let down = true;
+    const box = harness({ archive: async () => { if (down) throw new Error('daemon unreachable'); } });
+    await withEngine(box, async engine => {
+      const task = await reviewed(box, engine, 'later');
+      const merged = await engine.accept(task.id, reviewOf(task));
+      assert.equal(merged.status, 'merged');
+      assert.equal(merged.cleanup?.sessions, false);
+      assert.match(merged.cleanup?.error ?? '', /daemon unreachable/);
+      assert.deepEqual(box.removed, []);
+      assert.deepEqual(box.deleted, []);
+      down = false;
+      const retried = await engine.cleanup(task.id);
+      assert.deepEqual({ ...retried.cleanup, at: 0 }, { sessions: true, worktree: true, branch: true, error: null, at: 0 });
+      assert.equal(box.removed.length, 1);
+      assert.equal(box.deleted.length, 1);
+    });
+  });
+
+  it('keeps the branch when the worktree cannot be removed', async () => {
+    const box = harness({ removeWorktree: async () => { throw new Error('contains untracked files'); } });
+    await withEngine(box, async engine => {
+      const task = await reviewed(box, engine, 'dirty');
+      const merged = await engine.accept(task.id, reviewOf(task));
+      assert.equal(merged.status, 'merged');
+      assert.equal(merged.cleanup?.sessions, true);
+      assert.equal(merged.cleanup?.worktree, false);
+      assert.equal(merged.cleanup?.branch, false);
+      assert.match(merged.cleanup?.error ?? '', /untracked/);
+      assert.deepEqual(box.deleted, []);
+    });
+  });
+
+  it('refuses to clean up a task that has not merged', async () => {
+    const box = harness();
+    await withEngine(box, async engine => {
+      const task = await reviewed(box, engine, 'open');
+      await assert.rejects(engine.cleanup(task.id), /cleanup-rejected/);
+      assert.deepEqual(box.archived, []);
+    });
+  });
+});
+

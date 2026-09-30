@@ -21,4 +21,6 @@ export interface AgentPort {
   cancel(agentId: string): Promise<void>;
   inspect(agentId: string): Promise<AgentInspection>;
   findByOperation(operationId: string): Promise<string | null>;
+  /** Archives every session made for the task, and the workspace opened on its worktree (never any other workspace). */
+  archiveTask(input: { taskId: string; workspaceId: string | null; worktree: string | null }): Promise<void>;
 }

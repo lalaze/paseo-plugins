@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { allStatusesFiled, columnFor, diffLineKind, diffStats, groupTasks, relativeAge } from '../shared/board';
+import { allStatusesFiled, columnFor, diffLineKind, diffStats, groupTasks, pendingCleanup, relativeAge } from '../shared/board';
 import type { Task } from '../shared/schema';
 
 function task(id: string, status: Task['status'], updatedAt: number): Task {
@@ -8,7 +8,7 @@ function task(id: string, status: Task['status'], updatedAt: number): Task {
     id, title: id, prompt: id, pendingPrompt: null, repository: '/r', projectId: null, projectName: null,
     targetBranch: 'main', provider: 'a/b', modeId: null, status, branch: null, worktree: null, baseCommit: null,
     agentId: null, workspaceId: null, operationId: null, operationIds: [], review: null, lastOutcome: null,
-    pendingMergeCommit: null, mergeCommit: null, mergeMethod: null, errorCode: null, errorDetail: null,
+    pendingMergeCommit: null, mergeCommit: null, mergeMethod: null, errorCode: null, errorDetail: null, cleanup: null,
     createdAt: 0, updatedAt,
   };
 }
@@ -41,4 +41,15 @@ describe('board', () => {
     assert.equal(diffLineKind('@@ -1 +1 @@'), 'hunk');
     assert.equal(diffLineKind('+++ b/x'), 'meta');
   });
+
+  it('names the first cleanup step still to do on a merged task', () => {
+    const merged = task('m', 'merged', 1);
+    const at = 1;
+    assert.equal(pendingCleanup(task('r', 'running', 1)), null);
+    assert.equal(pendingCleanup(merged), 'sessions');
+    assert.equal(pendingCleanup({ ...merged, cleanup: { sessions: true, worktree: false, branch: false, error: 'x', at } }), 'worktree');
+    assert.equal(pendingCleanup({ ...merged, cleanup: { sessions: true, worktree: true, branch: false, error: null, at } }), 'branch');
+    assert.equal(pendingCleanup({ ...merged, cleanup: { sessions: true, worktree: true, branch: true, error: null, at } }), null);
+  });
 });
+

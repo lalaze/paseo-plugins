@@ -13,6 +13,7 @@ function fake(): ConnectedAgents & { closed: number } {
     cancel: async () => undefined,
     inspect: async () => inspection,
     findByOperation: async () => 'a',
+    archiveTask: async () => undefined,
     async close() { this.closed += 1; },
   };
 }

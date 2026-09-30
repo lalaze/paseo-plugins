@@ -43,6 +43,18 @@ export function relativeAge(at: number, now: number): string {
   return `${Math.floor(seconds / 86_400)}d`;
 }
 
+export type CleanupStep = 'sessions' | 'worktree' | 'branch';
+
+/** The first post-merge cleanup step not yet done, in the order the engine runs them; null when nothing is left. */
+export function pendingCleanup(task: Pick<Task, 'status' | 'cleanup'>): CleanupStep | null {
+  if (task.status !== 'merged') return null;
+  const done = task.cleanup;
+  if (!done?.sessions) return 'sessions';
+  if (!done.worktree) return 'worktree';
+  if (!done.branch) return 'branch';
+  return null;
+}
+
 export type DiffLineKind = 'add' | 'del' | 'hunk' | 'meta' | 'context';
 
 export function diffLineKind(line: string): DiffLineKind {

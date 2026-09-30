@@ -51,6 +51,10 @@ export class ReconnectingAgents implements AgentPort {
     return (await this.get()).findByOperation(operationId);
   }
 
+  async archiveTask(input: { taskId: string; workspaceId: string | null; worktree: string | null }): Promise<void> {
+    return (await this.get()).archiveTask(input);
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     const current = this.current;

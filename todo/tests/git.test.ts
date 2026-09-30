@@ -233,5 +233,57 @@ describe('git merge and capture', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it('removes a merged task worktree and deletes its branch, and refuses anything else', async () => {
+    const root = await initRepo();
+    try {
+      const watched = spy();
+      const tool = createGit({ run: watched.run, worktreeRoot: await worktreeRoot() });
+      const base = await git(root, ['rev-parse', 'HEAD']);
+      const ensured = await tool.ensureWorktree({
+        root, taskId: '66666666-6666-4666-8666-666666666666', branch: 'paseo-todo/six', targetBranch: 'main', existingPath: null,
+      });
+      await writeFile(join(ensured.worktree, 'note.txt'), 'six\n');
+      const captured = await tool.capture({ root, worktree: ensured.worktree, branch: ensured.branch, message: 'capture' });
+      const target = { root, branch: ensured.branch, expectedHead: captured.commit, targetBranch: 'main' };
+
+      // Not merged yet: the branch stays.
+      await tool.removeWorktree({ root, worktree: ensured.worktree, branch: ensured.branch });
+      await assert.rejects(tool.deleteMergedBranch(target), /尚未合并/);
+      assert.equal(await git(root, ['rev-parse', 'refs/heads/paseo-todo/six']), captured.commit);
+
+      await git(root, ['merge', '--ff-only', captured.commit]);
+
+      await assert.rejects(tool.deleteMergedBranch({ ...target, branch: 'main' }), /paseo-todo\//);
+      await assert.rejects(tool.deleteMergedBranch({ ...target, expectedHead: base }), /已变化/);
+      await tool.deleteMergedBranch(target);
+      assert.equal((await exec('git', ['branch', '--list', 'paseo-todo/six'], { cwd: root })).stdout.trim(), '');
+      // Idempotent once gone.
+      await tool.deleteMergedBranch(target);
+      await tool.removeWorktree({ root, worktree: ensured.worktree, branch: ensured.branch });
+      assert.doesNotMatch(await git(root, ['worktree', 'list']), /six/);
+      assertSafe(watched.log);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a worktree with uncommitted work and a branch another worktree still has checked out', async () => {
+    const root = await initRepo();
+    try {
+      const tool = createGit({ worktreeRoot: await worktreeRoot() });
+      const ensured = await tool.ensureWorktree({
+        root, taskId: '77777777-7777-4777-8777-777777777777', branch: 'paseo-todo/seven', targetBranch: 'main', existingPath: null,
+      });
+      await writeFile(join(ensured.worktree, 'stray.txt'), 'not committed\n');
+      await assert.rejects(tool.removeWorktree({ root, worktree: ensured.worktree, branch: ensured.branch }));
+      assert.equal(await readFile(join(ensured.worktree, 'stray.txt'), 'utf8'), 'not committed\n');
+      const head = await git(root, ['rev-parse', 'refs/heads/paseo-todo/seven']);
+      await assert.rejects(tool.deleteMergedBranch({ root, branch: ensured.branch, expectedHead: head, targetBranch: 'main' }), /检出/);
+      assert.equal(await git(root, ['rev-parse', 'refs/heads/paseo-todo/seven']), head);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 

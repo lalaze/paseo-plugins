@@ -104,6 +104,8 @@ export interface GitPort {
   diff(input: { root: string; worktree: string; branch: string; from: string; to: string | null }): Promise<TaskDiff>;
   prepareMerge(input: PrepareMergeInput): Promise<PrepareResult>;
   applyMerge(input: PrepareOk): Promise<ApplyResult>;
+  removeWorktree(input: { root: string; worktree: string; branch: string }): Promise<void>;
+  deleteMergedBranch(input: { root: string; branch: string; expectedHead: string; targetBranch: string }): Promise<void>;
 }
 
 interface WorktreeRow {
@@ -357,6 +359,35 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
         resultCommit: input.resultCommit,
         resultTree: input.resultTree,
       };
+    },
+    /** Only the task's own worktree, on its own branch; without --force git keeps any uncommitted or untracked file. */
+    async removeWorktree(input) {
+      if (!existsSync(input.worktree)) {
+        await text(input.root, ['worktree', 'prune']);
+        return;
+      }
+      await assertTaskCheckout(input.root, input.worktree, input.branch);
+      const removed = await text(input.root, ['worktree', 'remove', input.worktree]);
+      if (removed.code !== 0) throw new Error(clip(removed.stderr || removed.stdout || '无法移除任务工作树'));
+    },
+    /**
+     * Deletes a plugin-made branch only when its tip is the accepted commit, that commit is already in the target,
+     * and no worktree has it checked out. The ref is removed with a compare-and-delete on that exact commit.
+     */
+    async deleteMergedBranch(input) {
+      if (!input.branch.startsWith('paseo-todo/') || !branchSchema.safeParse(input.branch).success) {
+        throw new Error(`只删除插件创建的 paseo-todo/ 任务分支：${input.branch}`);
+      }
+      if (!await this.branchExists(input.root, input.branch)) return;
+      const ref = `refs/heads/${input.branch}`;
+      const head = await rev(input.root, ref);
+      if (head !== input.expectedHead) throw new Error('任务分支在验收之后已变化，没有删除');
+      if ((await worktrees(input.root)).some(row => row.branch === ref)) throw new Error('任务分支仍在某个工作树检出，没有删除');
+      const merged = await text(input.root, ['merge-base', '--is-ancestor', input.expectedHead, `refs/heads/${input.targetBranch}`]);
+      if (merged.code === 1) throw new Error(`任务分支尚未合并进 ${input.targetBranch}，没有删除`);
+      if (merged.code !== 0) throw new Error(clip(merged.stderr || '无法确认任务分支是否已合并'));
+      const deleted = await text(input.root, ['update-ref', '-d', ref, input.expectedHead]);
+      if (deleted.code !== 0) throw new Error(clip(deleted.stderr || deleted.stdout || '无法删除任务分支'));
     },
     async applyMerge(input) {
       const ready = await preflight(input);

@@ -93,6 +93,21 @@ export class PaseoTodoGateway implements AgentPort {
     return { exists: true, active, permission, status };
   }
 
+  async archiveTask(input: { taskId: string; workspaceId: string | null; worktree: string | null }): Promise<void> {
+    await this.connect();
+    const page = await this.api.agents.list({ filter: { labels: { 'paseo-todo-task': input.taskId } }, page: { limit: 100 } });
+    for (const entry of page.entries) {
+      if (!entry.agent.archivedAt) await this.api.agents.ref(entry.agent.id).archive();
+    }
+    if (!input.workspaceId || !input.worktree) return;
+    const workspace = this.api.workspaces.ref(input.workspaceId);
+    const current = await workspace.refresh();
+    // Only the workspace that was opened on this task's worktree; a project's own workspace is never archived here.
+    if (!current || workspace.directory?.replace(/\/+$/, '') !== input.worktree.replace(/\/+$/, '')) return;
+    const result = await workspace.archive();
+    if (result.error) throw new Error(result.error);
+  }
+
   async findByOperation(operationId: string): Promise<string | null> {
     await this.connect();
     const page = await this.api.agents.list({ filter: { labels: { 'paseo-todo-operation': operationId } }, page: { limit: 10 } });

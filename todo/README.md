@@ -20,7 +20,8 @@ The queue connects with `PASEO_TODO_URL` and `PASEO_TODO_PASSWORD` when those ar
 
 ## Limits
 
-- No dependency graph and no automatic worktree cleanup. Nothing is pushed.
+- No dependency graph. Nothing is pushed.
+- After a merge the task cleans up after itself, in order: it archives the task's sessions and the workspace opened on its worktree, removes the worktree with `git worktree remove` (no `--force`, so an uncommitted or untracked file stops it; ignored files such as `node_modules` go with the worktree), then deletes the `paseo-todo/…` branch only if its tip is the accepted commit, that commit is in the target branch, and no worktree has it checked out. A failed step is shown on the task with a **Retry cleanup** button; the merge itself stands. Your own checkout's branch is never switched.
 - The plugin will not merge because a turn ended, a permission was resolved, or the agent said it was done. An agent that can run a shell can still run git itself.
 - Accept sends the review binding shown on that screen. A stale page is rejected and does not replace the saved binding.
 - A new turn on the producing session invalidates the binding even before files change. Accept is refused while that session is running, waiting for permission, or cannot be inspected.

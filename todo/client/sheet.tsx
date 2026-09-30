@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { diffLineKind, diffStats, relativeAge } from '../shared/board';
+import { diffLineKind, diffStats, pendingCleanup, relativeAge, type CleanupStep } from '../shared/board';
 import { canAccept, canCancel, canContinue, canRetry } from '../shared/machine';
 import type { Catalog, Task, TaskDiff } from '../shared/schema';
 import { HostTag, projectLabel, StatusChip } from './card';
@@ -12,6 +12,7 @@ export interface SheetHandlers {
   onStart(): void;
   onCancel(): void;
   onRetry(): void;
+  onCleanup(): void;
   onContinue(prompt: string): Promise<boolean>;
   onAccept(): void;
   onOpenSession: (() => void) | null;
@@ -130,12 +131,16 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
       case 'failed': return ui('The agent turn failed.', 'Agent 轮次失败。');
       case 'merging': return ui('Merging…', '正在合并…');
       case 'canceling': return ui('Stopping the session…', '正在停止会话…');
-      case 'merged': return ui(`Merged into ${task.targetBranch}.`, `已合并到 ${task.targetBranch}。`);
+      case 'merged': return mergedText(task.targetBranch, task.branch, pendingCleanup(task), Boolean(task.cleanup), task.cleanup?.error ?? null);
       case 'canceled': return ui('Canceled. The worktree and branch were kept.', '已取消，工作树和分支已保留。');
     }
   })();
-  const warn = review || task.status === 'needs_attention';
-  const primary = review
+  const leftover = pendingCleanup(task);
+  const cleanupFailed = Boolean(leftover && task.cleanup?.error);
+  const warn = review || task.status === 'needs_attention' || cleanupFailed;
+  const primary = leftover
+    ? <Button label={task.cleanup ? ui('Retry cleanup', '重试清理') : ui('Clean up', '清理')} icon="Archive" onPress={props.onCleanup} colors={colors} full disabled={props.busy} />
+    : review
     ? <Button label={ui('Accept and merge', '验收并合并')} icon="GitMerge" onPress={props.onAccept} colors={colors} full disabled={props.busy} />
     : task.status === 'draft'
       ? <Button label={ui('Start', '开始')} icon="Play" onPress={props.onStart} colors={colors} full disabled={props.busy} />
@@ -145,7 +150,7 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
           ? <Button label={ui('Open session', '打开会话')} icon="MessageSquare" onPress={props.onOpenSession} colors={colors} full />
           : null;
   return <View style={{ gap: 12, padding: 12, borderRadius: 12, borderWidth: 1, borderColor: warn ? tint(colors.statusWarning, 0.35) : outline(colors), backgroundColor: warn ? tint(colors.statusWarning, 0.05) : tint(colors.surface2, 0.4) }}>
-    <Text style={{ color: task.status === 'merged' ? colors.statusSuccess : colors.foreground, fontSize: 12, lineHeight: 18 }}>{text}</Text>
+    <Text style={{ color: task.status === 'merged' ? (cleanupFailed ? colors.statusWarning : colors.statusSuccess) : colors.foreground, fontSize: 12, lineHeight: 18 }}>{text}</Text>
     {primary}
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
       {canContinue(task.status) ? <Button label={ui('Send back', '打回修改')} icon="CornerDownLeft" onPress={() => setComposing(value => !value)} colors={colors} variant="outline" size="xs" /> : null}
@@ -166,6 +171,20 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
       }} />
     </View> : null}
   </View>;
+}
+
+const STEP_NAME: Record<CleanupStep, readonly [string, string]> = {
+  sessions: ['the sessions', '会话'],
+  worktree: ['the worktree', '工作树'],
+  branch: ['the branch', '分支'],
+};
+
+function mergedText(target: string, branch: string | null, leftover: CleanupStep | null, attempted: boolean, error: string | null): string {
+  const merged = ui(`Merged into ${target}.`, `已合并到 ${target}。`);
+  if (!leftover) return `${merged} ${ui(`Archived its sessions and removed the worktree and ${branch ?? 'the branch'}.`, `会话已归档，工作树和分支 ${branch ?? ''} 已删除。`)}`;
+  if (!attempted) return `${merged} ${ui('Its sessions, worktree and branch are still here.', '会话、工作树和分支还在。')}`;
+  const [en, zh] = STEP_NAME[leftover];
+  return `${merged} ${ui(`Could not clean up ${en}: ${error ?? ''}`, `${zh}没有清理：${error ?? ''}`)}`;
 }
 
 function Section(props: { title: ReactNode; colors: Colors; children: ReactNode }) {

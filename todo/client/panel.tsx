@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useHosts, type PluginClientContext, type PluginHostProps, type PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { Icon, useToast } from '@getpaseo/plugin/client/react-native';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { BOARD_COLUMNS, groupTasks, type BoardColumn } from '../shared/board';
+import { BOARD_COLUMNS, groupTasks, pendingCleanup, type BoardColumn } from '../shared/board';
 import { canRetry } from '../shared/machine';
-import { acceptTask, cancelTask, continueTask, createTask, listTasks, readCatalog, readTask, retryTask, startQueue, startTask } from '../shared/rpc';
+import { acceptTask, cancelTask, cleanupTask, continueTask, createTask, listTasks, readCatalog, readTask, retryTask, startQueue, startTask } from '../shared/rpc';
 import type { Catalog, Task, TaskDiff } from '../shared/schema';
 import { projectLabel, TaskCard, type CardAction } from './card';
 import { NewTaskDialog, type NewTaskInput } from './editor';
@@ -214,6 +214,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     if (task.status === 'draft') return { label: ui('Start', '开始'), icon: 'Play', onPress: () => { void run(host, rpc => rpc(startTask, { id: task.id })); } };
     if (task.status === 'awaiting_review' || task.status === 'merge_failed') return { label: ui('Review', '验收'), icon: 'GitMerge', onPress: () => setOpen({ hostId: task.hostId, id: task.id }) };
     if (canRetry(task.status) && task.status !== 'canceled') return { label: ui('Retry', '重试'), icon: 'RotateCcw', onPress: () => { void run(host, rpc => rpc(retryTask, { id: task.id })); } };
+    if (pendingCleanup(task)) return { label: ui('Clean up', '清理'), icon: 'Archive', onPress: () => { void run(host, rpc => rpc(cleanupTask, { id: task.id })); } };
     const session = openAgent(task);
     if (session && (task.status === 'running' || task.status === 'needs_attention' || task.status === 'preparing')) return { label: ui('Open session', '打开会话'), icon: 'MessageSquare', onPress: session };
     return null;
@@ -373,6 +374,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
         onStart={() => { void run(host, rpc => rpc(startTask, { id: openTask.id })); }}
         onCancel={() => { void run(host, rpc => rpc(cancelTask, { id: openTask.id })); }}
         onRetry={() => { void run(host, rpc => rpc(retryTask, { id: openTask.id })); }}
+        onCleanup={() => { void run(host, rpc => rpc(cleanupTask, { id: openTask.id })); }}
         onContinue={async prompt => (await run(host, rpc => rpc(continueTask, { id: openTask.id, prompt }))) !== null}
         onAccept={() => {
           // Send exactly the binding this sheet is showing; the server rejects it if a newer one exists.

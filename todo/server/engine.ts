@@ -239,7 +239,52 @@ export class TodoEngine {
       // task running in the same repository does not hold an accept for the length of its turn.
       const result = await this.lockTask(id, () => this.gitSerial(task.repository, () => this.acceptLocked(id, review)));
       this.tick();
-      return result;
+      // The merge stands on its own; a cleanup step that fails is recorded on the task and can be retried.
+      return result.status === 'merged' ? await this.cleanup(id).catch(() => this.options.store.get(id)) : result;
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * After a merge: archive the task's sessions and workspace, then remove its worktree, then delete its branch. Each step
+   * runs only once the one before it succeeded (a live session may still be using the worktree, and git will not delete
+   * a branch a worktree has checked out); finished steps are skipped on a retry.
+   */
+  async cleanup(id: string): Promise<Task> {
+    if (this.disposed) throw todoError('cleanup-rejected');
+    this.ensureWritable();
+    const release = this.enter();
+    if (!release) throw todoError('cleanup-rejected');
+    try {
+      const task = this.options.store.get(id);
+      if (task.status !== 'merged') throw todoError('cleanup-rejected');
+      const done = { sessions: task.cleanup?.sessions ?? false, worktree: task.cleanup?.worktree ?? false, branch: task.cleanup?.branch ?? false };
+      let problem: string | null = null;
+      // The failed step is the first one not done, so only its error is kept; the page names the step.
+      const step = async (fn: () => Promise<void>) => {
+        try { await fn(); return true; } catch (error) { problem = errorText(error).slice(0, 4000); return false; }
+      };
+      if (!done.sessions) {
+        done.sessions = await step(() => this.options.agents.archiveTask({ taskId: task.id, workspaceId: task.workspaceId, worktree: task.worktree }));
+      }
+      if (done.sessions && !done.worktree) {
+        const { worktree, branch } = task;
+        done.worktree = !worktree || !branch || await step(() => this.gitSerial(task.repository, () => this.options.git.removeWorktree({ root: task.repository, worktree, branch })));
+      }
+      if (done.worktree && !done.branch) {
+        const { branch, review } = task;
+        done.branch = !branch || await step(async () => {
+          if (!review) throw new Error('没有记录验收时的成果提交');
+          await this.gitSerial(task.repository, () => this.options.git.deleteMergedBranch({
+            root: task.repository, branch, expectedHead: review.resultCommit, targetBranch: review.targetBranch,
+          }));
+        });
+      }
+      return await this.lockTask(id, async () => {
+        const current = this.options.store.get(id);
+        return this.write({ ...current, cleanup: { ...done, error: problem, at: this.now() } });
+      });
     } finally {
       release();
     }

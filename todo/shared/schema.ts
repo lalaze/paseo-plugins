@@ -20,6 +20,15 @@ export const outcomeSchema = z.object({
   at: z.number().int().nonnegative(),
 }).strict();
 
+/** Steps run after a merge: archive the task's sessions, remove its worktree, delete its branch. Each runs only after the one before it. */
+export const cleanupSchema = z.object({
+  sessions: z.boolean(),
+  worktree: z.boolean(),
+  branch: z.boolean(),
+  error: z.string().max(4000).nullable(),
+  at: z.number().int().nonnegative(),
+}).strict();
+
 export const taskSchema = z.object({
   id: z.string().uuid(),
   title: z.string().min(1).max(200),
@@ -46,6 +55,8 @@ export const taskSchema = z.object({
   mergeMethod: z.enum(['update-ref', 'ff-only']).nullable(),
   errorCode: z.string().min(1).max(80).nullable(),
   errorDetail: z.string().max(4000).nullable(),
+  // Absent in tasks saved before cleanup existed.
+  cleanup: cleanupSchema.nullable().default(null),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
 }).strict();
@@ -67,6 +78,7 @@ export function reviewsMatch(left: ReviewBinding | null, right: ReviewBinding | 
     && left.operationId === right.operationId;
 }
 export type TaskOutcome = z.infer<typeof outcomeSchema>;
+export type TaskCleanup = z.infer<typeof cleanupSchema>;
 export type Task = z.infer<typeof taskSchema>;
 export type StoreFile = z.infer<typeof storeFileSchema>;
 
