@@ -1,11 +1,12 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { readBranches } from '../shared/rpc';
 import type { Catalog } from '../shared/schema';
 import { ui } from './i18n';
-import { Backdrop, Button, outline, SectionTitle, tint, type Colors } from './kit';
+import { Backdrop, Button, outline, tint, type Colors } from './kit';
+import { Select } from './select';
 
 type Rpc = PluginClientContext['rpc'];
 
@@ -41,6 +42,7 @@ export function NewTaskDialog(props: {
   const [branches, setBranches] = useState<string[]>([]);
   const [targetBranch, setTargetBranch] = useState('');
   const [provider, setProvider] = useState(props.initialProvider ?? models[0]?.value ?? '');
+  const [picker, setPicker] = useState<'project' | 'branch' | 'agent' | null>(null);
 
   // The catalog can arrive after the dialog opens.
   const firstModel = models[0]?.value ?? '';
@@ -67,7 +69,7 @@ export function NewTaskDialog(props: {
   }, start);
 
   return <Backdrop onClose={props.onClose} align="center">
-    <View style={{ width: Math.min(640, props.width - 24), maxHeight: '90%', borderRadius: 16, borderWidth: 1, borderColor: outline(colors), backgroundColor: colors.surface0, overflow: 'hidden' }}>
+    <View style={{ width: Math.min(640, props.width - 24), maxHeight: '90%', borderRadius: 16, borderWidth: 1, borderColor: outline(colors), backgroundColor: colors.surface0 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 18, paddingBottom: 4 }}>
         <Text style={{ flex: 1, color: colors.foregroundMuted, fontSize: 13, fontWeight: '600' }}>{ui('New task', '新建任务')}</Text>
         <Pressable accessibilityRole="button" accessibilityLabel={ui('Close', '关闭')} onPress={props.onClose} style={{ padding: 4 }}>
@@ -91,23 +93,36 @@ export function NewTaskDialog(props: {
           placeholderTextColor={tint(colors.foregroundMuted, 0.55)}
           style={{ minHeight: 150, padding: 12, borderRadius: 12, backgroundColor: colors.surface1, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 13, lineHeight: 19, textAlignVertical: 'top', outlineStyle: 'solid', outlineWidth: 0 }}
         />
-        {props.scope ? null : <Picker label={ui('Project', '项目')} colors={colors}>
-          {projects.length === 0
-            ? <TextInput value={repository} onChangeText={setRepository} placeholder={ui('/path/to/repository', '/仓库/路径')} placeholderTextColor={tint(colors.foregroundMuted, 0.55)} autoCapitalize="none" autoCorrect={false}
-              style={{ flex: 1, height: 32, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 12, outlineStyle: 'solid', outlineWidth: 0 }} />
-            : projects.map(item => <Chip key={item.projectId} icon="Folder" label={item.name} selected={repository === item.path} onPress={() => setRepository(item.path)} colors={colors} />)}
-        </Picker>}
-        <Picker label={ui('Merge into', '合并到')} colors={colors}>
-          {branches.length === 0
-            ? <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{repository ? ui('Loading branches…', '正在读取分支…') : ui('Pick a project first.', '先选项目。')}</Text>
-            : branches.map(branch => <Chip key={branch} icon="GitBranch" label={branch} selected={targetBranch === branch} onPress={() => setTargetBranch(branch)} colors={colors} />)}
-        </Picker>
-        <Picker label={ui('Agent', 'Agent')} colors={colors}>
-          {models.length === 0
-            ? <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui('No ready provider.', '没有可用的供应商。')}</Text>
-            : models.map(model => <Chip key={model.value} icon="Bot" label={model.label} selected={provider === model.value} onPress={() => setProvider(model.value)} colors={colors} />)}
-        </Picker>
+        {!props.scope && projects.length === 0 ? <TextInput value={repository} onChangeText={setRepository} placeholder={ui('/path/to/repository', '/仓库/路径')} placeholderTextColor={tint(colors.foregroundMuted, 0.55)} autoCapitalize="none" autoCorrect={false}
+          style={{ height: 34, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 12, outlineStyle: 'solid', outlineWidth: 0 }} /> : null}
       </ScrollView>
+      {picker ? <Pressable accessibilityLabel={ui('Close list', '关闭列表')} onPress={() => setPicker(null)} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 5 }} /> : null}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingBottom: 14, zIndex: 10 }}>
+        {props.scope || projects.length > 0 ? <Select
+          label={ui('Project', '项目')} icon="Folder" colors={colors}
+          value={props.scope?.repository ?? repository}
+          options={props.scope ? [{ value: props.scope.repository, label: props.scope.name }] : projects.map(item => ({ value: item.path, label: item.name }))}
+          placeholder={ui('Choose a project', '选择项目')}
+          disabled={Boolean(props.scope)}
+          open={picker === 'project'} onOpenChange={open => setPicker(open ? 'project' : null)} onChange={setRepository}
+        /> : null}
+        <Select
+          label={ui('Merge into', '合并到')} icon="GitBranch" colors={colors}
+          value={targetBranch}
+          options={branches.map(branch => ({ value: branch, label: branch }))}
+          placeholder={repository ? ui('Loading branches…', '正在读取分支…') : ui('Pick a project first', '先选项目')}
+          disabled={branches.length === 0}
+          open={picker === 'branch'} onOpenChange={open => setPicker(open ? 'branch' : null)} onChange={setTargetBranch}
+        />
+        <Select
+          label={ui('Agent', 'Agent')} icon="Bot" colors={colors}
+          value={provider}
+          options={models}
+          placeholder={ui('No ready provider', '没有可用的供应商')}
+          disabled={models.length === 0}
+          open={picker === 'agent'} onOpenChange={open => setPicker(open ? 'agent' : null)} onChange={setProvider}
+        />
+      </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, paddingHorizontal: 20, paddingVertical: 14, borderTopWidth: 1, borderTopColor: outline(colors) }}>
         <Button label={ui('Cancel', '取消')} onPress={props.onClose} colors={colors} variant="ghost" />
         <Button label={ui('Add to To do', '加入待办')} onPress={() => submit(false)} colors={colors} variant="outline" disabled={!ready || props.busy} />
@@ -115,23 +130,4 @@ export function NewTaskDialog(props: {
       </View>
     </View>
   </Backdrop>;
-}
-
-function Picker(props: { label: string; colors: Colors; children: ReactNode }) {
-  return <View style={{ gap: 8 }}>
-    <SectionTitle colors={props.colors}>{props.label}</SectionTitle>
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>{props.children}</View>
-  </View>;
-}
-
-function Chip(props: { label: string; icon: string; selected: boolean; onPress(): void; colors: Colors }) {
-  const { colors } = props;
-  return <Pressable accessibilityRole="button" accessibilityState={{ selected: props.selected }} onPress={props.onPress} style={{
-    flexDirection: 'row', alignItems: 'center', gap: 6, height: 30, paddingHorizontal: 11, borderRadius: 999, borderWidth: 1,
-    borderColor: props.selected ? tint(colors.foreground, 0.55) : 'transparent',
-    backgroundColor: props.selected ? tint(colors.foreground, 0.1) : colors.surface2,
-  }}>
-    <Icon name={props.icon} size={12} color={props.selected ? colors.foreground : colors.foregroundMuted} />
-    <Text style={{ color: props.selected ? colors.foreground : colors.foregroundMuted, fontSize: 12, fontWeight: props.selected ? '600' : '400' }}>{props.label}</Text>
-  </Pressable>;
 }
