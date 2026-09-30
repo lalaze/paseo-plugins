@@ -3,6 +3,7 @@ import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { readBranches } from '../shared/rpc';
+import { taskTitle } from '../shared/title';
 import type { Catalog } from '../shared/schema';
 import { ui } from './i18n';
 import { Backdrop, Button, outline, tint, type Colors } from './kit';
@@ -62,9 +63,15 @@ export function NewTaskDialog(props: {
   }, [props.rpc, repository]);
 
   const project = projects.find(item => item.path === repository);
-  const ready = Boolean(title.trim() && prompt.trim() && repository && targetBranch && provider);
+  // The title may be left empty; the prompt's first line stands in for it.
+  const missing = !prompt.trim() ? ui('Write what needs doing', '先写下任务内容')
+    : !repository ? ui('Choose a project', '先选项目')
+      : !targetBranch ? ui('Choose a branch to merge into', '先选合并到的分支')
+        : !provider ? ui('Choose an agent', '先选 Agent')
+          : null;
+  const ready = !missing;
   const submit = (start: boolean) => props.onSubmit({
-    title: title.trim(), prompt: prompt.trim(), repository, targetBranch, provider,
+    title: taskTitle(title, prompt), prompt: prompt.trim(), repository, targetBranch, provider,
     projectId: project?.projectId ?? null, projectName: props.scope?.name ?? project?.name ?? null,
   }, start);
 
@@ -81,7 +88,7 @@ export function NewTaskDialog(props: {
           value={title}
           onChangeText={setTitle}
           autoFocus
-          placeholder={ui('Task title', '任务标题')}
+          placeholder={ui('Task title (optional)', '任务标题（可不填）')}
           placeholderTextColor={tint(colors.foregroundMuted, 0.55)}
           style={{ color: colors.foreground, fontSize: 19, fontWeight: '700', paddingVertical: 6, outlineStyle: 'solid', outlineWidth: 0 }}
         />
@@ -124,6 +131,7 @@ export function NewTaskDialog(props: {
         />
       </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, paddingHorizontal: 20, paddingVertical: 14, borderTopWidth: 1, borderTopColor: outline(colors) }}>
+        <Text numberOfLines={1} style={{ flex: 1, color: colors.foregroundMuted, fontSize: 12 }}>{missing ?? ''}</Text>
         <Button label={ui('Cancel', '取消')} onPress={props.onClose} colors={colors} variant="ghost" />
         <Button label={ui('Add to To do', '加入待办')} onPress={() => submit(false)} colors={colors} variant="outline" disabled={!ready || props.busy} />
         <Button label={ui('Add and start', '添加并开始')} icon="Play" onPress={() => submit(true)} colors={colors} disabled={!ready || props.busy} />
