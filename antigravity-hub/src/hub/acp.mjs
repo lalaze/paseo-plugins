@@ -81,6 +81,9 @@ async function makeSession(params, load = false) {
   if (!load && proxied.length) await discoverMcpTools(s, proxied);
   sessions.set(s.id, s); await save(s);
   if (load) await replay(s);
+  // A loaded session needs the same warm-up: agy forgets its tools when the Hub process restarts,
+  // and the daemon reloads sessions after every restart. Later replays hide the placeholder.
+  if (load && proxied.length) await discoverMcpTools(s, proxied);
   return sessionInfo(s);
 }
 // agy discovers session MCP servers only when a message is sent, after that turn's tool list is

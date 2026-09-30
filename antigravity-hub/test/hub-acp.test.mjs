@@ -256,7 +256,7 @@ test('Hub ACP lists injected HTTP MCP tools before a new session is returned', {
     });
   }).listen(0, '127.0.0.1');
   await once(upstream, 'listening');
-  const c = client(dir);
+  let c = client(dir);
   const rpcLog = () => readFileSync(join(dir, 'rpc.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
   try {
     await c.request('initialize', { protocolVersion: 1 });
@@ -270,5 +270,12 @@ test('Hub ACP lists injected HTTP MCP tools before a new session is returned', {
     assert.deepEqual(await c.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hello' }] }), { stopReason: 'end_turn' });
     assert.equal(listed.length, 1, 'discovery runs once per conversation');
     assert.ok(!c.notifications.some(n => /Paseo session setup/.test(JSON.stringify(n))), 'the placeholder never reaches Paseo');
+    // After a daemon restart the session is loaded, and its first turn needs the tools too.
+    await c.close(); c = client(dir);
+    await c.request('initialize', { protocolVersion: 1 });
+    await c.request('session/load', { sessionId, cwd: dir, mcpServers: [{ type: 'http', name: 'paseo', url: `http://127.0.0.1:${upstream.address().port}/mcp`, headers: [{ name: 'Authorization', value: 'Bearer rotated' }] }] });
+    assert.deepEqual(listed, ['Bearer t', 'Bearer rotated'], 'tools were listed again before session/load returned');
+    assert.equal(rpcLog().filter(x => x.method === 'SendUserCascadeMessage' && x.body.items?.[0]?.text?.startsWith('[Paseo session setup')).length, 2);
+    assert.ok(!c.notifications.some(n => /Paseo session setup/.test(JSON.stringify(n))), 'replay and warm-up hide the placeholder');
   } finally { await c.close(); upstream.close(); rmSync(dir, { recursive: true, force: true }); }
 });
