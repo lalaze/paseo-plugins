@@ -24,6 +24,12 @@ export interface TodoScope {
   name: string;
 }
 
+/**
+ * The last list per host and scope. The surface unmounts when you switch pages; coming back draws this at once and
+ * refreshes behind it, instead of drawing an empty board and then the real one.
+ */
+const listCache = new Map<string, { tasks: Task[]; loadError: string | null }>();
+
 const COLUMN_TITLE: Record<BoardColumn, readonly [string, string]> = {
   todo: ['To do', '待办'],
   inProgress: ['In progress', '进行中'],
@@ -42,9 +48,11 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
   const toast = useToast();
   const colors = props.theme.colors;
   const scoped = props.scope?.repository ?? null;
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const cacheKey = `${props.host.id}\0${scoped ?? ''}`;
+  const cached = listCache.get(cacheKey);
+  const [tasks, setTasks] = useState<Task[]>(cached?.tasks ?? []);
+  const [loaded, setLoaded] = useState(Boolean(cached));
+  const [loadError, setLoadError] = useState<string | null>(cached?.loadError ?? null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [width, setWidth] = useState(0);
   const [now, setNow] = useState(() => Date.now());
@@ -62,6 +70,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
   const reload = useCallback(async () => {
     try {
       const listed = await props.rpc(listTasks, scoped ? { repository: scoped } : {});
+      listCache.set(cacheKey, { tasks: listed.tasks, loadError: listed.loadError });
       setTasks(listed.tasks);
       setLoadError(listed.loadError);
       setLoaded(true);
@@ -69,7 +78,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     } catch (error) {
       fail(error);
     }
-  }, [fail, props.rpc, scoped]);
+  }, [cacheKey, fail, props.rpc, scoped]);
 
   useEffect(() => {
     void reload();
@@ -173,7 +182,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     </View>
     {loadError ? <Text style={{ marginHorizontal: 16, marginBottom: 8, padding: 10, borderRadius: 10, color: colors.statusDanger, backgroundColor: tint(colors.statusDanger, 0.12), fontSize: 12 }}>{parseTodoError(`todo-error:${loadError}`)}</Text> : null}
 
-    {loaded && tasks.length === 0 ? <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 32 }}>
+    {!loaded ? null : tasks.length === 0 ? <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 32 }}>
       <Icon name="ListTodo" size={40} color={tint(colors.foregroundMuted, 0.4)} />
       <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: '600' }}>{ui('No tasks yet', '还没有任务')}</Text>
       <Text style={{ color: colors.foregroundMuted, fontSize: 12, textAlign: 'center', maxWidth: 360, lineHeight: 18 }}>{ui('Write down what needs doing. Each task runs in its own worktree and waits for your review before it merges.', '写下要做的事。每个任务在独立工作树里执行，验收后才会合并。')}</Text>
