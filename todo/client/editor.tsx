@@ -35,7 +35,7 @@ export function NewTaskDialog(props: {
 }) {
   const { colors } = props;
   const projects = props.catalog?.projects.filter(project => project.kind === 'git') ?? [];
-  const models = props.catalog?.providers.flatMap(entry => entry.models.map(model => ({ value: `${entry.provider}/${model.id}`, label: `${entry.label} · ${model.label}` }))) ?? [];
+  const models = props.catalog?.providers.flatMap(entry => entry.models.map(model => ({ value: `${entry.provider}/${model.id}`, label: model.label, group: entry.label }))) ?? [];
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
   const [repository, setRepository] = useState(props.scope?.repository ?? props.initialRepository ?? projects[0]?.path ?? '');
