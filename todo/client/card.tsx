@@ -50,7 +50,7 @@ export function TaskCard(props: { task: Task; colors: Colors; now: number; actio
     accessibilityLabel={task.title}
     onPress={props.onOpen}
     style={({ pressed }) => ({
-      padding: 12, borderRadius: 12, borderWidth: 1, backgroundColor: colors.surface1,
+      padding: 12, borderRadius: 12, borderWidth: 1, backgroundColor: tint(colors.surface1, 0.72),
       borderColor: pressed ? colors.foregroundMuted : outline(colors),
       opacity: task.status === 'canceled' ? 0.6 : 1,
     })}

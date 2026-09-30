@@ -139,13 +139,14 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     {column === 'todo' && drafts > 1 ? <Button label={ui('Start all', '全部开始')} onPress={() => { void run(() => props.rpc(startQueue, { repository: scoped ?? projectFilter })); }} colors={colors} variant="ghost" size="xs" disabled={busy || Boolean(loadError)} /> : null}
   </View>;
   const cards = (column: BoardColumn) => columns[column].map(task => <TaskCard key={task.id} task={task} colors={colors} now={now} busy={busy} action={cardAction(task)} onOpen={() => setOpenId(task.id)} />);
-  const empty = (column: BoardColumn, grow: boolean) => <View style={{ flex: grow ? 1 : undefined, minHeight: 64, alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(colors.foregroundMuted, 0.3) }}>
+  const empty = (column: BoardColumn, grow: boolean) => <View style={{ flex: grow ? 1 : undefined, minHeight: 64, alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(colors.foregroundMuted, 0.3), backgroundColor: tint(colors.surface1, 0.35) }}>
     <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui(...COLUMN_EMPTY[column])}</Text>
   </View>;
 
   const projectName = props.scope?.name ?? (projectFilter ? repositories.find(item => item.path === projectFilter)?.name : null) ?? ui('All projects', '全部项目');
 
-  return <View style={{ flex: 1, minHeight: 0, backgroundColor: colors.surface0 }} onLayout={event => setWidth(event.nativeEvent.layout.width)}>
+  // Transparent so a host wallpaper shows through; cards carry their own translucent fill.
+  return <View style={{ flex: 1, minHeight: 0, backgroundColor: 'transparent' }} onLayout={event => setWidth(event.nativeEvent.layout.width)}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8, zIndex: 10 }}>
       <View>
         <Pill colors={colors} onPress={scoped ? undefined : () => setMenu(menu === 'project' ? null : 'project')} active={menu === 'project'}>
@@ -176,7 +177,6 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
       <Icon name="ListTodo" size={40} color={tint(colors.foregroundMuted, 0.4)} />
       <Text style={{ color: colors.foreground, fontSize: 14, fontWeight: '600' }}>{ui('No tasks yet', '还没有任务')}</Text>
       <Text style={{ color: colors.foregroundMuted, fontSize: 12, textAlign: 'center', maxWidth: 360, lineHeight: 18 }}>{ui('Write down what needs doing. Each task runs in its own worktree and waits for your review before it merges.', '写下要做的事。每个任务在独立工作树里执行，验收后才会合并。')}</Text>
-      <Button label={ui('New task', '新建任务')} icon="Plus" onPress={() => setEditorOpen(true)} colors={colors} />
     </View> : wide ? <View style={{ flex: 1, minHeight: 0, flexDirection: 'row', gap: 16, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16 }}>
       {BOARD_COLUMNS.map(column => <View key={column} style={{ flex: 1, minWidth: 0, gap: 8 }}>
         {header(column)}
