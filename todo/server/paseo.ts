@@ -60,6 +60,8 @@ export class PaseoTodoGateway implements AgentPort {
     const modeId = input.modeId ?? entry.defaultModeId ?? null;
     if (modeId && entry.modes?.length && !entry.modes.some(mode => mode.id === modeId)) throw todoError('provider-invalid', modeId);
     const workspace = await this.api.workspaces.open(input.cwd);
+    // The worktree's workspace is otherwise named after the task branch; a title set earlier (by us or the user) is kept.
+    if (!workspace.current()?.title) await workspace.setTitle(input.title).catch(() => undefined);
     const agent = await workspace.agents.create({
       requestId: input.operationId,
       idempotencyKey: input.operationId,
