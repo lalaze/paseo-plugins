@@ -1,13 +1,13 @@
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
 
-export const installKinds = ['claude-native', 'codex-standalone', 'npm', 'homebrew', 'homebrew-cask', 'unknown'] as const;
+export const installKinds = ['claude-native', 'codex-standalone', 'grok-standalone', 'kimi-standalone', 'npm', 'homebrew', 'homebrew-cask', 'script', 'unknown'] as const;
 export type InstallKind = (typeof installKinds)[number];
 
 export const providerUpdateSchema = z.object({
   provider: z.string(),
   label: z.string(),
-  /** The executable the daemon launches, after following symlinks. */
+  /** The executable the daemon launches, after following symlinks; for a `script` install, the script. */
   binary: z.string().nullable(),
   install: z.enum(installKinds),
   current: z.string().nullable(),

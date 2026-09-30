@@ -1,13 +1,24 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { classifyInstall, compareVersions, installRoots, parseVersion, readDiagnostic } from '../server/detect';
+import { classifyInstall, compareVersions, installRoots, parseVersion, readDiagnostic, scriptOf } from '../server/detect';
 
-const homeRoots = { claude: ['/Users/me/.local/share/claude/versions'], codex: ['/Users/me/.codex/packages/standalone'] };
+const homeRoots = {
+  claude: ['/Users/me/.local/share/claude/versions'],
+  codex: ['/Users/me/.codex/packages/standalone'],
+  grok: ['/Users/me/.grok/downloads'],
+  kimi: ['/Users/me/.kimi-code/bin'],
+  kimiCdn: 'https://code.kimi.com/kimi-code',
+};
 
 describe('readDiagnostic', () => {
   it('takes the title, resolved path and version rows Paseo prints', () => {
     const text = 'Codex\n  Command source: default\n  PATH matches: /Users/me/.local/bin/codex\n    /opt/node/bin/codex\n  Resolved path: /Users/me/.local/bin/codex\n  Version: codex-cli 0.159.2\n  Models: 8';
-    assert.deepEqual(readDiagnostic(text), { title: 'Codex', resolvedPath: '/Users/me/.local/bin/codex', version: 'codex-cli 0.159.2' });
+    assert.deepEqual(readDiagnostic(text), { title: 'Codex', resolvedPath: '/Users/me/.local/bin/codex', version: 'codex-cli 0.159.2', command: null });
+  });
+
+  it('reads the configured command', () => {
+    const text = 'Hub (ACP)\n  Configured command: /opt/node/bin/node /src/hub/hub.mjs run\n  Resolved path: /opt/node/bin/node\n  Version: v22.23.2';
+    assert.equal(readDiagnostic(text).command, '/opt/node/bin/node /src/hub/hub.mjs run');
   });
 
   it('reads a version pushed onto later lines by CLI warnings', () => {
@@ -44,7 +55,7 @@ describe('classifyInstall', () => {
     const installer = classifyInstall('/Users/me/.local/share/claude/versions/2.1.284', homeRoots);
     assert.equal(installer.kind, 'claude-native');
     assert.deepEqual(installer.command, ['/Users/me/.local/share/claude/versions/2.1.284', 'update']);
-    assert.equal(installer.registryPackage, '@anthropic-ai/claude-code');
+    assert.deepEqual(installer.feed, { kind: 'npm', name: '@anthropic-ai/claude-code' });
   });
 
   it('uses the Codex updater for standalone releases', () => {
@@ -52,7 +63,23 @@ describe('classifyInstall', () => {
     const installer = classifyInstall(binary, homeRoots);
     assert.equal(installer.kind, 'codex-standalone');
     assert.deepEqual(installer.command, [binary, 'update']);
-    assert.equal(installer.registryPackage, '@openai/codex');
+    assert.deepEqual(installer.feed, { kind: 'npm', name: '@openai/codex' });
+  });
+
+  it('uses Grok\'s own updater, pinned to the standalone installer', () => {
+    const binary = '/Users/me/.grok/downloads/grok-1.0.41-macos-aarch64';
+    const installer = classifyInstall(binary, homeRoots);
+    assert.equal(installer.kind, 'grok-standalone');
+    assert.deepEqual(installer.command, [binary, 'update']);
+    assert.deepEqual(installer.env, { GROK_INSTALLER: 'internal' });
+    assert.deepEqual(installer.feed, { kind: 'command', argv: [binary, 'update', '--check', '--json'], env: { GROK_INSTALLER: 'internal' }, field: 'latestVersion' });
+  });
+
+  it('uses Kimi\'s own upgrader and its regional release feed', () => {
+    const installer = classifyInstall('/Users/me/.kimi-code/bin/kimi', homeRoots);
+    assert.equal(installer.kind, 'kimi-standalone');
+    assert.deepEqual(installer.command, ['/Users/me/.kimi-code/bin/kimi', 'upgrade', '--yes']);
+    assert.deepEqual(installer.feed, { kind: 'url', url: 'https://code.kimi.com/kimi-code/latest' });
   });
 
   it('reinstalls global npm packages with the npm of the same prefix', () => {
@@ -60,7 +87,7 @@ describe('classifyInstall', () => {
     assert.equal(installer.kind, 'npm');
     assert.deepEqual(installer.command, ['/Users/me/.nvm/versions/node/v22.23.2/bin/npm', 'install', '--global', '--no-fund', '--no-audit', '@mariozechner/pi-coding-agent@latest']);
     assert.equal(installer.pathPrefix, '/Users/me/.nvm/versions/node/v22.23.2/bin');
-    assert.equal(classifyInstall('/opt/homebrew/lib/node_modules/opencode-ai/bin/opencode', homeRoots).registryPackage, 'opencode-ai');
+    assert.deepEqual(classifyInstall('/opt/homebrew/lib/node_modules/opencode-ai/bin/opencode', homeRoots).feed, { kind: 'npm', name: 'opencode-ai' });
   });
 
   it('upgrades Homebrew formulae and casks by name', () => {
@@ -71,14 +98,35 @@ describe('classifyInstall', () => {
   });
 
   it('recognises installs under a symlinked home directory', async () => {
-    const roots = await installRoots('/Users/me', async path => path.replace('/Users/me/.local/share', '/Volumes/data/offload/.local/share'));
+    const roots = await installRoots('/Users/me', async path => path.replace('/Users/me/.local/share', '/Volumes/data/offload/.local/share'), async () => { throw new Error('ENOENT'); });
     assert.deepEqual(roots.claude, ['/Users/me/.local/share/claude/versions', '/Volumes/data/offload/.local/share/claude/versions']);
     assert.equal(classifyInstall('/Volumes/data/offload/.local/share/claude/versions/2.1.284', roots).kind, 'claude-native');
   });
 
+  it('reads Kimi\'s release feed from the region it logged in to', async () => {
+    const read = (region: string) => async (path: string) => { assert.equal(path, '/Users/me/.kimi-code/region'); return `${region}\n`; };
+    assert.equal((await installRoots('/Users/me', async path => path, read('global'))).kimiCdn, 'https://code.kimi.ai/kimi-code');
+    assert.equal((await installRoots('/Users/me', async path => path, read('mainland-cn'))).kimiCdn, 'https://code.kimi.com/kimi-code');
+    assert.equal((await installRoots('/Users/me', async path => path, async () => { throw new Error('ENOENT'); })).kimiCdn, 'https://code.kimi.com/kimi-code');
+  });
+
   it('refuses paths it does not recognise', () => {
-    assert.deepEqual(classifyInstall('/usr/local/bin/kimi', homeRoots), { kind: 'unknown', command: null, pathPrefix: null, registryPackage: null });
+    assert.deepEqual(classifyInstall('/usr/local/bin/kimi', homeRoots), { kind: 'unknown', command: null, pathPrefix: null, env: null, feed: null });
     // Another user's native build is not ours to run.
     assert.equal(classifyInstall('/Users/other/.local/share/claude/versions/2.1.284', homeRoots).kind, 'unknown');
+  });
+});
+
+describe('scriptOf', () => {
+  it('finds the script an interpreter runs', () => {
+    assert.equal(scriptOf('/opt/node/bin/node', '/opt/node/bin/node /src/hub/hub.mjs run'), '/src/hub/hub.mjs');
+    assert.equal(scriptOf('/usr/bin/python3.12', 'python3.12 -u /src/agent.py'), '/src/agent.py');
+  });
+
+  it('leaves providers that are their own executable alone', () => {
+    assert.equal(scriptOf('/Users/me/.kimi-code/bin/kimi', 'kimi acp'), null);
+    assert.equal(scriptOf('/opt/node/bin/node', null), null);
+    // A relative script cannot be located from here.
+    assert.equal(scriptOf('/opt/node/bin/node', 'node hub.mjs'), null);
   });
 });

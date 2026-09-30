@@ -58,7 +58,7 @@ Details: [todo/README.md](todo/README.md)
 
 ## [Provider updates](provider-update)
 
-A **Provider updates** screen in Settings lists the providers enabled on the host, with installed and newest versions, and upgrades a provider's CLI with one click. It targets the executable the daemon actually launches and uses a fixed updater per install type (Claude native, Codex standalone, global npm, Homebrew). Plugin ID: `paseo-provider-update`. It is a separate install: `install-all.sh` and `update-all.sh` do not install or update it.
+A **Provider updates** screen in Settings lists the providers enabled on the host, with installed and newest versions, and upgrades a provider's CLI with one click. It targets the executable the daemon actually launches and uses a fixed updater per install type (Claude native, Codex, Grok and Kimi Code standalone, global npm, Homebrew); a script run through node or another interpreter is listed with its own version. Plugin ID: `paseo-provider-update`. It is a separate install: `install-all.sh` and `update-all.sh` do not install or update it.
 
 ```bash
 paseo plugin add lalaze/paseo-plugins --path provider-update

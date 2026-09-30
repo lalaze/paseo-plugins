@@ -13,9 +13,12 @@ const POLL_MS = 2000;
 const installLabels: Record<ProviderUpdate['install'], string> = {
   'claude-native': ui('Native installer', '原生安装'),
   'codex-standalone': ui('Standalone', '独立安装'),
+  'grok-standalone': ui('Standalone', '独立安装'),
+  'kimi-standalone': ui('Standalone', '独立安装'),
   npm: 'npm',
   homebrew: 'Homebrew',
   'homebrew-cask': 'Homebrew Cask',
+  script: ui('Local script', '本地脚本'),
   unknown: ui('Unrecognised install', '未识别的安装方式'),
 };
 
@@ -118,7 +121,9 @@ function ProviderRow(props: { row: ProviderUpdate; colors: Colors; busy: boolean
     </View>
     {row.binary ? <Text selectable style={{ color: colors.foregroundMuted, fontSize: 11 }}>{row.binary}</Text> : null}
     {!row.canUpdate && row.binary
-      ? <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui('Installed in a way this plugin does not recognise; update it manually.', '安装方式无法识别，请手动更新。')}</Text>
+      ? <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{row.install === 'script'
+        ? ui('A script run by an interpreter; update it where it came from.', '由解释器运行的脚本，请在其来源处更新。')
+        : ui('Installed in a way this plugin does not recognise; update it manually.', '安装方式无法识别，请手动更新。')}</Text>
       : null}
     {row.state === 'updated'
       ? <Text style={{ color: colors.statusSuccess, fontSize: 12 }}>{ui('Update finished. Restart running agents to switch to the new version.', '更新完成。运行中的 Agent 重启后切换到新版本。')}</Text>

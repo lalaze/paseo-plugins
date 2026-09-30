@@ -1,5 +1,14 @@
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import type { InstallKind } from '../shared/rpc';
+
+/** Where the newest release number comes from. */
+export type Feed =
+  | { kind: 'npm'; name: string }
+  /** A plain-text version at a URL. */
+  | { kind: 'url'; url: string }
+  /** A command that prints JSON with the version in `field`. */
+  | { kind: 'command'; argv: string[]; env: Record<string, string> | null; field: string };
 
 export interface Installer {
   kind: InstallKind;
@@ -7,12 +16,14 @@ export interface Installer {
   command: string[] | null;
   /** Prepended to PATH so a global npm install runs with the node of its own prefix. */
   pathPrefix: string | null;
-  /** npm package whose `latest` tag is the newest release, when there is one. */
-  registryPackage: string | null;
+  /** Extra environment for the upgrade. */
+  env: Record<string, string> | null;
+  /** Null when there is no version feed; the updater itself then decides. */
+  feed: Feed | null;
 }
 
 /** Reads the rows Paseo prints in `paseo provider diagnostic` for a command-launched provider. */
-export function readDiagnostic(text: string): { title: string | null; resolvedPath: string | null; version: string | null } {
+export function readDiagnostic(text: string): { title: string | null; resolvedPath: string | null; version: string | null; command: string | null } {
   const lines = text.split('\n');
   // A row's value runs until the next indented "Label:" row; CLI warnings can push the version onto later lines.
   const row = (label: string) => {
@@ -28,7 +39,19 @@ export function readDiagnostic(text: string): { title: string | null; resolvedPa
   const resolvedPath = row('Resolved path');
   // The first, unindented line names the provider ("Claude Code", "Codex").
   const title = /^(\S.*?)\s*$/m.exec(text)?.[1] ?? null;
-  return { title, resolvedPath: resolvedPath?.startsWith('/') ? resolvedPath : null, version: row('Version') };
+  return { title, resolvedPath: resolvedPath?.startsWith('/') ? resolvedPath : null, version: row('Version'), command: row('Configured command') };
+}
+
+const INTERPRETER = /^(node|bun|deno|tsx|python(\d+(\.\d+)?)?|ruby|perl)$/;
+
+/**
+ * The script a configured command hands to an interpreter (`node hub.mjs run`), or null when the
+ * launcher is the provider itself. Paseo prints the command space-joined, so a path with spaces is not found.
+ */
+export function scriptOf(launcher: string, command: string | null): string | null {
+  if (!INTERPRETER.test(basename(launcher)) || !command) return null;
+  const script = command.split(/\s+/).slice(1).find(arg => !arg.startsWith('-'));
+  return script?.startsWith('/') ? script : null;
 }
 
 export function parseVersion(text: string | null | undefined): string | null {
@@ -56,14 +79,34 @@ function split(version: string): [number[], string | undefined] {
   return [core.split('.').map(Number), pre.length ? pre.join('-') : undefined];
 }
 
-const unknown: Installer = { kind: 'unknown', command: null, pathPrefix: null, registryPackage: null };
+export const unknown: Installer = { kind: 'unknown', command: null, pathPrefix: null, env: null, feed: null };
 
 /** Directories the self-updating CLIs install into, as written and as resolved: home dirs are often symlinked elsewhere. */
-export interface InstallRoots { claude: string[]; codex: string[] }
+export interface InstallRoots {
+  claude: string[];
+  codex: string[];
+  grok: string[];
+  kimi: string[];
+  /** Kimi publishes releases per region; `kimi login` records which one in `~/.kimi-code/region`. */
+  kimiCdn: string;
+}
 
-export async function installRoots(home: string, resolve: (path: string) => Promise<string>): Promise<InstallRoots> {
+const KIMI_CDN: Record<string, string> = { 'mainland-cn': 'https://code.kimi.com/kimi-code', global: 'https://code.kimi.ai/kimi-code' };
+
+export async function installRoots(
+  home: string,
+  resolve: (path: string) => Promise<string>,
+  read: (path: string) => Promise<string> = path => readFile(path, 'utf8'),
+): Promise<InstallRoots> {
   const both = async (path: string) => [...new Set([path, await resolve(path).catch(() => path)])];
-  return { claude: await both(join(home, '.local/share/claude/versions')), codex: await both(join(home, '.codex/packages/standalone')) };
+  const region = (await read(join(home, '.kimi-code/region')).catch(() => '')).trim();
+  return {
+    claude: await both(join(home, '.local/share/claude/versions')),
+    codex: await both(join(home, '.codex/packages/standalone')),
+    grok: await both(join(home, '.grok/downloads')),
+    kimi: await both(join(home, '.kimi-code/bin')),
+    kimiCdn: KIMI_CDN[region] ?? KIMI_CDN['mainland-cn'],
+  };
 }
 
 const within = (path: string, roots: string[]) => roots.some(root => path.startsWith(root + '/'));
@@ -74,10 +117,24 @@ const within = (path: string, roots: string[]) => roots.some(root => path.starts
  */
 export function classifyInstall(realPath: string, roots: InstallRoots): Installer {
   if (within(realPath, roots.claude)) {
-    return { kind: 'claude-native', command: [realPath, 'update'], pathPrefix: null, registryPackage: '@anthropic-ai/claude-code' };
+    return { kind: 'claude-native', command: [realPath, 'update'], pathPrefix: null, env: null, feed: { kind: 'npm', name: '@anthropic-ai/claude-code' } };
   }
   if (within(realPath, roots.codex)) {
-    return { kind: 'codex-standalone', command: [realPath, 'update'], pathPrefix: null, registryPackage: '@openai/codex' };
+    return { kind: 'codex-standalone', command: [realPath, 'update'], pathPrefix: null, env: null, feed: { kind: 'npm', name: '@openai/codex' } };
+  }
+  if (within(realPath, roots.grok)) {
+    // Grok guesses its installer from the environment and can settle on npm, whose package is not this build.
+    const env = { GROK_INSTALLER: 'internal' };
+    return {
+      kind: 'grok-standalone',
+      command: [realPath, 'update'],
+      pathPrefix: null,
+      env,
+      feed: { kind: 'command', argv: [realPath, 'update', '--check', '--json'], env, field: 'latestVersion' },
+    };
+  }
+  if (within(realPath, roots.kimi)) {
+    return { kind: 'kimi-standalone', command: [realPath, 'upgrade', '--yes'], pathPrefix: null, env: null, feed: { kind: 'url', url: `${roots.kimiCdn}/latest` } };
   }
   const npm = /^(\/.*?)\/lib\/node_modules\/((?:@[^/]+\/)?[^/@][^/]*)\//.exec(realPath);
   if (npm) {
@@ -86,7 +143,8 @@ export function classifyInstall(realPath: string, roots: InstallRoots): Installe
       kind: 'npm',
       command: [join(prefix, 'bin/npm'), 'install', '--global', '--no-fund', '--no-audit', `${name}@latest`],
       pathPrefix: join(prefix, 'bin'),
-      registryPackage: name,
+      env: null,
+      feed: { kind: 'npm', name },
     };
   }
   const brew = /^(\/.*?)\/(Cellar|Caskroom)\/([^/]+)\//.exec(realPath);
@@ -96,7 +154,8 @@ export function classifyInstall(realPath: string, roots: InstallRoots): Installe
       kind: room === 'Cellar' ? 'homebrew' : 'homebrew-cask',
       command: [join(prefix, 'bin/brew'), 'upgrade', ...(room === 'Cellar' ? [] : ['--cask']), name],
       pathPrefix: join(prefix, 'bin'),
-      registryPackage: null,
+      env: null,
+      feed: null,
     };
   }
   return unknown;

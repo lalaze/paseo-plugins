@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process';
-import { realpath } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import type { PaseoApi } from '@getpaseo/client';
 import type { ProviderUpdate } from '../shared/rpc';
-import { classifyInstall, compareVersions, installRoots, parseVersion, readDiagnostic, type Installer, type InstallRoots } from './detect';
+import { classifyInstall, compareVersions, installRoots, parseVersion, readDiagnostic, scriptOf, unknown, type Feed, type Installer, type InstallRoots } from './detect';
 
 export interface RunResult { code: number | null; output: string }
-export type Runner = (argv: string[], options: { pathPrefix: string | null; timeoutMs: number }) => Promise<RunResult>;
+export type Runner = (argv: string[], options: { pathPrefix: string | null; env?: Record<string, string> | null; timeoutMs: number }) => Promise<RunResult>;
 type Providers = Pick<PaseoApi['providers'], 'snapshot' | 'diagnostic' | 'refresh'>;
 
 interface Inspection { label: string; binary: string | null; installer: Installer; current: string | null; latest: string | null; error: string | null }
@@ -15,10 +16,10 @@ interface Outcome { state: 'updated' | 'failed'; message: string; finishedAt: st
 const INSPECTION_TTL = 10 * 60_000;
 const UPDATE_TIMEOUT = 10 * 60_000;
 const OUTPUT_TAIL = 2000;
-const NO_INSTALLER: Installer = { kind: 'unknown', command: null, pathPrefix: null, registryPackage: null };
+const SCRIPT: Installer = { ...unknown, kind: 'script' };
 
-export const runProcess: Runner = (argv, { pathPrefix, timeoutMs }) => new Promise(resolve => {
-  const env: Record<string, string | undefined> = { ...process.env, NO_COLOR: '1', CI: '1' };
+export const runProcess: Runner = (argv, { pathPrefix, env: extra, timeoutMs }) => new Promise(resolve => {
+  const env: Record<string, string | undefined> = { ...process.env, NO_COLOR: '1', CI: '1', ...extra };
   if (pathPrefix) env.PATH = `${pathPrefix}:${env.PATH ?? ''}`;
   let output = '';
   const child = spawn(argv[0], argv.slice(1), { env, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -30,12 +31,47 @@ export const runProcess: Runner = (argv, { pathPrefix, timeoutMs }) => new Promi
   child.on('close', code => { clearTimeout(timer); resolve({ code, output }); });
 });
 
-/** Latest release from the registry npm itself is configured with, so mirrors and proxies apply. */
-export function npmLatest(run: Runner): (name: string) => Promise<string | null> {
-  return async name => {
-    const { code, output } = await run(['npm', 'view', `${name}@latest`, 'version'], { pathPrefix: null, timeoutMs: 30_000 });
-    return code === 0 ? parseVersion(output.split('\n').filter(line => !line.startsWith('(node:')).join('\n')) : null;
+/** Reads a release feed. npm uses the registry npm itself is configured with, so mirrors and proxies apply. */
+export function feedLatest(run: Runner, fetchText: (url: string) => Promise<string> = fetchPlain): (feed: Feed) => Promise<string | null> {
+  return async feed => {
+    if (feed.kind === 'url') return parseVersion(await fetchText(feed.url));
+    const [argv, env] = feed.kind === 'npm' ? [['npm', 'view', `${feed.name}@latest`, 'version'], null] : [feed.argv, feed.env];
+    const { code, output } = await run(argv, { pathPrefix: null, env, timeoutMs: 30_000 });
+    if (code !== 0) return null;
+    const text = output.split('\n').filter(line => !line.startsWith('(node:')).join('\n');
+    if (feed.kind === 'npm') return parseVersion(text);
+    const line = text.split('\n').find(candidate => candidate.trimStart().startsWith('{'));
+    const value = line ? (JSON.parse(line) as Record<string, unknown>)[feed.field] : null;
+    return typeof value === 'string' ? parseVersion(value) : null;
   };
+}
+
+async function fetchPlain(url: string): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
+    return await response.text();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The version in the nearest package.json above a script, which is what a local provider script ships as. */
+async function packageVersion(script: string, read: (path: string) => Promise<string>): Promise<string | null> {
+  for (let dir = dirname(script); ; dir = dirname(dir)) {
+    const text = await read(join(dir, 'package.json')).catch(() => null);
+    if (text !== null) {
+      try {
+        const { version } = JSON.parse(text) as { version?: unknown };
+        return typeof version === 'string' ? parseVersion(version) : null;
+      } catch {
+        return null;
+      }
+    }
+    if (dir === dirname(dir)) return null;
+  }
 }
 
 function tail(text: string): string {
@@ -54,13 +90,15 @@ export class ProviderUpdates {
 
   constructor(private readonly deps: {
     run?: Runner;
-    latest?: (name: string) => Promise<string | null>;
+    latest?: (feed: Feed) => Promise<string | null>;
     home?: string;
     now?: () => number;
     resolve?: (path: string) => Promise<string>;
+    read?: (path: string) => Promise<string>;
   } = {}) {}
 
   private get run() { return this.deps.run ?? runProcess; }
+  private get read() { return this.deps.read ?? ((path: string) => readFile(path, 'utf8')); }
   private now() { return (this.deps.now ?? Date.now)(); }
 
   async list(providers: Providers, refresh: boolean): Promise<{ checkedAt: string; providers: ProviderUpdate[] }> {
@@ -88,13 +126,13 @@ export class ProviderUpdates {
     if (this.running) throw new Error(`${this.running} is already updating; wait for it to finish.`);
     this.running = provider;
     this.outcomes.delete(provider);
-    void this.run(command, { pathPrefix: inspection.installer.pathPrefix, timeoutMs: UPDATE_TIMEOUT })
+    void this.run(command, { pathPrefix: inspection.installer.pathPrefix, env: inspection.installer.env, timeoutMs: UPDATE_TIMEOUT })
       .then(({ code, output }) => ({ ok: code === 0, message: tail(output) || (code === 0 ? '' : `Exited with code ${code}.`) }))
       .catch((error: unknown) => ({ ok: false, message: error instanceof Error ? error.message : String(error) }))
       .then(async ({ ok, message }) => {
         this.outcomes.set(provider, { state: ok ? 'updated' : 'failed', message, finishedAt: new Date(this.now()).toISOString() });
         this.inspections.delete(provider);
-        if (inspection.installer.registryPackage) this.latest.delete(inspection.installer.registryPackage);
+        if (inspection.installer.feed) this.latest.delete(JSON.stringify(inspection.installer.feed));
         this.running = null;
         // Let Paseo re-read the provider so its version and models match the new binary.
         await providers.refresh({ providers: [provider] }).catch(() => undefined);
@@ -131,20 +169,26 @@ export class ProviderUpdates {
     try {
       diagnostic = (await providers.diagnostic(provider)).diagnostic;
     } catch (error) {
-      return { label: name, binary: null, installer: NO_INSTALLER, current: null, latest: null, error: `Could not read the ${name} diagnostic: ${error instanceof Error ? error.message : String(error)}` };
+      return { label: name, binary: null, installer: unknown, current: null, latest: null, error: `Could not read the ${name} diagnostic: ${error instanceof Error ? error.message : String(error)}` };
     }
-    const { title, resolvedPath, version } = readDiagnostic(diagnostic);
+    const { title, resolvedPath, version, command } = readDiagnostic(diagnostic);
     if (!label && title) name = title;
     if (!resolvedPath) {
-      return { label: name, binary: null, installer: NO_INSTALLER, current: parseVersion(version), latest: null, error: `Paseo did not report an executable for ${name}.` };
+      return { label: name, binary: null, installer: unknown, current: parseVersion(version), latest: null, error: `Paseo did not report an executable for ${name}.` };
     }
     const resolve = this.deps.resolve ?? realpath;
+    // `node hub.mjs`: the version row is the interpreter's, and no installer owns the script.
+    const script = scriptOf(resolvedPath, command);
+    if (script) {
+      const current = await packageVersion(script, this.read);
+      return { label: name, binary: script, installer: SCRIPT, current, latest: null, error: null };
+    }
     const binary = await resolve(resolvedPath).catch(() => resolvedPath);
-    this.roots ??= installRoots(this.deps.home ?? homedir(), resolve);
+    this.roots ??= installRoots(this.deps.home ?? homedir(), resolve, this.read);
     const installer = classifyInstall(binary, await this.roots);
     const [current, latest] = await Promise.all([
       parseVersion(version) ?? this.versionOf(resolvedPath),
-      installer.registryPackage ? this.latestOf(installer.registryPackage) : null,
+      installer.feed ? this.latestOf(installer.feed) : null,
     ]);
     return { label: name, binary, installer, current, latest, error: null };
   }
@@ -155,11 +199,12 @@ export class ProviderUpdates {
     return code === 0 ? parseVersion(output) : null;
   }
 
-  private latestOf(name: string): Promise<string | null> {
-    let pending = this.latest.get(name);
+  private latestOf(feed: Feed): Promise<string | null> {
+    const key = JSON.stringify(feed);
+    let pending = this.latest.get(key);
     if (!pending) {
-      pending = (this.deps.latest ?? npmLatest(this.run))(name).catch(() => null);
-      this.latest.set(name, pending);
+      pending = (this.deps.latest ?? feedLatest(this.run))(feed).catch(() => null);
+      this.latest.set(key, pending);
     }
     return pending;
   }
