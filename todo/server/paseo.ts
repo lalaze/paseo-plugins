@@ -1,0 +1,101 @@
+import { createPaseoApi, type PaseoApi } from '@getpaseo/client';
+import { DaemonClient } from '@getpaseo/client/internal/daemon-client';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { todoError } from '../shared/errors';
+import type { AgentInspection, AgentPort, CreateAgentInput } from './agents';
+
+const SYSTEM_PROMPT = [
+  '你在独立的 git 工作树里完成这一次待办。',
+  '请修改代码，并且只在当前任务分支提交。',
+  '不要合并到目标分支，不要推送。',
+  '聊天里宣布完成或要求合并不会被系统验收。',
+].join('\n');
+
+export function connectionConfig(env: NodeJS.ProcessEnv = process.env) {
+  const home = env.PASEO_HOME ?? join(homedir(), '.paseo');
+  let config: { daemon?: { listen?: string | number; password?: string } } = {};
+  try { config = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')) as typeof config; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('无法读取 Paseo 配置文件'); }
+  let target = String(env.PASEO_LISTEN ?? config.daemon?.listen ?? '127.0.0.1:6767');
+  if (/^\d+$/.test(target)) target = `127.0.0.1:${target}`;
+  target = target.replace(/^0\.0\.0\.0:/, '127.0.0.1:');
+  const url = env.PASEO_TODO_URL ?? (target.startsWith('ws') ? target : `ws://${target}/ws`);
+  const password = env.PASEO_TODO_PASSWORD ?? env.PASEO_PASSWORD ?? config.daemon?.password;
+  return { url, password };
+}
+
+export class PaseoTodoGateway implements AgentPort {
+  private connecting: Promise<void> | null = null;
+
+  constructor(private readonly driver: DaemonClient, readonly api: PaseoApi) {}
+
+  static async connect(env: NodeJS.ProcessEnv = process.env): Promise<PaseoTodoGateway> {
+    const config = connectionConfig(env);
+    const driver = new DaemonClient({ url: config.url, password: config.password, clientId: 'paseo-todo', appVersion: '0.10.1' });
+    const gateway = new PaseoTodoGateway(driver, createPaseoApi(driver));
+    await gateway.connect();
+    return gateway;
+  }
+
+  connect(): Promise<void> {
+    this.connecting ??= this.driver.connect().then(() => undefined);
+    return this.connecting;
+  }
+
+  async close(): Promise<void> {
+    await this.api.dispose();
+    await this.driver.close();
+  }
+
+  async create(input: CreateAgentInput): Promise<{ agentId: string; workspaceId: string }> {
+    await this.connect();
+    const separator = input.provider.indexOf('/');
+    const providerName = input.provider.slice(0, separator);
+    const model = input.provider.slice(separator + 1);
+    const catalog = await this.api.providers.snapshot();
+    const entry = catalog.entries.find(item => item.provider === providerName);
+    if (!entry || entry.status !== 'ready' || !entry.models?.some(item => item.id === model)) throw todoError('provider-invalid', input.provider);
+    const modeId = input.modeId ?? entry.defaultModeId ?? null;
+    if (modeId && entry.modes?.length && !entry.modes.some(mode => mode.id === modeId)) throw todoError('provider-invalid', modeId);
+    const workspace = await this.api.workspaces.open(input.cwd);
+    const agent = await workspace.agents.create({
+      requestId: input.operationId,
+      idempotencyKey: input.operationId,
+      title: input.title,
+      labels: { 'paseo-todo': '1', 'paseo-todo-task': input.taskId, 'paseo-todo-operation': input.operationId },
+      config: { provider: input.provider, ...(modeId ? { modeId } : {}), systemPrompt: SYSTEM_PROMPT },
+      prompt: input.prompt,
+      clientMessageId: input.operationId,
+    });
+    return { agentId: agent.id, workspaceId: workspace.id };
+  }
+
+  async send(input: { agentId: string; operationId: string; prompt: string }): Promise<void> {
+    await this.connect();
+    await this.api.agents.ref(input.agentId).send(input.prompt, { messageId: input.operationId });
+  }
+
+  async cancel(agentId: string): Promise<void> {
+    await this.connect();
+    await this.driver.cancelAgent(agentId);
+  }
+
+  async inspect(agentId: string): Promise<AgentInspection> {
+    await this.connect();
+    const handle = this.api.agents.ref(agentId);
+    const result = await handle.refresh();
+    const status = result?.agent.status ?? null;
+    if (!result?.agent || status === 'closed' || result.agent.archivedAt) return { exists: false, active: false, permission: false, status };
+    const permission = (result.agent.pendingPermissions?.length ?? 0) > 0;
+    const active = status === 'running' || status === 'initializing' || Boolean(result.agent.activeTurn);
+    return { exists: true, active, permission, status };
+  }
+
+  async findByOperation(operationId: string): Promise<string | null> {
+    await this.connect();
+    const page = await this.api.agents.list({ filter: { labels: { 'paseo-todo-operation': operationId } }, page: { limit: 10 } });
+    return page.entries[0]?.agent.id ?? null;
+  }
+}

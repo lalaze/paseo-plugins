@@ -46,6 +46,16 @@ paseo plugin add lalaze/paseo-plugins --path usage-glance
 
 Details: [usage-glance/README.md](usage-glance/README.md)
 
+## [Tasks](todo)
+
+Queues tasks in the sidebar, with a per-project **Tasks** panel in each workspace's explorer. Each task runs in its own git worktree, and a person accepts the result before it merges into the chosen branch. Closing the sidebar does not stop the queue. Plugin ID: `paseo-todo`. It is a separate install: `install-all.sh` and `update-all.sh` do not install or update it.
+
+```bash
+paseo plugin add lalaze/paseo-plugins --path todo
+```
+
+Details: [todo/README.md](todo/README.md)
+
 ## [Pi Qwen thinking levels](pi-qwen-thinking)
 
 A Pi companion extension that forwards the selected thinking strength to the

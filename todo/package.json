@@ -1,0 +1,29 @@
+{
+  "name": "paseo-todo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Queue todo tasks on isolated git worktrees and merge only after an explicit accept",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "build": "node scripts/build.mjs",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@getpaseo/client": "0.10.1",
+    "@getpaseo/plugin": "0.10.1",
+    "@getpaseo/protocol": "0.10.1",
+    "@types/node": "^24.0.0",
+    "@types/react": "~19.2.0",
+    "esbuild": "^0.25.0",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.3",
+    "zod": "^4.4.3"
+  }
+}
