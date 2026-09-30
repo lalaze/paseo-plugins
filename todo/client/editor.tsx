@@ -22,9 +22,12 @@ export interface NewTaskInput {
 }
 
 export function NewTaskDialog(props: {
-  rpc: Rpc;
+  /** Hosts a task can be created on; the chosen one supplies the projects, branches and agents. */
+  hosts: readonly { id: string; label: string }[];
+  initialHost: string;
+  rpcFor(hostId: string): Rpc;
   colors: Colors;
-  catalog: Catalog | null;
+  catalogs: Readonly<Record<string, Catalog>>;
   /** Fixed project when opened from a workspace panel. */
   scope: { repository: string; name: string } | null;
   initialRepository: string | null;
@@ -32,35 +35,44 @@ export function NewTaskDialog(props: {
   busy: boolean;
   width: number;
   onClose(): void;
-  onSubmit(input: NewTaskInput, start: boolean): void;
+  onSubmit(input: NewTaskInput & { hostId: string }, start: boolean): void;
 }) {
   const { colors } = props;
-  const projects = props.catalog?.projects.filter(project => project.kind === 'git') ?? [];
-  const models = props.catalog?.providers.flatMap(entry => entry.models.map(model => ({ value: `${entry.provider}/${model.id}`, label: model.label, group: entry.label }))) ?? [];
+  const [hostId, setHostId] = useState(props.initialHost);
+  const rpc = props.rpcFor(hostId);
+  const catalog = props.catalogs[hostId] ?? null;
+  const projects = catalog?.projects.filter(project => project.kind === 'git') ?? [];
+  const models = catalog?.providers.flatMap(entry => entry.models.map(model => ({ value: `${entry.provider}/${model.id}`, label: model.label, group: entry.label }))) ?? [];
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
   const [repository, setRepository] = useState(props.scope?.repository ?? props.initialRepository ?? projects[0]?.path ?? '');
   const [branches, setBranches] = useState<string[]>([]);
   const [targetBranch, setTargetBranch] = useState('');
   const [provider, setProvider] = useState(props.initialProvider ?? models[0]?.value ?? '');
-  const [picker, setPicker] = useState<'project' | 'branch' | 'agent' | null>(null);
+  const [picker, setPicker] = useState<'host' | 'project' | 'branch' | 'agent' | null>(null);
 
-  // The catalog can arrive after the dialog opens.
-  const firstModel = models[0]?.value ?? '';
+  // A host's catalog can arrive after the dialog opens, and switching hosts brings other projects and agents:
+  // keep a choice that still exists there, otherwise fall back to the first one.
   useEffect(() => {
-    if (!provider && firstModel) setProvider(firstModel);
-  }, [firstModel, provider]);
+    if (!catalog) return;
+    if (!props.scope && !projects.some(item => item.path === repository)) {
+      setRepository(projects.find(item => item.path === props.initialRepository)?.path ?? projects[0]?.path ?? '');
+    }
+    if (!models.some(item => item.value === provider)) {
+      setProvider(models.find(item => item.value === props.initialProvider)?.value ?? models[0]?.value ?? '');
+    }
+  }, [hostId, catalog]);
 
   useEffect(() => {
     if (!repository) { setBranches([]); return; }
     let live = true;
-    void props.rpc(readBranches, { repository }).then(result => {
+    void rpc(readBranches, { repository }).then(result => {
       if (!live) return;
       setBranches(result.branches);
       setTargetBranch(current => (current && result.branches.includes(current) ? current : result.head ?? result.branches[0] ?? ''));
     }).catch(() => { if (live) setBranches([]); });
     return () => { live = false; };
-  }, [props.rpc, repository]);
+  }, [rpc, repository]);
 
   const project = projects.find(item => item.path === repository);
   // The title may be left empty; the prompt's first line stands in for it.
@@ -71,7 +83,7 @@ export function NewTaskDialog(props: {
           : null;
   const ready = !missing;
   const submit = (start: boolean) => props.onSubmit({
-    title: taskTitle(title, prompt), prompt: prompt.trim(), repository, targetBranch, provider,
+    hostId, title: taskTitle(title, prompt), prompt: prompt.trim(), repository, targetBranch, provider,
     projectId: project?.projectId ?? null, projectName: props.scope?.name ?? project?.name ?? null,
   }, start);
 
@@ -105,6 +117,13 @@ export function NewTaskDialog(props: {
       </ScrollView>
       {picker ? <Pressable accessibilityLabel={ui('Close list', '关闭列表')} onPress={() => setPicker(null)} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 5 }} /> : null}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingBottom: 14, zIndex: 10 }}>
+        {props.hosts.length > 1 && !props.scope ? <Select
+          label={ui('Machine', '机器')} icon="Server" colors={colors}
+          value={hostId}
+          options={props.hosts.map(host => ({ value: host.id, label: host.label }))}
+          placeholder={ui('Choose a machine', '选择机器')}
+          open={picker === 'host'} onOpenChange={open => setPicker(open ? 'host' : null)} onChange={setHostId}
+        /> : null}
         {props.scope || projects.length > 0 ? <Select
           label={ui('Project', '项目')} icon="Folder" colors={colors}
           value={props.scope?.repository ?? repository}

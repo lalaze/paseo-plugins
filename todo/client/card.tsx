@@ -42,7 +42,16 @@ export function StatusChip(props: { status: TaskStatus; colors: Colors }) {
   </View>;
 }
 
-export function TaskCard(props: { task: Task; colors: Colors; now: number; action: CardAction | null; busy: boolean; onOpen(): void }) {
+/** The machine a task runs on, shown when the board gathers more than one host. */
+export function HostTag(props: { label: string; colors: Colors }) {
+  const { colors } = props;
+  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: 150, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: tint(colors.foreground, 0.08) }}>
+    <Icon name="Server" size={10} color={colors.foregroundMuted} />
+    <Text numberOfLines={1} style={{ flexShrink: 1, color: colors.foreground, fontSize: 10, fontWeight: '600' }}>{props.label}</Text>
+  </View>;
+}
+
+export function TaskCard(props: { task: Task; hostLabel?: string | null; colors: Colors; now: number; action: CardAction | null; busy: boolean; onOpen(): void }) {
   const { colors, task } = props;
   const failed = Boolean(task.errorCode) && (task.status === 'failed' || task.status === 'needs_check' || task.status === 'merge_failed');
   return <Pressable
@@ -61,6 +70,7 @@ export function TaskCard(props: { task: Task; colors: Colors; now: number; actio
       <StatusChip status={task.status} colors={colors} />
     </View>
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 6 }}>
+      {props.hostLabel ? <HostTag label={props.hostLabel} colors={colors} /> : null}
       <Text numberOfLines={1} style={{ color: colors.foregroundMuted, fontSize: 11, maxWidth: 160 }}>{projectLabel(task)}</Text>
       {task.branch ? <Text style={{ color: tint(colors.foregroundMuted, 0.5), fontSize: 11 }}>/</Text> : null}
       {task.branch ? <Text numberOfLines={1} style={{ color: colors.foregroundMuted, fontSize: 10, fontFamily: MONO, flexShrink: 1 }}>{task.branch}</Text> : null}

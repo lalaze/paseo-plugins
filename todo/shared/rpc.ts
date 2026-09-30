@@ -11,6 +11,12 @@ export const listTasks = defineRpc({
   output: z.object({ tasks: z.array(taskSchema), loadError: z.string().nullable(), dataDir: z.string() }).strict(),
 });
 
+export const readHostIdentity = defineRpc({
+  name: 'read-host-identity',
+  input: z.object({}).strict(),
+  output: z.object({ id: z.string().min(1).max(200).nullable(), label: z.string().min(1).max(200) }).strict(),
+});
+
 export const readTask = defineRpc({
   name: 'read-task',
   input: idInput,

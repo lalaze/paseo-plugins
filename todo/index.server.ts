@@ -1,10 +1,11 @@
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 import { todoError } from './shared/errors';
-import { acceptTask, cancelTask, continueTask, createTask, listTasks, readBranches, readCatalog, readTask, retryTask, startQueue, startTask } from './shared/rpc';
+import { acceptTask, cancelTask, continueTask, createTask, listTasks, readBranches, readCatalog, readHostIdentity, readTask, retryTask, startQueue, startTask } from './shared/rpc';
 import type { TurnKind } from './shared/machine';
 import { readBranches as branchesFor, readCatalog as catalogFor } from './server/catalog';
 import { TodoEngine } from './server/engine';
 import { createGit } from './server/git';
+import { hostIdentity } from './server/host-identity';
 import { PaseoTodoGateway } from './server/paseo';
 import { ReconnectingAgents } from './server/reconnecting';
 import { TaskStore, todoDataDir } from './server/store';
@@ -40,6 +41,7 @@ export default function contribute(server: PluginServerContext) {
     const current = await useEngine();
     return repository ? current.listIn(repository) : current.list();
   });
+  server.handle(readHostIdentity, () => hostIdentity());
   server.handle(readTask, async ({ id }) => (await useEngine()).read(id));
   server.handle(readCatalog, async () => catalogFor(await gateway.api()));
   server.handle(readBranches, async ({ repository }) => branchesFor(createGit(), repository));

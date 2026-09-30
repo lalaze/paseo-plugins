@@ -4,7 +4,7 @@ import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { diffLineKind, diffStats, relativeAge } from '../shared/board';
 import { canAccept, canCancel, canContinue, canRetry } from '../shared/machine';
 import type { Catalog, Task, TaskDiff } from '../shared/schema';
-import { projectLabel, StatusChip } from './card';
+import { HostTag, projectLabel, StatusChip } from './card';
 import { explain, ui } from './i18n';
 import { Backdrop, Button, Dot, MONO, outline, SectionTitle, tint, type Colors } from './kit';
 
@@ -29,6 +29,7 @@ const short = (sha: string | null) => (sha ? sha.slice(0, 8) : '—');
 
 export function TaskSheet(props: SheetHandlers & {
   task: Task;
+  hostLabel?: string | null;
   diff: TaskDiff;
   catalog: Catalog | null;
   colors: Colors;
@@ -51,6 +52,7 @@ export function TaskSheet(props: SheetHandlers & {
             <StatusChip status={task.status} colors={colors} />
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {props.hostLabel ? <HostTag label={props.hostLabel} colors={colors} /> : null}
             <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{projectLabel(task)}</Text>
             <Dot colors={colors} />
             <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{providerLabel(task, props.catalog)}</Text>

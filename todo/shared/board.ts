@@ -25,8 +25,8 @@ export function columnFor(status: TaskStatus): BoardColumn {
 }
 
 /** Freshest first in every column; canceled tasks are hidden unless asked for. */
-export function groupTasks(tasks: readonly Task[], showCanceled: boolean): Record<BoardColumn, Task[]> {
-  const grouped: Record<BoardColumn, Task[]> = { todo: [], inProgress: [], attention: [], done: [] };
+export function groupTasks<T extends Pick<Task, 'status' | 'updatedAt'>>(tasks: readonly T[], showCanceled: boolean): Record<BoardColumn, T[]> {
+  const grouped: Record<BoardColumn, T[]> = { todo: [], inProgress: [], attention: [], done: [] };
   for (const task of tasks) {
     if (task.status === 'canceled' && !showCanceled) continue;
     grouped[columnFor(task.status)].push(task);
