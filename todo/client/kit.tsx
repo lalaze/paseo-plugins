@@ -30,6 +30,8 @@ export function Button(props: {
   size?: 'xs' | 'sm';
   disabled?: boolean;
   full?: boolean;
+  /** Square button showing just the icon; the label stays as the accessibility label. */
+  iconOnly?: boolean;
 }) {
   const { colors } = props;
   const variant = props.variant ?? 'primary';
@@ -42,7 +44,8 @@ export function Button(props: {
     onPress={props.onPress}
     style={({ pressed }) => ({
       flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
-      height: small ? 26 : 32, paddingHorizontal: small ? 9 : 14, borderRadius: small ? 8 : 999,
+      height: small ? 26 : 32, paddingHorizontal: props.iconOnly ? 0 : small ? 9 : 14, borderRadius: small ? 8 : 999,
+      width: props.iconOnly ? (small ? 26 : 32) : undefined, flexShrink: 0,
       alignSelf: props.full ? 'stretch' : 'flex-start',
       backgroundColor: variant === 'primary' ? colors.foreground : pressed ? colors.surface2 : 'transparent',
       borderWidth: variant === 'outline' ? 1 : 0, borderColor: outline(colors),
@@ -50,14 +53,15 @@ export function Button(props: {
     })}
   >
     {props.icon ? <Icon name={props.icon} size={small ? 12 : 14} color={fg} /> : null}
-    <Text style={{ color: fg, fontSize: small ? 12 : 13, fontWeight: '600' }}>{props.label}</Text>
+    {props.iconOnly && props.icon ? null : <Text style={{ color: fg, fontSize: small ? 12 : 13, fontWeight: '600' }}>{props.label}</Text>}
   </Pressable>;
 }
 
-export function Pill(props: { children: ReactNode; colors: Colors; onPress?(): void; active?: boolean; style?: StyleProp<ViewStyle> }) {
+export function Pill(props: { children: ReactNode; colors: Colors; onPress?(): void; active?: boolean; label?: string; style?: StyleProp<ViewStyle> }) {
   const { colors } = props;
   return <Pressable
     accessibilityRole="button"
+    accessibilityLabel={props.label}
     onPress={props.onPress}
     disabled={!props.onPress}
     style={[{

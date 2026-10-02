@@ -26,6 +26,8 @@ interface HostList {
 const EMPTY: TaskDiff = { patch: '', files: [], truncated: false };
 /** Below this the four columns stop fitting and the board stacks, as it does in a workspace panel. */
 const BOARD_MIN_WIDTH = 880;
+/** Below this the toolbar drops the Filter and New task labels so the row fits a phone. */
+const TOOLBAR_MIN_WIDTH = 560;
 /** A host that does not answer in time counts as unreachable for this round instead of holding the board back. */
 const HOST_TIMEOUT = 8000;
 const NO_HOSTS = createHostRegistry();
@@ -197,6 +199,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
   const visible = project ? inHost.filter(task => task.hostId === project.hostId && task.repository === project.repository) : inHost;
   const columns = groupTasks(visible, showCanceled);
   const wide = !scoped && width >= BOARD_MIN_WIDTH;
+  const compact = width < TOOLBAR_MIN_WIDTH;
   const openAgent = (task: HostedTask) => (props.navigation && task.agentId
     ? () => props.navigation?.openAgent({ agentId: task.agentId as string, serverId: task.hostId })
     : null);
@@ -270,10 +273,10 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
   // Transparent so a host wallpaper shows through; cards carry their own translucent fill.
   return <View style={{ flex: 1, minHeight: 0, backgroundColor: 'transparent' }} onLayout={event => setWidth(event.nativeEvent.layout.width)}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8, zIndex: 10 }}>
-      {multi ? <View>
-        <Pill colors={colors} onPress={() => setMenu(menu === 'host' ? null : 'host')} active={menu === 'host'}>
+      {multi ? <View style={{ flexShrink: 1, minWidth: 0 }}>
+        <Pill colors={colors} onPress={() => setMenu(menu === 'host' ? null : 'host')} active={menu === 'host'} style={{ flexShrink: 1 }}>
           <Icon name="Server" size={14} color={colors.foregroundMuted} />
-          <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 13, fontWeight: '500', maxWidth: 180 }}>{hostName}</Text>
+          <Text numberOfLines={1} style={{ flexShrink: 1, color: colors.foreground, fontSize: 13, fontWeight: '500', maxWidth: 180 }}>{hostName}</Text>
           <Icon name="ChevronDown" size={14} color={colors.foregroundMuted} />
         </Pill>
         {menu === 'host' ? <Menu colors={colors}>
@@ -288,10 +291,10 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
           />)}
         </Menu> : null}
       </View> : null}
-      <View>
-        <Pill colors={colors} onPress={scoped ? undefined : () => setMenu(menu === 'project' ? null : 'project')} active={menu === 'project'}>
+      <View style={{ flexShrink: 1, minWidth: 0 }}>
+        <Pill colors={colors} onPress={scoped ? undefined : () => setMenu(menu === 'project' ? null : 'project')} active={menu === 'project'} style={{ flexShrink: 1 }}>
           <Icon name="Folder" size={14} color={colors.foregroundMuted} />
-          <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 13, fontWeight: '500', maxWidth: 180 }}>{projectName}</Text>
+          <Text numberOfLines={1} style={{ flexShrink: 1, color: colors.foreground, fontSize: 13, fontWeight: '500', maxWidth: 180 }}>{projectName}</Text>
           {scoped ? null : <Icon name="ChevronDown" size={14} color={colors.foregroundMuted} />}
         </Pill>
         {menu === 'project' ? <Menu colors={colors}>
@@ -307,9 +310,9 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
         </Menu> : null}
       </View>
       <View>
-        <Pill colors={colors} onPress={() => setMenu(menu === 'filter' ? null : 'filter')} active={menu === 'filter' || showCanceled}>
+        <Pill colors={colors} onPress={() => setMenu(menu === 'filter' ? null : 'filter')} active={menu === 'filter' || showCanceled} label={ui('Filter', '筛选')}>
           <Icon name="ListFilter" size={14} color={colors.foregroundMuted} />
-          <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: '500' }}>{ui('Filter', '筛选')}</Text>
+          {compact ? null : <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: '500' }}>{ui('Filter', '筛选')}</Text>}
         </Pill>
         {menu === 'filter' ? <Menu colors={colors}>
           <MenuItem label={ui('Show canceled', '显示已取消')} checked={showCanceled} onPress={() => setShowCanceled(value => !value)} colors={colors} />
@@ -317,7 +320,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
       </View>
       <View style={{ flex: 1 }} />
       {/* With no tasks the centre tile is the one way in; the toolbar button joins once there is a board. */}
-      {located.length > 0 ? <Button label={ui('New task', '新建任务')} icon="Plus" onPress={() => { setMenu(null); setEditorOpen(true); }} colors={colors} /> : null}
+      {located.length > 0 ? <Button label={ui('New task', '新建任务')} icon="Plus" iconOnly={compact} onPress={() => { setMenu(null); setEditorOpen(true); }} colors={colors} /> : null}
     </View>
     {loadErrors.map(({ host, text }) => <Text key={host.id} style={{ marginHorizontal: 16, marginBottom: 8, padding: 10, borderRadius: 10, color: colors.statusDanger, backgroundColor: tint(colors.statusDanger, 0.12), fontSize: 12 }}>
       {multi ? `${host.label}: ${text}` : text}
