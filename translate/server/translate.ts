@@ -81,9 +81,24 @@ function apiError(body: string, status: number): Error {
 type TranslationEndpoint = { apiUrl: string; apiKey: string; model: string; kind: TranslationUsageRecord['endpoint'] };
 type RecordUsage = (entry: Omit<TranslationUsageRecord, 'v'>) => void;
 
+function nonThinkingOptions(endpoint: TranslationEndpoint): Record<string, unknown> {
+  const host = new URL(endpoint.apiUrl).hostname.toLowerCase();
+  // DashScope accepts its thinking switch at the top level of the request.
+  if (/^dashscope(?:-[a-z0-9]+)?\.(?:[a-z0-9-]+\.)?aliyuncs\.com$/.test(host) || host.endsWith('.maas.aliyuncs.com')) {
+    return { enable_thinking: false };
+  }
+  // Local servers may expose model aliases, so do not rely on the model name.
+  const local = host === 'localhost' || host === '[::1]' || host.endsWith('.ts.net')
+    || /^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(host);
+  if (local || /qwen/i.test(endpoint.model)) {
+    return { enable_thinking: false, chat_template_kwargs: { enable_thinking: false } };
+  }
+  return {};
+}
+
 async function requestTranslation(endpoint: TranslationEndpoint, prompt: string, fetchImpl: Fetch, recordUsage: RecordUsage): Promise<string> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 24000);
+  const timeout = setTimeout(() => controller.abort(), 60_000);
   try {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (endpoint.apiKey.trim()) headers.authorization = `Bearer ${endpoint.apiKey.trim()}`;
@@ -94,6 +109,7 @@ async function requestTranslation(endpoint: TranslationEndpoint, prompt: string,
       body: JSON.stringify({
         model: endpoint.model,
         stream: false,
+        ...nonThinkingOptions(endpoint),
         messages: [
           { role: 'user', content: prompt },
         ],

@@ -15,7 +15,8 @@
 - 按主要文字自动判断翻译方向：中日韩文字占多数时译为英文，否则译为中文，也可改选中文、英语、日语、韩语、法语、德语、西班牙语或俄语。
 - 使用你填写的 OpenAI Chat Completions 兼容 API，不调用 Paseo 本地 Agent，也不会新建对话。
 - 使用单条纯翻译提示词，同时兼容专用翻译模型与普通聊天模型，不绑定特定供应商或模型名。
-- API 地址、API Key 与模型（含可选的备用接口）按主机保存在 Paseo 插件设置中；同一时间最多处理 3 个请求。
+- 本地接口与 Qwen 接口的翻译请求显式关闭思考模式；本地接口同时传入 `enable_thinking: false` 和 `chat_template_kwargs.enable_thinking: false`，DashScope 使用顶层开关。实际是否关闭取决于接口对这些参数的支持。参数用法见 [Qwen 文档](https://qwen.readthedocs.io/en/latest/deployment/vllm.html#thinking-non-thinking-modes)和 [DashScope 文档](https://www.alibabacloud.com/help/en/model-studio/deep-thinking)。
+- API 地址、API Key 与模型（含可选的备用接口）按主机保存在 Paseo 插件设置中；同一时间最多处理 3 个请求，主接口与备用接口每次调用各最多等待 60 秒。
 - 支持复制结果，单次选区最多 5000 个字符。
 - 每次翻译 API 调用返回后，把时间、模型、主/备接口和返回的 token 用量追加到本机账本 `~/.paseo/translate/usage/YYYY-MM.jsonl`；同仓库的 [`usage-glance`](../usage-glance/README.md) 会把它作为「翻译」来源计入 Token 消耗统计。
 
