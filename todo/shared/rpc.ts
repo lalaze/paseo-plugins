@@ -1,5 +1,6 @@
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
+import { collaborationCatalogSchema, taskCollaborationSchema } from './collaboration';
 import { branchSchema, catalogSchema, diffSchema, reviewBindingSchema, taskSchema } from './schema';
 
 const idInput = z.object({ id: z.string().uuid() }).strict();
@@ -46,7 +47,20 @@ export const createTask = defineRpc({
     targetBranch: branchSchema,
     provider: z.string().min(3).max(300),
     modeId: z.string().min(1).max(200).nullable(),
+    collaboration: taskCollaborationSchema.nullable().optional(),
   }).strict(),
+  output: taskOutput,
+});
+
+export const readCollaborationCatalog = defineRpc({
+  name: 'read-collaboration-catalog',
+  input: z.object({}).strict(),
+  output: collaborationCatalogSchema,
+});
+
+export const updateTaskCollaboration = defineRpc({
+  name: 'update-task-collaboration',
+  input: z.object({ id: z.string().uuid(), collaboration: taskCollaborationSchema.nullable() }).strict(),
   output: taskOutput,
 });
 

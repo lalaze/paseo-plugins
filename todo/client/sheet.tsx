@@ -1,10 +1,12 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { diffLineKind, diffStats, pendingCleanup, relativeAge, type CleanupStep } from '../shared/board';
+import { collaborationDraftIssue, collaborationModeLabel, collaborationStatus, draftFromCollaboration, sameCollaborationDraft, snapshotFromDraft, type CollaborationCatalog, type CollaborationDraft, type TaskCollaboration } from '../shared/collaboration';
 import { canAccept, canCancel, canContinue, canRetry } from '../shared/machine';
 import type { Catalog, Task, TaskDiff } from '../shared/schema';
 import { HostTag, projectLabel, StatusChip } from './card';
+import { CollaborationEditorModal, CollaborationSummary, collaborationIssueText } from './collaboration';
 import { explain, ui } from './i18n';
 import { Backdrop, Button, Dot, MONO, outline, SectionTitle, tint, type Colors } from './kit';
 
@@ -33,15 +35,99 @@ export function TaskSheet(props: SheetHandlers & {
   hostLabel?: string | null;
   diff: TaskDiff;
   catalog: Catalog | null;
+  collaborationCatalog: CollaborationCatalog | null;
   colors: Colors;
   now: number;
   wide: boolean;
+  width: number;
   busy: boolean;
   onClose(): void;
+  onCollaborationDirty(dirty: boolean): void;
+  onSaveCollaboration(collaboration: TaskCollaboration | null): Promise<boolean>;
 }) {
   const { colors, task } = props;
   const stats = diffStats(props.diff.patch);
-  return <Backdrop onClose={props.onClose} align="right">
+  const editable = task.status === 'draft' && !task.operationId;
+  const [editing, setEditing] = useState(false);
+  const [collabDraft, setCollabDraft] = useState<CollaborationDraft>(() => draftFromCollaboration(task.collaboration));
+  const [collabError, setCollabError] = useState<string | null>(null);
+  const [discarded, setDiscarded] = useState(false);
+  const collabDraftRef = useRef(collabDraft);
+  const editingRef = useRef(editing);
+  collabDraftRef.current = collabDraft;
+  editingRef.current = editing;
+  const collaborationKey = JSON.stringify(task.collaboration);
+  const savedDraft = draftFromCollaboration(task.collaboration);
+  const dirty = editing && !sameCollaborationDraft(collabDraft, savedDraft);
+  const reportDirty = useRef(props.onCollaborationDirty);
+  reportDirty.current = props.onCollaborationDirty;
+  useEffect(() => {
+    const saved = draftFromCollaboration(task.collaboration);
+    const editorDirty = editingRef.current && !sameCollaborationDraft(collabDraftRef.current, saved);
+    if (!editable && editingRef.current) {
+      if (editorDirty) setDiscarded(true);
+      setEditing(false);
+      setCollabDraft(saved);
+      return;
+    }
+    if (editorDirty) return;
+    setCollabDraft(saved);
+  }, [collaborationKey, editable, task.collaboration]);
+  useEffect(() => {
+    reportDirty.current(dirty);
+    return () => reportDirty.current(false);
+  }, [dirty]);
+  const saveCollaboration = async () => {
+    const problem = collaborationDraftIssue(
+      collabDraft,
+      props.collaborationCatalog,
+      props.catalog ? props.catalog.providers.map(entry => entry.provider) : null,
+    );
+    if (problem) {
+      setCollabError(collaborationIssueText(problem));
+      return;
+    }
+    const snap = snapshotFromDraft(collabDraft);
+    if (snap.error) {
+      setCollabError(collaborationIssueText(snap.error));
+      return;
+    }
+    const saved = await props.onSaveCollaboration(snap.collaboration);
+    if (!saved) {
+      setCollabError(ui('The collaboration settings were not saved.', '协作设置没有保存。'));
+      return;
+    }
+    setEditing(false);
+    setCollabError(null);
+    setDiscarded(false);
+  };
+  const cancelCollaboration = () => {
+    setCollabDraft(draftFromCollaboration(task.collaboration));
+    setEditing(false);
+    setCollabError(null);
+  };
+  const acceptance = task.collaborationAcceptance === 'pending'
+    ? ui('Waiting', '等待中')
+    : task.collaborationAcceptance === 'accepted'
+      ? ui('Accepted', '已验收')
+      : '—';
+  const detailRows: Array<[string, string, boolean]> = [
+    [ui('Branch', '任务分支'), task.branch ?? ui('Not created yet', '尚未创建'), true],
+    [ui('Target', '目标分支'), task.targetBranch, true],
+    [ui('Base', '起点'), short(task.review?.targetHead ?? task.baseCommit), true],
+    [ui('Result', '成果提交'), short(task.review?.resultCommit ?? null), true],
+    ...(task.mergeCommit ? [[ui('Merged as', '合并提交'), `${short(task.mergeCommit)} · ${task.mergeMethod ?? ''}`, true] as [string, string, boolean]] : []),
+    [ui('Worktree', '工作树'), task.worktree ?? '—', true],
+  ];
+  if (task.collaboration) {
+    detailRows.push(
+      [ui('Collaboration', '协作'), ui(...collaborationModeLabel(task.collaboration.mode)), false],
+      [ui('Host phase', '协作阶段'), task.collaborationPhase ?? '—', false],
+      [ui('Host control', '协作控制'), task.collaborationControl ?? '—', false],
+      [ui('Session acceptance', '会话验收'), acceptance, false],
+    );
+  }
+  return <Backdrop onClose={editing ? () => undefined : props.onClose} align="right">
     <View style={{ width: props.wide ? 540 : '100%', height: '100%', backgroundColor: colors.surface0, borderLeftWidth: props.wide ? 1 : 0, borderLeftColor: outline(colors) }}>
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12, padding: 20, paddingRight: 52, borderBottomWidth: 1, borderBottomColor: outline(colors) }}>
         <View style={{ width: 36, height: 36, borderRadius: 12, borderWidth: 1, borderColor: outline(colors), backgroundColor: tint(colors.surface2, 0.6), alignItems: 'center', justifyContent: 'center' }}>
@@ -76,17 +162,20 @@ export function TaskSheet(props: SheetHandlers & {
         {task.pendingPrompt ? <Section title={ui('Follow-up', '继续修改')} colors={colors}>
           <Quote colors={colors}>{task.pendingPrompt}</Quote>
         </Section> : null}
-        <NextStep {...props} />
+        <Section title={ui('Collaboration', '协作')} colors={colors}>
+          <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>
+            {editable
+              ? ui('This draft keeps its own copy. Changing the machine default does not change it.', '这个草稿保存自己的副本。修改机器默认设置不会改它。')
+              : ui('Collaboration settings were saved with the task and cannot be changed after it starts.', '协作设置已随任务保存，开始之后不能再改。')}
+          </Text>
+          {discarded ? <Text style={{ color: colors.statusWarning, fontSize: 12, lineHeight: 18 }}>{ui('Unsaved collaboration edits were not saved.', '未保存的协作修改没有写入。')}</Text> : null}
+          <CollaborationSummary collaboration={task.collaboration} phase={task.collaborationPhase} control={task.collaborationControl} acceptance={task.collaborationAcceptance} catalog={props.catalog} colors={colors} />
+          {editable ? <Button label={ui('Edit', '修改')} colors={colors} variant="outline" size="xs" onPress={() => { setCollabError(null); setCollabDraft(draftFromCollaboration(task.collaboration)); setEditing(true); }} /> : null}
+        </Section>
+        <NextStep {...props} collaborationDirty={dirty} />
         <Section title={ui('Details', '详情')} colors={colors}>
           <View style={{ borderWidth: 1, borderColor: outline(colors), borderRadius: 12, overflow: 'hidden' }}>
-            {([
-              [ui('Branch', '任务分支'), task.branch ?? ui('Not created yet', '尚未创建'), true],
-              [ui('Target', '目标分支'), task.targetBranch, true],
-              [ui('Base', '起点'), short(task.review?.targetHead ?? task.baseCommit), true],
-              [ui('Result', '成果提交'), short(task.review?.resultCommit ?? null), true],
-              ...(task.mergeCommit ? [[ui('Merged as', '合并提交'), `${short(task.mergeCommit)} · ${task.mergeMethod ?? ''}`, true] as const] : []),
-              [ui('Worktree', '工作树'), task.worktree ?? '—', true],
-            ] as const).map(([label, value, mono], index, rows) => <View key={label} style={{ flexDirection: 'row', borderBottomWidth: index === rows.length - 1 ? 0 : 1, borderBottomColor: outline(colors) }}>
+            {detailRows.map(([label, value, mono], index, rows) => <View key={label} style={{ flexDirection: 'row', borderBottomWidth: index === rows.length - 1 ? 0 : 1, borderBottomColor: outline(colors) }}>
               <Text style={{ width: 104, paddingVertical: 8, paddingHorizontal: 12, color: colors.foregroundMuted, fontSize: 12 }}>{label}</Text>
               <Text selectable numberOfLines={1} style={{ flex: 1, paddingVertical: 8, paddingRight: 12, color: colors.foreground, fontSize: 11, fontFamily: mono ? MONO : undefined, lineHeight: 18 }}>{value}</Text>
             </View>)}
@@ -109,16 +198,35 @@ export function TaskSheet(props: SheetHandlers & {
         </Section>
       </ScrollView>
     </View>
+    {editing ? <CollaborationEditorModal
+      title={ui('Collaboration for this task', '这个任务的协作')}
+      hint={ui('This copy is saved on the task. Cancel leaves the saved draft unchanged. The machine default is not changed.', '这是写在这个任务上的副本。取消不会改已保存的草稿，也不会改这台机器的默认设置。')}
+      draft={collabDraft}
+      catalog={props.catalog}
+      collaboration={props.collaborationCatalog}
+      colors={colors}
+      width={props.width}
+      busy={props.busy}
+      error={collabError}
+      saveLabel={ui('Save on this task', '保存到这个任务')}
+      onChange={draft => { setCollabError(null); setCollabDraft(draft); }}
+      onSave={() => { void saveCollaboration(); }}
+      onCancel={cancelCollaboration}
+    /> : null}
   </Backdrop>;
 }
 
 /** One panel for every status: amber while the result waits on the person, neutral otherwise. */
-function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boolean }) {
+function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boolean; collaborationDirty: boolean }) {
   const { colors, task } = props;
   const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState('');
-  const review = canAccept(task.status) && Boolean(task.review);
+  const sessionPending = Boolean(task.collaboration) && (task.collaborationAcceptance === 'pending' || task.collaborationPhase === 'awaiting_acceptance');
+  const collab = task.collaboration ? collaborationStatus(task) : null;
+  const review = !sessionPending && canAccept(task.status) && Boolean(task.review);
   const text = (() => {
+    if (task.status === 'draft' && props.collaborationDirty) return ui('Save or cancel the collaboration edits before starting.', '先保存或取消协作设置的修改，再开始。');
+    if (collab && task.status !== 'draft' && task.status !== 'queued' && task.status !== 'merged' && task.status !== 'canceled') return ui(...collab.detail);
     switch (task.status) {
       case 'draft': return ui('Not started. Start it now, or leave it in To do for the queue.', '还没开始。现在开始，或者留在待办里等队列。');
       case 'queued': return ui('Waiting for the repository queue. One task runs per repository at a time.', '等待仓库队列。同一仓库一次只跑一个任务。');
@@ -137,15 +245,17 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
   })();
   const leftover = pendingCleanup(task);
   const cleanupFailed = Boolean(leftover && task.cleanup?.error);
-  const warn = review || task.status === 'needs_attention' || cleanupFailed;
+  const warn = review || sessionPending || task.status === 'needs_attention' || cleanupFailed;
   const primary = leftover
     ? <Button label={task.cleanup ? ui('Retry cleanup', '重试清理') : ui('Clean up', '清理')} icon="Archive" onPress={props.onCleanup} colors={colors} full disabled={props.busy} />
+    : sessionPending && props.onOpenSession
+    ? <Button label={ui('Open session', '打开会话')} icon="MessageSquare" onPress={props.onOpenSession} colors={colors} full />
     : review
     ? <Button label={ui('Accept and merge', '验收并合并')} icon="GitMerge" onPress={props.onAccept} colors={colors} full disabled={props.busy} />
     : task.status === 'draft'
-      ? <Button label={ui('Start', '开始')} icon="Play" onPress={props.onStart} colors={colors} full disabled={props.busy} />
+      ? <Button label={ui('Start', '开始')} icon="Play" onPress={props.onStart} colors={colors} full disabled={props.busy || props.collaborationDirty} />
       : canRetry(task.status)
-        ? <Button label={ui('Retry with a new session', '用新会话重试')} icon="RotateCcw" onPress={props.onRetry} colors={colors} full disabled={props.busy} />
+        ? <Button label={task.collaboration && task.collaborationControl === 'needs_attention' ? ui('Retry this collaboration', '重试这次协作') : ui('Retry with a new session', '用新会话重试')} icon="RotateCcw" onPress={props.onRetry} colors={colors} full disabled={props.busy} />
         : task.status === 'needs_attention' && props.onOpenSession
           ? <Button label={ui('Open session', '打开会话')} icon="MessageSquare" onPress={props.onOpenSession} colors={colors} full />
           : null;
@@ -154,7 +264,7 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
     {primary}
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
       {canContinue(task.status) ? <Button label={ui('Send back', '打回修改')} icon="CornerDownLeft" onPress={() => setComposing(value => !value)} colors={colors} variant="outline" size="xs" /> : null}
-      {props.onOpenSession && task.status !== 'needs_attention' ? <Button label={ui('Open session', '打开会话')} icon="MessageSquare" onPress={props.onOpenSession} colors={colors} variant="outline" size="xs" /> : null}
+      {props.onOpenSession && task.status !== 'needs_attention' && !sessionPending ? <Button label={ui('Open session', '打开会话')} icon="MessageSquare" onPress={props.onOpenSession} colors={colors} variant="outline" size="xs" /> : null}
       {canCancel(task.status) && task.status !== 'canceling' ? <Button label={ui('Cancel task', '取消任务')} icon="X" onPress={props.onCancel} colors={colors} variant="ghost" size="xs" disabled={props.busy} /> : null}
     </View>
     {composing && canContinue(task.status) ? <View style={{ gap: 8 }}>

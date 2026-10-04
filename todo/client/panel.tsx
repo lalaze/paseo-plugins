@@ -3,10 +3,25 @@ import { useHosts, type PluginClientContext, type PluginHostProps, type PluginSu
 import { Icon, useToast } from '@getpaseo/plugin/client/react-native';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { BOARD_COLUMNS, groupTasks, pendingCleanup, type BoardColumn } from '../shared/board';
+import {
+  collaborationDraftIssue,
+  collaborationEditBlocksStart,
+  inheritCollaborationDraft,
+  readCollaborationDefaults,
+  sameCollaborationDraft,
+  snapshotFromDraft,
+  storedDefault,
+  unavailableCatalog,
+  writeCollaborationDefault,
+  type CollaborationCatalog,
+  type CollaborationDraft,
+  type TaskCollaboration,
+} from '../shared/collaboration';
 import { canRetry } from '../shared/machine';
-import { acceptTask, cancelTask, cleanupTask, continueTask, createTask, listTasks, readCatalog, readTask, retryTask, startQueue, startTask } from '../shared/rpc';
+import { acceptTask, cancelTask, cleanupTask, continueTask, createTask, listTasks, readCatalog, readCollaborationCatalog, readTask, retryTask, startQueue, startTask, updateTaskCollaboration } from '../shared/rpc';
 import type { Catalog, Task, TaskDiff } from '../shared/schema';
 import { projectLabel, TaskCard, type CardAction } from './card';
+import { CollaborationEditorModal, browserCollaborationStore, collaborationIssueText } from './collaboration';
 import { NewTaskDialog, type NewTaskInput } from './editor';
 import { createHostRegistry, hostLabel, type HostRegistry, type TodoHost } from './hosts';
 import { parseTodoError, ui } from './i18n';
@@ -109,6 +124,15 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
   const [showCanceled, setShowCanceled] = useState(false);
   const [menu, setMenu] = useState<'host' | 'project' | 'filter' | null>(null);
   const [busy, setBusy] = useState(false);
+  const [collabCatalogs, setCollabCatalogs] = useState<Record<string, CollaborationCatalog>>({});
+  const [collaborationDefaults, setCollaborationDefaults] = useState(() => readCollaborationDefaults(browserCollaborationStore()));
+  const [settingsHost, setSettingsHost] = useState<string | null>(null);
+  const [settingsDraft, setSettingsDraft] = useState<CollaborationDraft | null>(null);
+  const [settingsBaseline, setSettingsBaseline] = useState<CollaborationDraft | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [unsavedCollab, setUnsavedCollab] = useState<{ hostId: string; id: string } | null>(null);
+  const settingsDirtyRef = useRef(false);
+  const settingsRequest = useRef(0);
 
   const fail = useCallback((error: unknown) => { toast.error(parseTodoError(error)); }, [toast]);
 
@@ -152,6 +176,9 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
       void withTimeout(host.rpc(readCatalog, {}))
         .then(catalog => setCatalogs(previous => ({ ...previous, [host.id]: catalog })))
         .catch(() => undefined);
+      void withTimeout(host.rpc(readCollaborationCatalog, {}))
+        .then(catalog => setCollabCatalogs(previous => ({ ...previous, [host.id]: catalog })))
+        .catch(error => setCollabCatalogs(previous => ({ ...previous, [host.id]: unavailableCatalog(parseTodoError(error)) })));
     }
   }, [hostKey]);
 
@@ -211,14 +238,107 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     return code ? [{ host, text: parseTodoError(`todo-error:${code}`) }] : [];
   });
   const selfBlocked = Boolean(lists[hosts[0].id]?.loadError);
+  const unsavedStart = ui('Save or cancel the collaboration edits before starting.', '先保存或取消协作设置的修改，再开始。');
+
+  function draftForHost(hostId: string, catalog: CollaborationCatalog | null): CollaborationDraft {
+    return inheritCollaborationDraft(storedDefault(collaborationDefaults, hostId), catalog ?? { settings: null, rolePrompts: {} });
+  }
+
+  function openSettings(hostId: string) {
+    const host = hostOf(hostId);
+    const request = ++settingsRequest.current;
+    settingsDirtyRef.current = false;
+    setSettingsError(null);
+    setSettingsHost(hostId);
+    const known = collabCatalogs[hostId] ?? null;
+    const next = draftForHost(hostId, known);
+    setSettingsDraft(next);
+    setSettingsBaseline(next);
+    const apply = (catalog: CollaborationCatalog) => {
+      if (settingsRequest.current !== request || settingsDirtyRef.current) return;
+      const fresh = draftForHost(hostId, catalog);
+      setSettingsDraft(fresh);
+      setSettingsBaseline(fresh);
+    };
+    void withTimeout(host.rpc(readCollaborationCatalog, {}))
+      .then(catalog => {
+        setCollabCatalogs(previous => ({ ...previous, [hostId]: catalog }));
+        apply(catalog);
+      })
+      .catch(error => {
+        const failed = unavailableCatalog(parseTodoError(error));
+        setCollabCatalogs(previous => ({ ...previous, [hostId]: failed }));
+        apply(failed);
+      });
+  }
+
+  function changeSettingsHost(hostId: string) {
+    if (settingsDraft && settingsBaseline && !sameCollaborationDraft(settingsDraft, settingsBaseline)) {
+      setSettingsError(ui('Save or cancel these edits before switching machines.', '先保存或取消当前修改，再切换机器。'));
+      return;
+    }
+    openSettings(hostId);
+  }
+
+  function saveSettings() {
+    if (!settingsHost || !settingsDraft) return;
+    const agentCatalog = catalogs[settingsHost] ?? null;
+    const problem = collaborationDraftIssue(
+      settingsDraft,
+      collabCatalogs[settingsHost] ?? null,
+      agentCatalog ? agentCatalog.providers.map(entry => entry.provider) : null,
+    );
+    if (problem) {
+      setSettingsError(collaborationIssueText(problem));
+      return;
+    }
+    const snap = snapshotFromDraft(settingsDraft);
+    if (snap.error) {
+      setSettingsError(collaborationIssueText(snap.error));
+      return;
+    }
+    const store = browserCollaborationStore();
+    if (!store) {
+      setSettingsError(ui('This browser cannot store the default.', '这个浏览器无法保存默认设置。'));
+      return;
+    }
+    try {
+      writeCollaborationDefault(store, settingsHost, snap.collaboration);
+    } catch (error) {
+      setSettingsError(parseTodoError(error));
+      return;
+    }
+    setCollaborationDefaults(readCollaborationDefaults(store));
+    settingsDirtyRef.current = false;
+    setSettingsError(null);
+    setSettingsHost(null);
+    setSettingsDraft(null);
+    setSettingsBaseline(null);
+  }
+
+  function closeSettings() {
+    settingsDirtyRef.current = false;
+    setSettingsError(null);
+    setSettingsHost(null);
+    setSettingsDraft(null);
+    setSettingsBaseline(null);
+  }
+
+  function startBlocked(task: { hostId: string; id: string }): boolean {
+    if (!collaborationEditBlocksStart(unsavedCollab, task)) return false;
+    toast.error(unsavedStart);
+    return true;
+  }
 
   function cardAction(task: HostedTask): CardAction | null {
     const host = hostOf(task.hostId);
-    if (task.status === 'draft') return { label: ui('Start', '开始'), icon: 'Play', onPress: () => { void run(host, rpc => rpc(startTask, { id: task.id })); } };
+    if (task.status === 'draft') return { label: ui('Start', '开始'), icon: 'Play', onPress: () => { if (!startBlocked(task)) void run(host, rpc => rpc(startTask, { id: task.id })); } };
+    const sessionPending = Boolean(task.collaboration) && (task.collaborationAcceptance === 'pending' || task.collaborationPhase === 'awaiting_acceptance');
+    const session = openAgent(task);
+    if (sessionPending && session && task.status === 'awaiting_review') return { label: ui('Open session', '打开会话'), icon: 'MessageSquare', onPress: session };
     if (task.status === 'awaiting_review' || task.status === 'merge_failed') return { label: ui('Review', '验收'), icon: 'GitMerge', onPress: () => setOpen({ hostId: task.hostId, id: task.id }) };
     if (canRetry(task.status) && task.status !== 'canceled') return { label: ui('Retry', '重试'), icon: 'RotateCcw', onPress: () => { void run(host, rpc => rpc(retryTask, { id: task.id })); } };
     if (pendingCleanup(task)) return { label: ui('Clean up', '清理'), icon: 'Archive', onPress: () => { void run(host, rpc => rpc(cleanupTask, { id: task.id })); } };
-    const session = openAgent(task);
     if (session && (task.status === 'running' || task.status === 'needs_attention' || task.status === 'preparing')) return { label: ui('Open session', '打开会话'), icon: 'MessageSquare', onPress: session };
     return null;
   }
@@ -236,10 +356,17 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
 
   function startAll() {
     const targets = project ? [hostOf(project.hostId)] : hostFilter ? [hostOf(hostFilter)] : hosts;
+    let skipped = false;
     for (const host of targets) {
-      if (!(lists[host.id]?.tasks ?? []).some(task => task.status === 'draft')) continue;
+      const drafts = (lists[host.id]?.tasks ?? []).filter(task => task.status === 'draft');
+      if (drafts.length === 0) continue;
+      if (unsavedCollab && unsavedCollab.hostId === host.id && drafts.some(task => task.id === unsavedCollab.id)) {
+        skipped = true;
+        continue;
+      }
       void run(host, rpc => rpc(startQueue, { repository: scoped ?? project?.repository ?? null }));
     }
+    if (skipped) toast.error(unsavedStart);
   }
 
   const drafts = columns.todo.filter(task => task.status === 'draft').length;
@@ -319,7 +446,8 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
         </Menu> : null}
       </View>
       <View style={{ flex: 1 }} />
-      {/* With no tasks the centre tile is the one way in; the toolbar button joins once there is a board. */}
+      <Button label={ui('Collaboration', '协作')} icon="Users" iconOnly={compact && located.length > 0} variant="outline" onPress={() => { setMenu(null); openSettings(editorHost); }} colors={colors} />
+      {/* With no tasks the centre tile creates one; the toolbar button joins once there is a board. */}
       {located.length > 0 ? <Button label={ui('New task', '新建任务')} icon="Plus" iconOnly={compact} onPress={() => { setMenu(null); setEditorOpen(true); }} colors={colors} /> : null}
     </View>
     {loadErrors.map(({ host, text }) => <Text key={host.id} style={{ marginHorizontal: 16, marginBottom: 8, padding: 10, borderRadius: 10, color: colors.statusDanger, backgroundColor: tint(colors.statusDanger, 0.12), fontSize: 12 }}>
@@ -369,12 +497,19 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
         hostLabel={multi ? host.label : null}
         diff={detail && detail.hostId === openTask.hostId && detail.task.id === openTask.id ? detail.diff : EMPTY}
         catalog={catalogs[host.id] ?? null}
+        collaborationCatalog={collabCatalogs[host.id] ?? null}
         colors={colors}
         now={now}
         wide={width >= 720}
+        width={width || 640}
         busy={busy}
-        onClose={() => setOpen(null)}
-        onStart={() => { void run(host, rpc => rpc(startTask, { id: openTask.id })); }}
+        onClose={() => {
+          setUnsavedCollab(current => current && current.hostId === openTask.hostId && current.id === openTask.id ? null : current);
+          setOpen(null);
+        }}
+        onCollaborationDirty={dirty => setUnsavedCollab(dirty ? { hostId: openTask.hostId, id: openTask.id } : current => current && current.hostId === openTask.hostId && current.id === openTask.id ? null : current)}
+        onSaveCollaboration={async (collaboration: TaskCollaboration | null) => (await run(host, rpc => rpc(updateTaskCollaboration, { id: openTask.id, collaboration }))) !== null}
+        onStart={() => { if (!startBlocked(openTask)) void run(host, rpc => rpc(startTask, { id: openTask.id })); }}
         onCancel={() => { void run(host, rpc => rpc(cancelTask, { id: openTask.id })); }}
         onRetry={() => { void run(host, rpc => rpc(retryTask, { id: openTask.id })); }}
         onCleanup={() => { void run(host, rpc => rpc(cleanupTask, { id: openTask.id })); }}
@@ -394,6 +529,8 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
       rpcFor={hostId => hostOf(hostId).rpc}
       colors={colors}
       catalogs={catalogs}
+      collaborationCatalogs={collabCatalogs}
+      collaborationDefaults={collaborationDefaults}
       scope={props.scope ?? null}
       initialRepository={project?.repository ?? null}
       initialProvider={lastProvider}
@@ -401,6 +538,27 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
       width={width || 640}
       onClose={() => setEditorOpen(false)}
       onSubmit={submitNew}
+    /> : null}
+    {settingsHost && settingsDraft ? <CollaborationEditorModal
+      title={ui('Collaboration for new tasks', '新建任务的协作')}
+      hint={ui('Saved on this machine for tasks you create later. Tasks already in the list keep their own copy.', '保存在这台机器上，只用于之后新建的任务。列表里已有的任务仍用各自的副本。')}
+      draft={settingsDraft}
+      catalog={catalogs[settingsHost] ?? null}
+      collaboration={collabCatalogs[settingsHost] ?? null}
+      colors={colors}
+      width={width || 640}
+      error={settingsError}
+      saveLabel={ui('Save default', '保存默认')}
+      hosts={hosts.map(host => ({ id: host.id, label: host.label }))}
+      hostId={settingsHost}
+      onHostChange={changeSettingsHost}
+      onChange={draft => {
+        settingsDirtyRef.current = settingsBaseline ? !sameCollaborationDraft(draft, settingsBaseline) : true;
+        setSettingsError(null);
+        setSettingsDraft(draft);
+      }}
+      onSave={saveSettings}
+      onCancel={closeSettings}
     /> : null}
   </View>;
 }

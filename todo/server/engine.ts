@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
-import { todoError, type TodoErrorCode, type TodoFailure } from '../shared/errors';
-import { canAccept, canCancel, canContinue, canEnqueue, canRetry, isExecution, recoverExecution, reducePermission, reduceTurn, type TurnKind } from '../shared/machine';
+import { taskCollaborationSchema, unavailableCatalog, type CollaborationCatalog, type CollaborationState, type TaskCollaboration } from '../shared/collaboration';
+import { explain, todoError, type TodoErrorCode, type TodoFailure } from '../shared/errors';
+import { canAccept, canCancel, canContinue, canEnqueue, canRetry, isExecution, recoverExecution, reduceCollaboration, reducePermission, reduceTurn, type CollaborationDecision, type CollaborationObservation, type TurnKind } from '../shared/machine';
 import { reviewBindingSchema, reviewsMatch, taskSchema, type ReviewBinding, type Task, type TaskDiff, type TaskOutcome } from '../shared/schema';
 import type { AgentInspection, AgentPort } from './agents';
+import type { CollaborationPort } from './collaboration';
 import type { GitPort } from './git';
 import type { TaskStore } from './store';
 
@@ -29,14 +31,23 @@ export interface CreateTaskInput {
   targetBranch: string;
   provider: string;
   modeId: string | null;
+  collaboration?: TaskCollaboration | null;
 }
 
 export interface TodoEngineOptions {
   store: TaskStore;
   git: GitPort;
   agents: AgentPort;
+  collaboration?: CollaborationPort;
   now?: () => number;
   newId?: () => string;
+}
+
+function requireCollaboration(value: TaskCollaboration | null | undefined): TaskCollaboration | null {
+  if (value == null) return null;
+  const parsed = taskCollaborationSchema.safeParse(value);
+  if (!parsed.success) throw todoError('collaboration-invalid', parsed.error.issues.map(issue => issue.message).join('; '));
+  return parsed.data;
 }
 
 function errorText(error: unknown): string {
@@ -59,6 +70,21 @@ export function followUpPrompt(original: string, followUp: string): string {
   ].join('\n');
 }
 
+function collaborationError(code: string | null): boolean {
+  return code === 'collaboration-unavailable'
+    || code === 'collaboration-blocked'
+    || code === 'collaboration-acceptance-pending'
+    || code === 'collaboration-rejected'
+    || code === 'collaboration-declined'
+    || code === 'collaboration-deferred';
+}
+
+function conversationOf(state: CollaborationState, task: Task) {
+  return state.conversations.find(entry => entry.id === task.collaborationConversationId)
+    ?? state.conversations.find(entry => task.operationId !== null && entry.requestId === task.operationId)
+    ?? null;
+}
+
 function mergeError(reason: string): TodoErrorCode {
   if (reason === 'conflict') return 'merge-conflict';
   if (reason === 'dirty') return 'merge-dirty';
@@ -78,6 +104,9 @@ export class TodoEngine {
   private readonly startedTurn = new Map<string, string | null>();
   private readonly permissions = new Map<string, Set<string>>();
   private readonly preparing = new Set<string>();
+  private readonly collaborationSyncs = new Map<string, Promise<void>>();
+  private readonly collaborationRecoveries = new Map<string, Promise<void>>();
+  private readonly collaborationPoll: ReturnType<typeof setInterval>;
   private readonly idleWaiters: Array<() => void> = [];
   private spanDepth = 0;
   private draining = false;
@@ -87,9 +116,12 @@ export class TodoEngine {
   constructor(private readonly options: TodoEngineOptions) {
     this.now = options.now ?? (() => Date.now());
     this.newId = options.newId ?? (() => randomUUID());
+    this.collaborationPoll = setInterval(() => this.watchCollaborations(), 2000);
+    this.collaborationPoll.unref();
   }
 
   list() {
+    this.watchCollaborations();
     return { tasks: this.options.store.list(), loadError: this.options.store.loadError, dataDir: this.options.store.dir };
   }
 
@@ -113,7 +145,9 @@ export class TodoEngine {
     const task = taskSchema.parse({
       id: this.newId(), title, prompt, pendingPrompt: null, repository,
       projectId: input.projectId, projectName: input.projectName, targetBranch: input.targetBranch,
-      provider: input.provider, modeId: input.modeId, status: 'draft', branch: null, worktree: null,
+      provider: input.provider, modeId: input.modeId, collaboration: requireCollaboration(input.collaboration),
+      collaborationConversationId: null, collaborationRunId: null, collaborationPhase: null, collaborationControl: null,
+      collaborationAcceptance: null, status: 'draft', branch: null, worktree: null,
       baseCommit: null, agentId: null, workspaceId: null, operationId: null, operationIds: [],
       review: null, lastOutcome: null, pendingMergeCommit: null, mergeCommit: null, mergeMethod: null,
       errorCode: null, errorDetail: null, createdAt: now, updatedAt: now,
@@ -150,7 +184,31 @@ export class TodoEngine {
     return this.options.store.get(id);
   }
 
+  async updateCollaboration(id: string, collaboration: TaskCollaboration | null): Promise<Task> {
+    if (this.disposed) throw todoError('store-invalid');
+    this.ensureWritable();
+    return this.lockTask(id, async () => {
+      const task = this.options.store.get(id);
+      if (task.status !== 'draft' || task.operationId) throw todoError('collaboration-rejected');
+      const next = requireCollaboration(collaboration);
+      const clearDeferred = task.errorCode === 'collaboration-deferred';
+      return this.write({
+        ...task,
+        collaboration: next,
+        errorCode: clearDeferred ? null : task.errorCode,
+        errorDetail: clearDeferred ? null : task.errorDetail,
+      });
+    });
+  }
+
+  async collaborationCatalog(): Promise<CollaborationCatalog> {
+    if (!this.options.collaboration) return unavailableCatalog(explain('collaboration-unavailable'));
+    return this.options.collaboration.catalog();
+  }
+
   async read(id: string): Promise<{ task: Task; diff: TaskDiff }> {
+    // Required: an in-flight board poll may have snapshotted the run before this read. Wait for it, then fetch again.
+    await this.syncCollaboration(id, { required: true }).catch(() => undefined);
     await this.reconcile(id).catch(() => undefined);
     const task = this.options.store.get(id);
     if (!task.worktree || !task.branch) return { task, diff: EMPTY_DIFF };
@@ -174,7 +232,10 @@ export class TodoEngine {
     await this.lockTask(id, async () => {
       const task = this.options.store.get(id);
       if (task.status === 'merging' || task.status === 'canceling' || !canCancel(task.status)) throw todoError('cancel-rejected');
-      if (!isExecution(task.status)) {
+      // A paused or blocked collaboration is not in the execution slot, but its host run can still
+      // have child sessions. Cancel those before the task is marked canceled.
+      const liveCollaboration = Boolean(task.collaboration && task.operationId && (task.collaborationConversationId || task.collaborationRunId));
+      if (!isExecution(task.status) && !liveCollaboration) {
         await this.write({ ...task, status: 'canceled', errorCode: null, errorDetail: null });
         return;
       }
@@ -191,30 +252,43 @@ export class TodoEngine {
   }
 
   async retry(id: string): Promise<Task> {
+    if (this.disposed) throw todoError('retry-rejected');
+    this.ensureWritable();
     await this.lockTask(id, async () => {
-      const task = this.options.store.get(id);
-      if (!canRetry(task.status)) throw todoError('retry-rejected');
-      await this.write({
-        ...task, status: 'queued', pendingPrompt: null, review: null, lastOutcome: null,
-        pendingMergeCommit: null, operationId: null, agentId: null, workspaceId: null,
-        errorCode: null, errorDetail: null,
-      });
+      const current = this.options.store.get(id);
+      if (!canRetry(current.status)) throw todoError('retry-rejected');
+      if (current.collaboration && current.collaborationRunId && current.collaborationControl === 'needs_attention') {
+        if (!this.options.collaboration) throw todoError('collaboration-unavailable');
+        // Keep this run, but let the repository queue reserve its execution slot before resuming it.
+        await this.write({ ...current, status: 'queued', review: null, lastOutcome: null, errorCode: null, errorDetail: null });
+        return;
+      }
+      if (current.collaboration) await this.releaseCollaboration(current);
+      const latest = this.options.store.get(id);
+      if (!canRetry(latest.status)) throw todoError('retry-rejected');
+      await this.write(this.requeue(latest, null));
     });
     this.tick();
     return this.options.store.get(id);
   }
 
   async continue(id: string, prompt: string): Promise<Task> {
+    if (this.disposed) throw todoError('continue-rejected');
+    this.ensureWritable();
     const pendingPrompt = prompt.trim();
     if (!pendingPrompt) throw todoError('empty-prompt');
+    const task = this.options.store.get(id);
+    if (!canContinue(task.status)) throw todoError('continue-rejected');
     await this.lockTask(id, async () => {
-      const task = this.options.store.get(id);
-      if (!canContinue(task.status)) throw todoError('continue-rejected');
-      await this.write({
-        ...task, status: 'queued', pendingPrompt, review: null, lastOutcome: null,
-        pendingMergeCommit: null, operationId: null, agentId: null, workspaceId: null,
-        errorCode: null, errorDetail: null,
-      });
+      const current = this.options.store.get(id);
+      if (!canContinue(current.status)) throw todoError('continue-rejected');
+      if (current.collaboration && followUpPrompt(current.prompt, pendingPrompt).length > 32_000) {
+        throw todoError('collaboration-invalid', '原任务和修改意见合计超过主机协作目标的 32000 字限制');
+      }
+      if (current.collaboration) await this.releaseCollaboration(current);
+      const latest = this.options.store.get(id);
+      if (!canContinue(latest.status)) throw todoError('continue-rejected');
+      await this.write(this.requeue(latest, pendingPrompt));
     });
     this.tick();
     return this.options.store.get(id);
@@ -224,6 +298,13 @@ export class TodoEngine {
   async accept(id: string, review: ReviewBinding): Promise<Task> {
     if (this.disposed) throw todoError('accept-rejected');
     const task = this.options.store.get(id);
+    if (task.collaboration) {
+      await this.syncCollaboration(id, { required: true });
+      const synced = this.options.store.get(id);
+      if (synced.collaborationAcceptance !== 'accepted') {
+        throw todoError(synced.status === 'canceled' ? 'collaboration-declined' : 'collaboration-acceptance-pending');
+      }
+    }
     const release = this.enter();
     if (!release) throw todoError('accept-rejected');
     try {
@@ -294,7 +375,7 @@ export class TodoEngine {
     if (this.disposed) return;
     this.startedTurn.set(event.agentId, event.turnId);
     const task = this.options.store.list().find(item => item.agentId === event.agentId);
-    if (!task) return;
+    if (!task || task.collaboration) return;
     if (task.status !== 'awaiting_review' && task.status !== 'merge_failed') return;
     await this.lockTask(task.id, async () => {
       const current = this.options.store.get(task.id);
@@ -332,7 +413,11 @@ export class TodoEngine {
   private async applyPermission(agentId: string): Promise<void> {
     const pending = (this.permissions.get(agentId)?.size ?? 0) > 0;
     const task = this.options.store.list().find(item => item.agentId === agentId);
-    if (!task) return;
+    // Collaboration permission comes from the host run, not one main-agent permission request.
+    if (!task || task.collaboration) {
+      if (!pending) this.permissions.delete(agentId);
+      return;
+    }
     await this.lockTask(task.id, async () => {
       const current = this.options.store.get(task.id);
       const next = reducePermission(current.status, pending);
@@ -352,6 +437,7 @@ export class TodoEngine {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    clearInterval(this.collaborationPoll);
     this.draining = true;
     for (const listener of [...this.listeners]) listener();
     this.listeners.clear();
@@ -370,9 +456,12 @@ export class TodoEngine {
     const displayed = reviewBindingSchema.parse(review);
     const task = this.options.store.get(id);
     if (!canAccept(task.status) || !task.review || !task.worktree || !task.branch) throw todoError('accept-rejected');
+    if (task.collaboration && task.collaborationAcceptance !== 'accepted') throw todoError('collaboration-acceptance-pending');
     if (!reviewsMatch(task.review, displayed)) throw todoError('stale-client-review');
-    const started = task.agentId ? this.startedTurn.get(task.agentId) : undefined;
-    if (started && started !== task.review.turnId) throw todoError('agent-busy');
+    if (!task.collaboration) {
+      const started = task.agentId ? this.startedTurn.get(task.agentId) : undefined;
+      if (started && started !== task.review.turnId) throw todoError('agent-busy');
+    }
     const binding = task.review;
     await this.write({ ...task, status: 'merging', pendingMergeCommit: null, errorCode: null, errorDetail: null });
     try {
@@ -459,6 +548,10 @@ export class TodoEngine {
       // Finish the cancel rather than re-deriving the status from the session: a live session must not turn back into running.
       if (!task.operationId) await this.write({ ...task, status: 'canceled', errorCode: 'turn-canceled', errorDetail: null });
       else await this.settleCancel(id, task.operationId, task.agentId);
+      return;
+    }
+    if (task.collaboration && isExecution(task.status)) {
+      await this.recoverCollaboration(id);
       return;
     }
     if (!isExecution(task.status)) return;
@@ -554,11 +647,17 @@ export class TodoEngine {
       if (this.disposed) return false;
       const task = this.options.store.tryGet(id);
       if (!task || task.status !== 'queued') return false;
+      if (task.collaboration && task.operationId && task.collaborationRunId && task.collaborationControl === 'needs_attention') {
+        await this.write({ ...task, status: 'preparing', errorCode: null, errorDetail: null });
+        return true;
+      }
       const operationId = this.newId();
       await this.write({
         ...task, status: 'preparing', operationId,
         operationIds: [...task.operationIds, operationId].slice(-100),
         agentId: null, workspaceId: null,
+        collaborationConversationId: null, collaborationRunId: null,
+        collaborationPhase: null, collaborationControl: null, collaborationAcceptance: null,
         review: null, lastOutcome: null, pendingMergeCommit: null, errorCode: null, errorDetail: null,
       });
       return true;
@@ -566,6 +665,7 @@ export class TodoEngine {
   }
 
   private async prepareAndSend(id: string): Promise<void> {
+    if (this.preparing.has(id)) return;
     this.preparing.add(id);
     const release = this.enter();
     let operationId: string | null = null;
@@ -574,6 +674,13 @@ export class TodoEngine {
       const initial = this.options.store.get(id);
       operationId = initial.operationId;
       if (initial.status !== 'preparing' || !operationId) return;
+      if (initial.collaboration && initial.collaborationRunId && initial.collaborationControl === 'needs_attention') {
+        const port = this.options.collaboration;
+        if (!port) throw todoError('collaboration-unavailable');
+        const state = await port.control({ id: initial.collaborationRunId, action: 'retry' });
+        await this.lockTask(id, () => this.applyCollaboration(id, state));
+        return;
+      }
       const branch = initial.branch ?? `paseo-todo/${initial.id}`;
       const prepared = await this.gitSerial(initial.repository, () => this.options.git.ensureWorktree({
         root: initial.repository, taskId: initial.id, branch, targetBranch: initial.targetBranch, existingPath: initial.worktree,
@@ -585,10 +692,16 @@ export class TodoEngine {
       });
       const fresh = this.options.store.get(id);
       if (fresh.operationId !== operationId || fresh.status !== 'preparing') return;
+      if (fresh.collaboration) {
+        await this.launchCollaboration(id, operationId);
+        const launched = this.options.store.tryGet(id);
+        if (launched?.agentId) await this.replay(launched.agentId);
+        return;
+      }
       const prompt = fresh.pendingPrompt ? followUpPrompt(fresh.prompt, fresh.pendingPrompt) : fresh.prompt;
       const created = await this.options.agents.create({
         operationId, taskId: initial.id, cwd: prepared.worktree, provider: initial.provider,
-        modeId: initial.modeId, title: initial.title, prompt,
+        modeId: initial.modeId, title: initial.title, prompt, collaboration: fresh.collaboration,
       });
       const after = this.options.store.get(id);
       if (after.operationId !== operationId) return;
@@ -623,6 +736,30 @@ export class TodoEngine {
       await this.lockTask(id, async () => {
         const task = this.options.store.tryGet(id);
         if (!task || !isExecution(task.status)) return;
+        if (task.collaboration && task.operationId && this.options.collaboration) {
+          // A timed-out open may already have created the host conversation. Collaboration agents
+          // do not carry the single-agent operation label, so look up the host's request binding.
+          let state: CollaborationState;
+          try { state = await this.options.collaboration.status(); }
+          catch {
+            await this.write({ ...task, errorCode: 'gateway-unavailable', errorDetail: errorText(error).slice(0, 4000) });
+            return;
+          }
+          const conversation = conversationOf(state, task);
+          if (conversation?.agentId) {
+            await this.write({
+              ...task, agentId: conversation.agentId, workspaceId: conversation.workspaceId,
+              collaborationConversationId: conversation.id, collaborationRunId: conversation.run?.id ?? null,
+              status: task.status === 'canceling' ? 'canceling' : 'running',
+            });
+            await this.applyCollaboration(id, state);
+            return;
+          }
+          if (state.error) {
+            await this.write({ ...task, errorCode: 'gateway-unavailable', errorDetail: state.error.slice(0, 4000) });
+            return;
+          }
+        }
         if (task.operationId) {
           let found: string | null;
           try {
@@ -650,6 +787,10 @@ export class TodoEngine {
     try {
       const task = this.options.store.tryGet(id);
       if (!task || task.status !== 'canceling' || task.operationId !== operationId) return;
+      if (task.collaboration) {
+        const stopped = await this.cancelCollaborationRun(task);
+        if (!stopped) return;
+      }
       let agentId = knownAgent ?? task.agentId;
       if (!agentId) {
         try {
@@ -671,8 +812,12 @@ export class TodoEngine {
       await this.lockTask(id, async () => {
         const current = this.options.store.get(id);
         if (current.status !== 'canceling' || current.operationId !== operationId) return;
+        const rejected = Boolean(current.collaboration && (current.collaborationAcceptance === 'pending' || current.collaborationPhase === 'awaiting_acceptance'));
         await this.write({
-          ...current, agentId: current.agentId ?? agentId, status: 'canceled', errorCode: 'turn-canceled', errorDetail: null,
+          ...current, agentId: current.agentId ?? agentId, status: 'canceled',
+          review: current.collaboration ? null : current.review,
+          collaborationAcceptance: current.collaboration ? null : current.collaborationAcceptance,
+          errorCode: rejected ? 'collaboration-declined' : 'turn-canceled', errorDetail: null,
         });
       });
       this.tick();
@@ -730,6 +875,13 @@ export class TodoEngine {
   }
 
   private async applyTurn(id: string, event: TurnEvent): Promise<boolean> {
+    const current = this.options.store.tryGet(id);
+    if (current?.collaboration && current.agentId === event.agentId) {
+      if (current.status === 'canceling') return true;
+      try { await this.syncCollaboration(id, { required: true }); }
+      catch { /* a missed poll leaves the run in progress; the next turn or read tries again */ }
+      return true;
+    }
     const release = this.enter();
     if (!release) return false;
     try {
@@ -851,6 +1003,419 @@ export class TodoEngine {
         await this.write({ ...latest, status: 'needs_check', review: null, errorCode: failureCode(error) ?? 'binding-stale', errorDetail: errorText(error).slice(0, 4000) });
       }
     });
+  }
+
+  /** A new round keeps the saved snapshot and drops the previous conversation association. */
+  private requeue(task: Task, pendingPrompt: string | null): Task {
+    return {
+      ...task, status: 'queued', pendingPrompt, review: null, lastOutcome: null, pendingMergeCommit: null,
+      operationId: null, agentId: null, workspaceId: null, collaborationConversationId: null, collaborationRunId: null,
+      collaborationPhase: null, collaborationControl: null, collaborationAcceptance: null, errorCode: null, errorDetail: null,
+    };
+  }
+
+  private async releaseCollaboration(task: Task): Promise<void> {
+    if (!task.collaboration) return;
+    if (!this.options.collaboration) throw todoError('collaboration-unavailable');
+    const stopped = await this.cancelCollaborationRun(task);
+    if (!stopped) throw todoError('gateway-unavailable', '协作还在运行，没有重新启动');
+    if (task.agentId) {
+      await this.options.agents.cancel(task.agentId).catch(() => undefined);
+      await this.assertAgentIdle(task.agentId);
+    }
+  }
+
+  /** Stops child sessions through the host run. Returns false when the run might still be executing. */
+  private async cancelCollaborationRun(task: Task): Promise<boolean> {
+    if (!task.collaboration) return true;
+    const port = this.options.collaboration;
+    if (!port) return false;
+    let runId = task.collaborationRunId;
+    let unlinkedAgentId: string | null = null;
+    if (!runId && (task.collaborationConversationId || task.operationId)) {
+      try {
+        const state = task.collaborationConversationId
+          ? await port.resync(task.collaborationConversationId)
+          : await port.status();
+        if (state.error) return false;
+        const conversation = conversationOf(state, task);
+        runId = conversation?.run?.id ?? null;
+        if (conversation?.agentId && !task.agentId) unlinkedAgentId = conversation.agentId;
+      } catch (error) {
+        return false;
+      }
+    }
+    try {
+      if (runId) {
+        let state: CollaborationState;
+        try { state = await port.control({ id: runId, action: 'cancel' }); }
+        catch {
+          // A host rejects cancellation of an already finished run. Read its actual state
+          // instead of treating an error containing the word "canceled" as proof.
+          state = task.collaborationConversationId ? await port.resync(task.collaborationConversationId) : await port.status();
+        }
+        if (state.error) return false;
+        const run = state.conversations.find(entry => entry.run?.id === runId)?.run;
+        if (!run || (run.control !== 'canceled' && run.phase !== 'completed')) return false;
+      }
+      if (unlinkedAgentId) {
+        await this.options.agents.cancel(unlinkedAgentId).catch(() => undefined);
+        await this.assertAgentIdle(unlinkedAgentId);
+      }
+      return true;
+    } catch { return false; }
+  }
+
+  private async recoverCollaboration(id: string): Promise<void> {
+    const task = this.options.store.tryGet(id);
+    if (!task?.collaboration || !isExecution(task.status)) return;
+    if (!task.operationId) {
+      await this.write({ ...task, status: 'needs_check', errorCode: 'needs-check-no-operation', errorDetail: null });
+      return;
+    }
+    if (task.collaborationConversationId && task.agentId && task.worktree) {
+      await this.syncCollaboration(id).catch(error => {
+        void this.rememberGateway(id, error);
+      });
+      return;
+    }
+    try {
+      if (!task.worktree || !task.branch) {
+        if (task.status !== 'preparing') {
+          await this.write({ ...task, status: 'needs_check', errorCode: 'prepare-failed', errorDetail: '任务工作树还没有准备好' });
+          return;
+        }
+        await this.prepareAndSend(id);
+        return;
+      }
+      await this.launchCollaboration(id, task.operationId);
+    } catch (error) {
+      const current = this.options.store.tryGet(id);
+      if (!current || !isExecution(current.status)) return;
+      const code = failureCode(error);
+      if (!code || code === 'gateway-unavailable') {
+        await this.rememberGateway(id, error);
+        return;
+      }
+      await this.write({
+        ...current, status: 'failed', errorCode: code, errorDetail: errorText(error).slice(0, 4000),
+      });
+    }
+  }
+
+  private async rememberGateway(id: string, error: unknown): Promise<void> {
+    const current = this.options.store.tryGet(id);
+    if (!current || !isExecution(current.status)) return;
+    await this.write({ ...current, errorCode: 'gateway-unavailable', errorDetail: errorText(error).slice(0, 4000) });
+  }
+
+  private watchCollaborations(): void {
+    if (this.disposed || this.closed || this.options.store.loadError) return;
+    for (const task of this.options.store.list()) {
+      if (!task.collaboration) continue;
+      if (task.status === 'canceling') {
+        if (!this.preparing.has(task.id)) this.watchCollaborationRecovery(task.id);
+        continue;
+      }
+      if (!task.collaborationConversationId) {
+        if (!isExecution(task.status) || !task.operationId || this.preparing.has(task.id) || this.collaborationRecoveries.has(task.id)) continue;
+        this.watchCollaborationRecovery(task.id);
+        continue;
+      }
+      const review = task.status === 'awaiting_review' || task.status === 'merge_failed';
+      const blocked = task.status === 'needs_check' && task.collaborationControl === 'needs_attention';
+      if (!isExecution(task.status) && !review && !blocked) continue;
+      void this.syncCollaboration(task.id).catch(() => undefined);
+    }
+  }
+
+  private watchCollaborationRecovery(id: string): void {
+    if (this.collaborationRecoveries.has(id)) return;
+    const release = this.enter();
+    if (!release) return;
+    const recovery = this.recoverOne(id).catch(() => undefined).finally(() => {
+      this.collaborationRecoveries.delete(id);
+      release();
+    });
+    this.collaborationRecoveries.set(id, recovery);
+  }
+
+  private syncCollaboration(id: string, options?: { required?: boolean }): Promise<void> {
+    if (this.disposed || this.closed) return Promise.resolve();
+    const previous = this.collaborationSyncs.get(id);
+    if (previous && !options?.required) return previous;
+    const release = this.enter();
+    if (!release) return Promise.resolve();
+    const run = (async () => {
+      if (previous) await previous.catch(() => undefined);
+      await this.syncCollaborationNow(id, options);
+    })().finally(() => {
+      if (this.collaborationSyncs.get(id) === run) this.collaborationSyncs.delete(id);
+      release();
+    });
+    this.collaborationSyncs.set(id, run);
+    return run;
+  }
+
+  private async syncCollaborationNow(id: string, options?: { required?: boolean }): Promise<void> {
+    const port = this.options.collaboration;
+    const task = this.options.store.tryGet(id);
+    if (!task?.collaboration) return;
+    if (!port || !task.collaborationConversationId) {
+      if (options?.required) throw todoError('collaboration-unavailable');
+      return;
+    }
+    if (task.status === 'canceling' || task.status === 'canceled' || task.status === 'merged' || task.status === 'merging' || task.status === 'draft' || task.status === 'queued') return;
+    const conversationId = task.collaborationConversationId;
+    let state: CollaborationState;
+    try {
+      state = await port.resync(conversationId);
+    } catch (error) {
+      if (options?.required) throw todoError('gateway-unavailable', errorText(error));
+      return;
+    }
+    // A retry or continue may have replaced this conversation while the resync was in flight.
+    await this.lockTask(id, () => {
+      const current = this.options.store.tryGet(id);
+      if (!current?.collaboration || current.collaborationConversationId !== conversationId) return;
+      return this.applyCollaboration(id, state);
+    });
+  }
+
+  /**
+   * Opens the saved snapshot on the task worktree before the host delivers the goal.
+   * `conversation.open` is idempotent on `operationId`: the host creates the session, enables
+   * collaboration, then delivers the goal, and a repeat open with the same id does not send it again.
+   */
+  private async launchCollaboration(id: string, operationId: string): Promise<void> {
+    const port = this.options.collaboration;
+    if (!port) throw todoError('collaboration-unavailable');
+    const task = this.options.store.get(id);
+    if (!task.collaboration || task.operationId !== operationId) return;
+    if (task.status !== 'preparing' && task.status !== 'running' && task.status !== 'needs_attention') return;
+    if (task.collaborationConversationId && task.agentId) {
+      await this.syncCollaboration(id);
+      return;
+    }
+    if (!task.worktree) throw todoError('prepare-failed', '任务工作树还没有准备好');
+    const workspaceId = task.workspaceId ?? await this.options.agents.openWorkspace(task.worktree);
+    const ready = await this.lockTask(id, async () => {
+      const located = this.options.store.get(id);
+      if (located.operationId !== operationId || (located.status !== 'preparing' && located.status !== 'running' && located.status !== 'needs_attention')) return false;
+      if (located.workspaceId !== workspaceId) await this.write({ ...located, workspaceId });
+      return true;
+    });
+    if (!ready) return;
+    const current = this.options.store.get(id);
+    if (current.operationId !== operationId || !current.collaboration || current.status === 'canceling' || current.status === 'canceled') return;
+    const opened = await port.open({
+      requestId: operationId,
+      workspaceId,
+      goal: current.pendingPrompt ? followUpPrompt(current.prompt, current.pendingPrompt) : current.prompt,
+      fresh: true,
+      collaboration: current.collaboration,
+    });
+    if (opened.isolation === 'worktree') {
+      const runId = opened.runId ?? opened.state.conversations.find(entry => entry.id === opened.conversationId)?.run?.id ?? null;
+      if (runId) await port.control({ id: runId, action: 'cancel' }).catch(() => undefined);
+      throw todoError('collaboration-unavailable', '协作开了第二份工作树，已取消');
+    }
+    await this.lockTask(id, async () => {
+      const after = this.options.store.get(id);
+      if (after.operationId !== operationId) return;
+      const linked = {
+        ...after,
+        agentId: opened.agentId,
+        workspaceId: opened.workspaceId || workspaceId,
+        collaborationConversationId: opened.conversationId,
+        collaborationRunId: opened.runId,
+        pendingPrompt: null,
+      };
+      if (after.status === 'canceling') {
+        await this.write(linked);
+        return;
+      }
+      if (after.status !== 'preparing' && after.status !== 'running' && after.status !== 'needs_attention') return;
+      await this.write({ ...linked, status: 'running', errorCode: null, errorDetail: null });
+      await this.applyCollaboration(id, opened.state);
+    });
+  }
+
+  private async applyCollaboration(id: string, state: CollaborationState): Promise<void> {
+    const task = this.options.store.tryGet(id);
+    if (!task?.collaboration) return;
+    if (task.status === 'canceling' || task.status === 'canceled' || task.status === 'merged' || task.status === 'merging' || task.status === 'draft' || task.status === 'queued') return;
+    const conversation = conversationOf(state, task);
+    if (!conversation) {
+      // Launch has not stored a conversation yet. An older resync must not fail that new operation.
+      if (task.collaborationConversationId && (isExecution(task.status) || task.status === 'awaiting_review' || task.status === 'merge_failed')) {
+        await this.write({
+          ...task, status: 'needs_check', errorCode: 'needs-check-missing-session', errorDetail: null,
+        });
+      }
+      return;
+    }
+    const view: CollaborationObservation = {
+      runId: conversation.run?.id ?? null,
+      phase: conversation.run?.phase ?? null,
+      control: conversation.run?.control ?? null,
+      confirmation: conversation.confirmation?.kind ?? null,
+      error: conversation.error ?? state.error,
+      message: conversation.run?.message ?? conversation.error ?? null,
+    };
+    const decision = reduceCollaboration(view);
+    await this.applyCollaborationDecision(id, decision);
+  }
+
+  private async applyCollaborationDecision(id: string, decision: CollaborationDecision): Promise<void> {
+    const task = this.options.store.get(id);
+    if (!task.collaboration || task.status === 'canceling' || task.status === 'canceled' || task.status === 'merged' || task.status === 'merging') return;
+    if (decision.kind === 'starting') {
+      if (task.status === 'awaiting_review' || task.status === 'merge_failed') {
+        await this.writeChanged(task, { status: 'needs_check', review: null, collaborationAcceptance: null, errorCode: 'needs-check-no-outcome', errorDetail: '协作会话还没有任务' });
+        return;
+      }
+      if (!isExecution(task.status)) return;
+      await this.writeChanged(task, {
+        status: 'running', collaborationPhase: null, collaborationControl: null, collaborationAcceptance: null,
+        errorCode: collaborationError(task.errorCode) ? null : task.errorCode,
+        errorDetail: collaborationError(task.errorCode) ? null : task.errorDetail,
+      });
+      return;
+    }
+    if (decision.kind === 'failed') {
+      if (!isExecution(task.status)) return;
+      await this.writeChanged(task, {
+        status: 'failed', errorCode: 'collaboration-unavailable', errorDetail: decision.message.slice(0, 4000) || null,
+        collaborationAcceptance: null,
+      });
+      return;
+    }
+    if (decision.kind === 'canceled') {
+      const rejected = task.collaborationAcceptance === 'pending' || task.collaborationPhase === 'awaiting_acceptance' || decision.phase === 'awaiting_acceptance';
+      await this.writeChanged(task, {
+        status: 'canceled', review: null, collaborationAcceptance: null,
+        collaborationPhase: decision.phase, collaborationControl: decision.control, collaborationRunId: decision.runId ?? task.collaborationRunId,
+        errorCode: rejected ? 'collaboration-declined' : 'turn-canceled',
+        errorDetail: decision.message.slice(0, 4000) || null,
+      });
+      return;
+    }
+    if (decision.kind === 'blocked') {
+      await this.writeChanged(task, {
+        status: 'needs_check', review: null, collaborationAcceptance: null,
+        collaborationPhase: decision.phase || null, collaborationControl: decision.control, collaborationRunId: decision.runId,
+        errorCode: 'collaboration-blocked', errorDetail: decision.message.slice(0, 4000) || null,
+      });
+      return;
+    }
+    if (decision.kind === 'permission') {
+      await this.writeChanged(task, {
+        status: 'needs_attention', review: null, lastOutcome: null,
+        collaborationPhase: decision.phase, collaborationControl: decision.control, collaborationRunId: decision.runId,
+        collaborationAcceptance: null,
+        errorCode: collaborationError(task.errorCode) ? null : task.errorCode,
+        errorDetail: collaborationError(task.errorCode) ? null : task.errorDetail,
+      });
+      return;
+    }
+    if (decision.kind === 'executing') {
+      await this.writeChanged(task, {
+        status: 'running',
+        review: null, lastOutcome: null,
+        collaborationPhase: decision.phase, collaborationControl: decision.control, collaborationRunId: decision.runId ?? task.collaborationRunId,
+        collaborationAcceptance: null,
+        errorCode: null, errorDetail: null,
+      });
+      return;
+    }
+    await this.solidifyCollaboration(id, decision);
+  }
+
+  private async solidifyCollaboration(id: string, decision: Extract<CollaborationDecision, { kind: 'solidify' }>): Promise<void> {
+    const task = this.options.store.get(id);
+    if (!task.operationId || !task.worktree || !task.branch) {
+      await this.writeChanged(task, { status: 'needs_check', errorCode: 'capture-failed', errorDetail: null, collaborationRunId: decision.runId, collaborationPhase: decision.phase, collaborationControl: decision.control, collaborationAcceptance: decision.acceptance });
+      return;
+    }
+    const turnId = `collaboration:${decision.runId}`;
+    const pendingDetail = decision.acceptance === 'pending' ? decision.message.slice(0, 4000) || null : null;
+    // A completed run cannot approve later local edits or a changed target. Only observed host rework
+    // clears lastOutcome and permits a new capture; a poll must not recreate an invalidated binding.
+    if (!task.review && task.lastOutcome?.turnId === turnId && task.lastOutcome.operationId === task.operationId) {
+      await this.writeChanged(task, {
+        collaborationPhase: decision.phase, collaborationControl: decision.control,
+        collaborationRunId: decision.runId, collaborationAcceptance: decision.acceptance,
+      });
+      return;
+    }
+    if (task.review && task.review.turnId === turnId && task.review.operationId === task.operationId) {
+      await this.writeChanged(task, {
+        status: task.status === 'merge_failed' ? 'merge_failed' : 'awaiting_review',
+        collaborationPhase: decision.phase, collaborationControl: decision.control, collaborationRunId: decision.runId,
+        collaborationAcceptance: decision.acceptance,
+        errorCode: decision.acceptance === 'pending' ? 'collaboration-acceptance-pending' : (task.errorCode === 'collaboration-acceptance-pending' ? null : task.errorCode),
+        errorDetail: decision.acceptance === 'pending' ? pendingDetail : (task.errorCode === 'collaboration-acceptance-pending' ? null : task.errorDetail),
+      });
+      return;
+    }
+    const outcome = this.outcome(task, { agentId: task.agentId ?? '', turnId, outcome: { kind: 'completed' } });
+    try {
+      const { worktree, branch } = task;
+      const { captured, snap } = await this.gitSerial(task.repository, async () => {
+        const captured = await this.options.git.capture({
+          root: task.repository, worktree, branch, message: `paseo-todo: capture ${task.id}`,
+        });
+        const snap = await this.options.git.snapshot({
+          root: task.repository, worktree, branch, targetBranch: task.targetBranch,
+        });
+        return { captured, snap };
+      });
+      const current = this.options.store.get(id);
+      if (current.operationId !== task.operationId || current.status === 'canceling' || current.status === 'merged' || current.status === 'merging') return;
+      if (!snap.clean || snap.head !== captured.commit || snap.tree !== captured.tree) {
+        await this.write({ ...current, status: 'needs_check', lastOutcome: outcome, errorCode: 'capture-failed', errorDetail: '成果提交未能固定', collaborationRunId: decision.runId, collaborationPhase: decision.phase, collaborationControl: decision.control });
+        this.tick();
+        return;
+      }
+      await this.write({
+        ...current, status: 'awaiting_review', lastOutcome: outcome, collaborationRunId: decision.runId,
+        collaborationPhase: decision.phase, collaborationControl: decision.control, collaborationAcceptance: decision.acceptance,
+        errorCode: decision.acceptance === 'pending' ? 'collaboration-acceptance-pending' : null,
+        errorDetail: pendingDetail,
+        review: {
+          resultCommit: captured.commit, resultTree: captured.tree, targetBranch: task.targetBranch,
+          targetHead: snap.targetHead, turnId, operationId: task.operationId,
+        },
+      });
+      this.tick();
+    } catch (error) {
+      const current = this.options.store.get(id);
+      if (current.operationId !== task.operationId || current.status === 'canceling') return;
+      await this.write({
+        ...current, status: 'needs_check', errorCode: failureCode(error) ?? 'capture-failed', errorDetail: errorText(error).slice(0, 4000),
+        collaborationRunId: decision.runId, collaborationPhase: decision.phase, collaborationControl: decision.control,
+      });
+      this.tick();
+    }
+  }
+
+  private async writeChanged(task: Task, patch: Partial<Task>): Promise<void> {
+    const next = { ...task, ...patch };
+    if (
+      next.status === task.status
+      && next.collaborationPhase === task.collaborationPhase
+      && next.collaborationControl === task.collaborationControl
+      && next.collaborationAcceptance === task.collaborationAcceptance
+      && next.collaborationRunId === task.collaborationRunId
+      && next.errorCode === task.errorCode
+      && next.errorDetail === task.errorDetail
+      && next.review === task.review
+      && next.lastOutcome === task.lastOutcome
+      && next.agentId === task.agentId
+    ) return;
+    await this.write(next);
+    if (isExecution(task.status) && !isExecution(next.status)) this.tick();
   }
 
   private outcome(task: Task, event: TurnEvent): TaskOutcome {

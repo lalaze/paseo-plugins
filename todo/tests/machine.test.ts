@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { recoverExecution, reducePermission, reduceTurn, type TurnKind } from '../shared/machine';
+import { recoverExecution, reduceCollaboration, reducePermission, reduceTurn, type TurnKind } from '../shared/machine';
 import { reviewsMatch, type ReviewBinding } from '../shared/schema';
 
 const review: ReviewBinding = {
@@ -38,6 +38,21 @@ describe('task machine', () => {
       if (input.gatewayFailed) assert.equal(decision.status, 'unchanged');
     }
     assert.equal(recoverExecution(inputs[2]).status, 'needs_check');
+    assert.equal(reduceCollaboration({ runId: null, phase: null, control: null, confirmation: null, error: null, message: null }).kind, 'starting');
+    assert.equal(reduceCollaboration({ runId: 'run', phase: 'executing', control: 'running', confirmation: null, error: null, message: '' }).kind, 'executing');
+    assert.equal(reduceCollaboration({ runId: 'run', phase: 'planning', control: 'paused', confirmation: 'plan', error: null, message: '等待批准' }).kind, 'executing');
+    assert.equal(reduceCollaboration({ runId: 'run', phase: 'reviewing', control: 'running', confirmation: null, error: null, message: '' }).kind, 'executing');
+    assert.equal(reduceCollaboration({ runId: 'run', phase: 'final_review', control: 'running', confirmation: null, error: null, message: '' }).kind, 'executing');
+    const pending = reduceCollaboration({ runId: 'run', phase: 'awaiting_acceptance', control: 'paused', confirmation: 'final', error: null, message: '等待验收' });
+    assert.equal(pending.kind, 'solidify');
+    if (pending.kind === 'solidify') assert.equal(pending.acceptance, 'pending');
+    const accepted = reduceCollaboration({ runId: 'run', phase: 'completed', control: 'running', confirmation: null, error: null, message: '已验收' });
+    assert.equal(accepted.kind, 'solidify');
+    if (accepted.kind === 'solidify') assert.equal(accepted.acceptance, 'accepted');
+    assert.equal(reduceCollaboration({ runId: 'run', phase: 'executing', control: 'needs_attention', confirmation: null, error: null, message: '执行受阻' }).kind, 'blocked');
+    assert.equal(reduceCollaboration({ runId: 'run', phase: 'awaiting_acceptance', control: 'canceled', confirmation: null, error: null, message: '不采纳' }).kind, 'canceled');
+    assert.equal(reduceCollaboration({ runId: 'run', phase: 'executing', control: 'waiting_permission', confirmation: null, error: null, message: '' }).kind, 'permission');
+    assert.equal(reduceCollaboration({ runId: null, phase: null, control: null, confirmation: null, error: '会话失败', message: null }).kind, 'failed');
     assert.equal(reviewsMatch(review, { ...review }), true);
     assert.equal(reviewsMatch(review, { ...review, resultTree: 'd'.repeat(40) }), false);
     assert.equal(reviewsMatch(null, review), false);
