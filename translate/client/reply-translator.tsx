@@ -20,7 +20,7 @@ export function ReplyTranslator({ theme, item, openSettings }: ReplyTranslationP
     ? expanded ? ui('Hide translation', '收起译文') : ui('Show translation', '展开译文')
     : error ? progress?.completed ? ui('Continue translation', '继续翻译') : ui('Retry translation', '重试翻译') : ui('Translate', '翻译');
 
-  return <View style={{ gap: 8, marginTop: -36 }}>
+  return <View style={{ gap: 8 }}>
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
