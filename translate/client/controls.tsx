@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Pressable, Text, View, type ViewStyle } from 'react-native';
 import type { PluginHostProps } from '@getpaseo/plugin/client';
 import type { TargetLanguage } from '../shared/rpc';
@@ -31,10 +32,12 @@ export function ActionButton({ theme, label, onPress, primary = false, disabled 
   </Pressable>;
 }
 
-export function TargetPicker({ theme, value, onChange, disabled = false }: { theme: Theme; value: TargetLanguage; onChange(value: TargetLanguage): void; disabled?: boolean }) {
+export function TargetPicker({ theme, value, onChange, disabled = false, compact = false }: { theme: Theme; value: TargetLanguage; onChange(value: TargetLanguage): void; disabled?: boolean; compact?: boolean }) {
   const colors = theme.colors;
+  const [expanded, setExpanded] = useState(false);
+  const options = compact && !expanded ? targets.filter(option => ['auto', 'zh-CN', 'en', value].includes(option.value)) : targets;
   return <View accessibilityRole="radiogroup" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
-    {targets.map(option => {
+    {options.map(option => {
       const selected = value === option.value;
       return <Pressable
         key={option.value}
@@ -42,10 +45,29 @@ export function TargetPicker({ theme, value, onChange, disabled = false }: { the
         accessibilityState={{ checked: selected, disabled }}
         disabled={disabled}
         onPress={() => onChange(option.value)}
-        style={({ pressed }) => ({ minHeight: 42, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: selected ? colors.accent : colors.border, borderRadius: 20, backgroundColor: selected ? colors.surface2 : colors.surface1, opacity: disabled ? 0.6 : pressed ? 0.7 : 1 })}
+        style={({ pressed }) => ({ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: selected ? colors.accent : colors.border, borderRadius: 20, backgroundColor: selected ? colors.surface2 : colors.surface1, opacity: disabled ? 0.6 : pressed ? 0.7 : 1 })}
       >
         <Text style={{ color: selected ? colors.accent : colors.foreground, fontWeight: selected ? '700' : '500' }}>{ui(option.en, option.zh)}</Text>
       </Pressable>;
     })}
+    {compact ? <Pressable accessibilityRole="button" accessibilityState={{ expanded, disabled }} disabled={disabled} onPress={() => setExpanded(value => !value)}
+      style={({ pressed }) => ({ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, opacity: disabled ? 0.6 : pressed ? 0.7 : 1 })}>
+      <Text style={{ color: colors.foregroundMuted }}>{expanded ? ui('Fewer', '收起') : ui('More', '更多')}</Text>
+    </Pressable> : null}
+  </View>;
+}
+
+export function TranslationProgress({ theme, progress, busy }: { theme: Theme; progress: { completed: number; total: number } | null; busy: boolean }) {
+  if (!progress || progress.total <= 1) return null;
+  const label = busy
+    ? ui(`Translating · ${progress.completed}/${progress.total} parts`, `翻译中 · ${progress.completed}/${progress.total} 段`)
+    : progress.completed < progress.total
+      ? ui(`Translated ${progress.completed}/${progress.total} parts. Retry to continue.`, `已翻译 ${progress.completed}/${progress.total} 段，重试可继续。`)
+      : ui(`All ${progress.total} parts translated`, `${progress.total} 段已全部翻译`);
+  return <View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: progress.total, now: progress.completed, text: label }} style={{ gap: 6 }}>
+    <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{label}</Text>
+    <View style={{ height: 3, borderRadius: 2, backgroundColor: theme.colors.surface2, overflow: 'hidden' }}>
+      <View style={{ height: 3, width: `${progress.completed / progress.total * 100}%`, backgroundColor: theme.colors.accent }} />
+    </View>
   </View>;
 }

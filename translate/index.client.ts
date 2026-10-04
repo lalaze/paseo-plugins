@@ -18,7 +18,7 @@ export default function contribute(client: PluginClientContext) {
     // iOS/Android: inline reply controls require the companion app capability.
     const Reply = (props: ReplyTranslationProps) => createElement(ReplyTranslator, { ...props, key: props.item.data.text, openSettings: () => client.openSettings('translate-settings') });
     cleanups.push(installReplyTranslations(client, Reply));
-    const Composer = (props: PluginButtonContentProps) => createElement(ComposerTranslator, { ...props, paseo: client.paseo, openSettings: () => { props.close(); client.openSettings('translate-settings'); } });
+    const Composer = (props: PluginButtonContentProps) => createElement(ComposerTranslator, { ...props, key: props.context === 'agent' ? props.agentId : props.workspaceId, paseo: client.paseo, openSettings: () => { props.close(); client.openSettings('translate-settings'); } });
     cleanups.push(installComposerPills(client, Composer));
   } else {
     // Desktop and Web: the DOM launcher beside the composer, plus the standalone page from the command center.

@@ -74,7 +74,9 @@ test('the handler appends monthly JSONL files and survives an unwritable ledger'
       const handler = createTranslationHandler(ledger);
       await handler({ text: 'hello', target: 'zh-CN', settings });
       await ledger.record({ at: '2026-09-21T00:00:00.000Z', model: 'x', endpoint: 'primary', usage: null });
-      assert.equal((await readFile(join(root, 'nested', 'usage', '2026-09.jsonl'), 'utf8')).trim().split('\n').length, 3);
+      const files = await readdir(join(root, 'nested', 'usage'));
+      const records = await Promise.all(files.map(async file => (await readFile(join(root, 'nested', 'usage', file), 'utf8')).trim().split('\n')));
+      assert.equal(records.flat().length, 4);
       // A ledger rooted at a regular file cannot be created; translations still succeed.
       const broken = createTranslationHandler(createUsageLedger(join(root, 'nested', 'usage', '2026-09.jsonl', 'child')));
       assert.equal((await broken({ text: 'hello', target: 'zh-CN', settings })).translation, '你好');

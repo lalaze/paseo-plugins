@@ -16,6 +16,8 @@ test('picks the newest non-empty assistant message and skips other items', () =>
   assert.deepEqual(latestAssistantText(items), { text: 'second', truncated: false });
   assert.equal(latestAssistantText([{ type: 'user_message', text: 'hi' }]), null);
   assert.equal(latestAssistantText([]), null);
+  const longReply = 'long reply '.repeat(1000);
+  assert.deepEqual(latestAssistantText([{ type: 'assistant_message', text: longReply }]), { text: longReply.trim(), truncated: false });
 });
 
 test('long reply chunks preserve all text, paragraph boundaries and emoji', () => {

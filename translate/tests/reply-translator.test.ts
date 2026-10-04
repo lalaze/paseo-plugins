@@ -22,11 +22,13 @@ test('reply button translates only on demand, folds without another request, cop
         import { createElement } from 'react';
         export const View = ({ children }) => createElement('div', {}, children);
         export const Text = ({ children }) => createElement('span', {}, children);
-        export const Pressable = ({ children, disabled, onPress }) => createElement('button', { disabled, onClick: onPress }, children);
+        export const Pressable = ({ children, disabled, onPress, accessibilityLabel }) => createElement('button', { disabled, onClick: onPress, 'aria-label': accessibilityLabel }, typeof children === 'function' ? children({ pressed: false }) : children);
+        export const ActivityIndicator = () => null;
       ` : path === 'test-runtime' ? `
         export const harness = { translate: null, copied: '' };
       ` : path.endsWith('/react-native') ? `
         import { harness } from 'test-runtime';
+        export const Icon = () => null;
         export async function copyText(value) { harness.copied = value; }
       ` : `
         import { harness } from 'test-runtime';

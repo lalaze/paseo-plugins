@@ -35,37 +35,63 @@ export function useTranslation() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
   const request = useRef(0);
+  const active = useRef(false);
+  const copiedReset = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const attempt = useRef<{
+    text: string; target: TargetLanguage; revision: string; chunks: string[]; results: TranslationResult[];
+  } | null>(null);
+  const clearCopiedReset = () => {
+    if (copiedReset.current) clearTimeout(copiedReset.current);
+    copiedReset.current = undefined;
+  };
 
-  useEffect(() => () => { request.current++; }, []);
+  useEffect(() => () => { request.current++; active.current = false; clearCopiedReset(); }, []);
 
-  const clear = () => { setResult(null); setError(null); setCopied(false); };
+  const clear = () => {
+    request.current++;
+    active.current = false;
+    attempt.current = null;
+    clearCopiedReset();
+    setBusy(false); setProgress(null); setResult(null); setError(null); setCopied(false);
+  };
   const setSource = (value: string) => { setSourceValue(value); clear(); };
   const setTarget = (value: TargetLanguage) => { setTargetValue(value); clear(); };
 
   /** Translates `text` (the current source by default) into the current target. */
   const run = async (text = source, wholeReply = false) => {
     const trimmed = text.trim();
-    if (!trimmed || settings.status !== 'ready' || busy) return;
+    if (!trimmed || settings.status !== 'ready' || active.current) return;
     const sequence = ++request.current;
+    active.current = true;
     setBusy(true);
     setError(null);
+    clearCopiedReset();
     setCopied(false);
     try {
       const configured = validateTranslationSettings(settings.values);
-      const chunks = wholeReply ? splitReply(trimmed) : [trimmed];
-      const translations: TranslationResult[] = [];
-      for (const chunk of chunks) {
-        if (sequence !== request.current) return;
-        if (!chunk.trim()) continue;
-        translations.push(await translate({ text: chunk, target: wholeReply ? 'zh-CN' : target, settings: configured }));
+      const requestedTarget = wholeReply ? 'zh-CN' : target;
+      const revision = String(settings.revision);
+      let pending = attempt.current;
+      if (!pending || pending.text !== trimmed || pending.target !== requestedTarget || pending.revision !== revision) {
+        pending = { text: trimmed, target: requestedTarget, revision, chunks: wholeReply ? splitReply(trimmed).filter(chunk => chunk.trim()) : [trimmed], results: [] };
+        attempt.current = pending;
+        setResult(null);
       }
-      const translated = { ...translations[0], translation: translations.map(part => part.translation).join('\n\n') };
-      if (sequence === request.current) setResult(translated);
+      setProgress({ completed: pending.results.length, total: pending.chunks.length });
+      for (let index = pending.results.length; index < pending.chunks.length; index++) {
+        if (sequence !== request.current) return;
+        const translated = await translate({ text: pending.chunks[index], target: requestedTarget, settings: configured });
+        if (sequence !== request.current) return;
+        pending.results.push(translated);
+        setResult({ ...pending.results[0], translation: pending.results.map(part => part.translation).join('\n\n') });
+        setProgress({ completed: pending.results.length, total: pending.chunks.length });
+      }
     } catch (reason) {
       if (sequence === request.current) setError(localizeTranslationError(reason));
     } finally {
-      if (sequence === request.current) setBusy(false);
+      if (sequence === request.current) { active.current = false; setBusy(false); }
     }
   };
 
@@ -73,14 +99,18 @@ export function useTranslation() {
     if (!result) return;
     try {
       await copyText(result.translation);
+      clearCopiedReset();
       setCopied(true);
       setError(null);
+      copiedReset.current = setTimeout(() => { copiedReset.current = undefined; setCopied(false); }, 1600);
     } catch (reason) {
+      clearCopiedReset();
       setCopied(false);
       setError(localizeTranslationError(reason));
     }
   };
 
   const configured = settings.status === 'ready';
-  return { settings, configured, source, setSource, target, setTarget, result, error, setError, busy, copied, run, runReply: (text: string) => run(text, true), copy, canTranslate: configured && source.trim().length > 0 && !busy };
+  const complete = !!result && !!progress && progress.completed === progress.total && !busy;
+  return { settings, configured, source, setSource, target, setTarget, result, error, setError, busy, copied, progress, complete, run, runReply: (text: string) => run(text, true), copy, canTranslate: configured && source.trim().length > 0 && !busy };
 }

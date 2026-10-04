@@ -1,10 +1,8 @@
-import { MAX_SOURCE_LENGTH } from '../shared/rpc';
-
 type TimelineItem = { type: string; text?: unknown };
 export type LatestReply = { text: string; truncated: boolean };
 
-/** Picks the newest non-empty assistant message and keeps it within the RPC limit, cutting at a line break when one is near. */
-export function latestAssistantText(items: readonly TimelineItem[], limit = MAX_SOURCE_LENGTH): LatestReply | null {
+/** Returns the full newest reply; callers can explicitly request a clipped preview. */
+export function latestAssistantText(items: readonly TimelineItem[], limit = Infinity): LatestReply | null {
   for (let index = items.length - 1; index >= 0; index--) {
     const item = items[index];
     if (item.type !== 'assistant_message' || typeof item.text !== 'string') continue;

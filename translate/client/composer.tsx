@@ -1,120 +1,145 @@
-import { useState } from 'react';
-import { Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Pressable, Text, View } from 'react-native';
 import { useAgent, type PluginButtonContentProps, type PluginClientContext } from '@getpaseo/plugin/client';
 import { ScrollView, TextInput, useToast } from '@getpaseo/plugin/client/react-native';
-import { ActionButton, TargetPicker } from './controls';
+import { ActionButton, TargetPicker, TranslationProgress } from './controls';
 import { localizeTranslationError, ui } from './i18n';
 import { latestAssistantText } from './reply';
 import { MAX_SOURCE_LENGTH, targetLabel, useTranslation } from './use-translation';
 
 type Props = PluginButtonContentProps & { paseo: Pick<PluginClientContext['paseo'], 'agents'>; openSettings(): void };
 
-/** Popover behind the composer pill: translate a draft and send it, or translate the latest AI reply. */
-export function ComposerTranslator(props: Props) {
-  const { theme, close, paseo, openSettings } = props;
+/** Keeps draft translation separate from reading an AI reply in the native sheet. */
+export function ComposerTranslator({ theme, close, paseo, openSettings, ...props }: Props) {
   const agentId = props.context === 'agent' ? props.agentId : '';
-  const { settings, configured, source, setSource, target, setTarget, result, error, setError, busy: translating, copied, run, copy, canTranslate } = useTranslation();
-  const toast = useToast();
+  const draft = useTranslation();
+  const reply = useTranslation();
+  const [mode, setMode] = useState<'draft' | 'reply'>('draft');
   const [fetching, setFetching] = useState(false);
   const [sending, setSending] = useState(false);
-  const [reply, setReply] = useState<{ truncated: boolean } | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [incompleteReply, setIncompleteReply] = useState(false);
+  const mounted = useRef(true);
+  const sendingRef = useRef(false);
+  const fetchingRef = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const toast = useToast();
   const running = useAgent(agentId, agent => agent.status === 'running' || agent.status === 'initializing') ?? false;
-  const busy = translating || fetching || sending;
+  const current = mode === 'draft' ? draft : reply;
+  const { settings, configured, result, error, busy: translating, copied, progress, complete } = current;
+  const busy = draft.busy || reply.busy || fetching || sending;
   const colors = theme.colors;
 
-  const changeSource = (value: string) => { setSource(value); setReply(null); };
-
   const loadLatestReply = async () => {
-    if (!agentId || busy || !configured) return;
+    if (!agentId || busy || fetchingRef.current || !configured) return;
+    fetchingRef.current = true;
     setFetching(true);
-    setError(null);
+    reply.setError(null);
     try {
       const page = await paseo.agents.ref(agentId).timeline.refetch({ direction: 'tail', limit: 80 });
+      if (!mounted.current) return;
       const latest = latestAssistantText(page.entries.map(entry => entry.item));
-      if (!latest) { setError(ui('This conversation has no AI reply to translate yet', '当前对话还没有可翻译的 AI 回复')); return; }
-      setSource(latest.text);
-      setReply({ truncated: latest.truncated });
-      await run(latest.text);
+      if (!latest) { reply.setError(ui('This conversation has no AI reply to translate yet', '当前对话还没有可翻译的 AI 回复')); return; }
+      if (latest.text !== replyText) {
+        reply.setSource(latest.text);
+        setReplyText(latest.text);
+        setShowOriginal(false);
+      }
+      setIncompleteReply(running);
+      await reply.runReply(latest.text);
     } catch (reason) {
-      setError(localizeTranslationError(reason));
+      if (mounted.current) reply.setError(localizeTranslationError(reason));
     } finally {
-      setFetching(false);
+      fetchingRef.current = false;
+      if (mounted.current) setFetching(false);
     }
   };
 
   const send = async () => {
-    if (!result || !agentId || busy) return;
+    if (mode !== 'draft' || !draft.result || !draft.complete || !agentId || busy || sendingRef.current) return;
+    sendingRef.current = true;
     setSending(true);
-    setError(null);
+    draft.setError(null);
     try {
-      await paseo.agents.ref(agentId).send(result.translation);
+      await paseo.agents.ref(agentId).send(draft.result.translation);
       toast.show(ui('Translation sent to this conversation', '译文已发送到当前对话'), { variant: 'success' });
-      close();
+      if (mounted.current) close();
     } catch (reason) {
-      setError(localizeTranslationError(reason));
-      setSending(false);
+      if (mounted.current) draft.setError(localizeTranslationError(reason));
+    } finally {
+      sendingRef.current = false;
+      if (mounted.current) setSending(false);
     }
   };
 
-  return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 16, gap: 14 }}>
-    <View style={{ gap: 4 }}>
+  return <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={{ padding: 16, gap: 14 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
       <Text accessibilityRole="header" style={{ color: colors.foreground, fontSize: 17, fontWeight: '700' }}>{ui('Translate', '翻译')}</Text>
-      <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 17 }}>
-        {ui('Translate a draft and send it, or translate the latest AI reply. Nothing is sent until you tap Send.', '翻译草稿后发送，或翻译最新的 AI 回复；点击「发送」之前不会发出任何消息。')}
-      </Text>
+      <ActionButton theme={theme} label={ui('API Settings', 'API 设置')} onPress={openSettings} style={{ paddingHorizontal: 12 }} />
+    </View>
+
+    <View accessibilityRole="tablist" style={{ flexDirection: 'row', padding: 4, gap: 4, borderRadius: 12, backgroundColor: colors.surface1 }}>
+      {(['draft', 'reply'] as const).map(value => <Pressable key={value} accessibilityRole="tab" accessibilityState={{ selected: mode === value, disabled: busy }} disabled={busy} onPress={() => setMode(value)}
+        style={({ pressed }) => ({ flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 9, backgroundColor: mode === value ? colors.surface2 : 'transparent', opacity: pressed ? 0.7 : 1 })}>
+        <Text style={{ color: mode === value ? colors.accent : colors.foregroundMuted, fontWeight: '600' }}>{value === 'draft' ? ui('Write a message', '写消息') : ui('Read a reply', '读回复')}</Text>
+      </Pressable>)}
     </View>
 
     {settings.status === 'loading' ? <Text style={{ color: colors.foregroundMuted }}>{ui('Loading Translation API settings…', '正在读取翻译 API 设置…')}</Text> : null}
-    {settings.status === 'error' || settings.status === 'invalid' ? <View style={{ gap: 10, padding: 12, borderRadius: 10, backgroundColor: colors.surface1 }}>
-      <Text style={{ color: colors.statusDanger }}>{localizeTranslationError(settings.error)}</Text>
-      <ActionButton theme={theme} label={ui('Open API Settings', '打开 API 设置')} onPress={openSettings} style={{ alignSelf: 'flex-start' }} />
-    </View> : null}
+    {settings.status === 'error' || settings.status === 'invalid' ? <Text accessibilityRole="alert" style={{ color: colors.statusDanger }}>{localizeTranslationError(settings.error)}</Text> : null}
 
-    <View style={{ gap: 8 }}>
+    {mode === 'draft' ? <View style={{ gap: 10 }}>
+      <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{ui('Write or paste your message here. Review the translation before sending.', '在这里写下或粘贴消息，翻译后查看译文，再发送。')}</Text>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
-        <Text style={{ color: colors.foreground, fontWeight: '600' }}>{ui('Source text', '原文')}</Text>
-        <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{source.length}/{MAX_SOURCE_LENGTH}</Text>
+        <Text style={{ color: colors.foreground, fontWeight: '600' }}>{ui('Your message', '想发送的消息')}</Text>
+        <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{draft.source.length}/{MAX_SOURCE_LENGTH}</Text>
       </View>
       <TextInput
         accessibilityLabel={ui('Text to translate', '需要翻译的文字')}
         editable={!busy}
-        value={source}
-        onChangeText={changeSource}
+        value={draft.source}
+        onChangeText={draft.setSource}
         multiline
         maxLength={MAX_SOURCE_LENGTH}
         autoCapitalize="sentences"
         autoCorrect
-        placeholder={ui('Enter or paste text…', '输入或粘贴文字…')}
+        placeholder={ui('Enter or paste a message…', '输入或粘贴要发送的消息…')}
         placeholderTextColor={colors.foregroundMuted}
         textAlignVertical="top"
-        style={{ minHeight: 110, maxHeight: 220, padding: 12, color: colors.foreground, backgroundColor: colors.surface1, borderWidth: 1, borderColor: colors.border, borderRadius: 12, fontSize: 16, lineHeight: 23, opacity: busy ? 0.7 : 1 }}
+        style={{ minHeight: 110, maxHeight: 200, padding: 12, color: colors.foreground, backgroundColor: colors.surface1, borderWidth: 1, borderColor: colors.border, borderRadius: 12, fontSize: 16, lineHeight: 23, opacity: busy ? 0.7 : 1 }}
       />
-      {reply?.truncated ? <Text style={{ color: colors.statusWarning, fontSize: 12 }}>{ui(`The reply was longer than ${MAX_SOURCE_LENGTH} characters; only the beginning is translated.`, `回复超过 ${MAX_SOURCE_LENGTH} 个字符，仅翻译开头部分。`)}</Text> : null}
+      <TargetPicker compact theme={theme} value={draft.target} onChange={draft.setTarget} disabled={busy} />
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-        <ActionButton theme={theme} primary disabled={!canTranslate || busy} label={translating && !fetching ? ui('Translating…', '翻译中…') : ui('Translate', '翻译')} onPress={() => { void run(); }} style={{ minWidth: 100 }} />
-        <ActionButton theme={theme} disabled={!agentId || !configured || busy} label={fetching ? ui('Loading reply…', '读取回复中…') : ui('Latest reply', '最新回复')} onPress={() => { void loadLatestReply(); }} />
-        <ActionButton theme={theme} disabled={busy || !source} label={ui('Clear', '清空')} onPress={() => changeSource('')} />
+        <ActionButton theme={theme} primary disabled={!draft.canTranslate || busy} label={translating ? ui('Translating…', '翻译中…') : ui('Translate message', '翻译消息')} onPress={() => { void draft.run(); }} style={{ flexGrow: 1 }} />
+        <ActionButton theme={theme} disabled={busy || !draft.source} label={ui('Clear', '清空')} onPress={() => draft.setSource('')} />
       </View>
-    </View>
+    </View> : <View style={{ gap: 10 }}>
+      <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{ui('Translate the latest AI reply into Chinese. Long replies are translated in full.', '将最新的 AI 回复译成中文，长回复也会翻译全文。')}</Text>
+      <ActionButton theme={theme} primary disabled={!agentId || !configured || busy} label={fetching && !translating ? ui('Loading reply…', '读取回复中…') : translating ? ui('Translating…', '翻译中…') : ui('Translate latest reply', '翻译最新回复')} onPress={() => { void loadLatestReply(); }} />
+      {replyText ? <View style={{ gap: 8 }}>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui(`Original · ${replyText.length} characters`, `原文 · ${replyText.length} 字`)}</Text>
+          <ActionButton theme={theme} label={showOriginal ? ui('Hide original', '收起原文') : ui('Show original', '查看原文')} onPress={() => setShowOriginal(value => !value)} style={{ paddingHorizontal: 12 }} />
+        </View>
+        {showOriginal ? <Text selectable style={{ color: colors.foregroundMuted, fontSize: 14, lineHeight: 22 }}>{replyText}</Text> : null}
+        {incompleteReply ? <Text style={{ color: colors.statusWarning, fontSize: 12 }}>{ui('The AI was still replying when this text was loaded. Refresh after it finishes for the full reply.', '读取时 AI 仍在回复，完成后可再次点击翻译最新回复。')}</Text> : null}
+      </View> : null}
+    </View>}
 
-    <View style={{ gap: 8 }}>
-      <Text style={{ color: colors.foreground, fontWeight: '600' }}>{ui('Target language', '目标语言')}</Text>
-      <TargetPicker theme={theme} value={target} onChange={setTarget} disabled={busy} />
-    </View>
-
-    {error ? <Text accessibilityRole="alert" style={{ color: colors.statusDanger, lineHeight: 20 }}>{error}</Text> : null}
+    <TranslationProgress theme={theme} progress={progress} busy={translating} />
+    {error ? <View style={{ gap: 8 }}>
+      <Text accessibilityRole="alert" style={{ color: colors.statusDanger, lineHeight: 20 }}>{error}</Text>
+      {mode === 'reply' && replyText ? <ActionButton theme={theme} disabled={busy} label={ui('Continue translation', '继续翻译')} onPress={() => { void reply.runReply(replyText); }} style={{ alignSelf: 'flex-start' }} /> : null}
+    </View> : null}
 
     {result ? <View style={{ gap: 12, padding: 14, borderWidth: 1, borderColor: colors.border, borderRadius: 12, backgroundColor: colors.surface1 }}>
-      <View style={{ gap: 2 }}>
-        <Text style={{ color: colors.foreground, fontWeight: '700' }}>{ui('Translation', '译文')}</Text>
-        <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui(`Target: ${targetLabel(result.target)}`, `目标：${targetLabel(result.target)}`)}</Text>
-        {reply && running ? <Text style={{ color: colors.statusWarning, fontSize: 12 }}>{ui('The AI is still replying; the translated reply may be incomplete.', 'AI 仍在回复，译文可能不完整。')}</Text> : null}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <Text style={{ color: colors.foreground, fontWeight: '700' }}>{ui(`Translation · ${targetLabel(result.target)}`, `译文 · ${targetLabel(result.target)}`)}</Text>
+        <ActionButton theme={theme} disabled={!complete || busy} label={copied ? ui('Copied', '已复制') : ui('Copy', '复制')} color={copied ? colors.statusSuccess : undefined} onPress={() => { void current.copy(); }} style={{ paddingHorizontal: 12 }} />
       </View>
+      {mode === 'draft' ? <ActionButton theme={theme} primary disabled={!agentId || busy || !complete} label={sending ? ui('Sending…', '发送中…') : ui('Send translation', '发送译文')} onPress={() => { void send(); }} /> : null}
       <Text selectable style={{ color: colors.foreground, fontSize: 16, lineHeight: 25 }}>{result.translation}</Text>
-      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-        <ActionButton theme={theme} primary disabled={!agentId || busy} label={sending ? ui('Sending…', '发送中…') : ui('Send', '发送')} onPress={() => { void send(); }} style={{ minWidth: 100 }} />
-        <ActionButton theme={theme} label={copied ? ui('Copied', '已复制') : ui('Copy', '复制')} color={copied ? colors.statusSuccess : undefined} onPress={() => { void copy(); }} />
-      </View>
     </View> : null}
   </ScrollView>;
 }
