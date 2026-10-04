@@ -20,14 +20,15 @@ export function ReplyTranslator({ theme, item, openSettings }: ReplyTranslationP
     ? expanded ? ui('Hide translation', '收起译文') : ui('Show translation', '展开译文')
     : error ? progress?.completed ? ui('Continue translation', '继续翻译') : ui('Retry translation', '重试翻译') : ui('Translate', '翻译');
 
-  return <View style={{ gap: 10, paddingVertical: 4 }}>
+  return <View style={{ gap: 8, marginTop: -36 }}>
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: busy || !configured, busy, ...(complete ? { expanded } : {}) }}
       disabled={busy || !configured}
+      hitSlop={{ top: 10, bottom: 10, left: 4, right: 4 }}
       onPress={toggle}
-      style={{ alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center' }}
+      style={{ alignSelf: 'flex-start' }}
     >
       {({ pressed }) => <View style={{
         flexDirection: 'row', alignItems: 'center', gap: 6,
