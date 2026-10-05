@@ -4,24 +4,18 @@ import { Icon, useToast } from '@getpaseo/plugin/client/react-native';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { BOARD_COLUMNS, groupTasks, pendingCleanup, type BoardColumn } from '../shared/board';
 import {
-  collaborationDraftIssue,
   collaborationEditBlocksStart,
-  inheritCollaborationDraft,
   readCollaborationDefaults,
-  sameCollaborationDraft,
-  snapshotFromDraft,
-  storedDefault,
   unavailableCatalog,
   writeCollaborationDefault,
   type CollaborationCatalog,
-  type CollaborationDraft,
   type TaskCollaboration,
 } from '../shared/collaboration';
 import { canRetry } from '../shared/machine';
 import { acceptTask, cancelTask, cleanupTask, continueTask, createTask, listTasks, readCatalog, readCollaborationCatalog, readTask, retryTask, startQueue, startTask, updateTaskCollaboration } from '../shared/rpc';
 import type { Catalog, Task, TaskDiff } from '../shared/schema';
 import { projectLabel, TaskCard, type CardAction } from './card';
-import { CollaborationEditorModal, browserCollaborationStore, collaborationIssueText } from './collaboration';
+import { browserCollaborationStore } from './collaboration';
 import { NewTaskDialog, type NewTaskInput } from './editor';
 import { createHostRegistry, hostLabel, type HostRegistry, type TodoHost } from './hosts';
 import { parseTodoError, ui } from './i18n';
@@ -126,13 +120,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
   const [busy, setBusy] = useState(false);
   const [collabCatalogs, setCollabCatalogs] = useState<Record<string, CollaborationCatalog>>({});
   const [collaborationDefaults, setCollaborationDefaults] = useState(() => readCollaborationDefaults(browserCollaborationStore()));
-  const [settingsHost, setSettingsHost] = useState<string | null>(null);
-  const [settingsDraft, setSettingsDraft] = useState<CollaborationDraft | null>(null);
-  const [settingsBaseline, setSettingsBaseline] = useState<CollaborationDraft | null>(null);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [unsavedCollab, setUnsavedCollab] = useState<{ hostId: string; id: string } | null>(null);
-  const settingsDirtyRef = useRef(false);
-  const settingsRequest = useRef(0);
 
   const fail = useCallback((error: unknown) => { toast.error(parseTodoError(error)); }, [toast]);
 
@@ -240,88 +228,15 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
   const selfBlocked = Boolean(lists[hosts[0].id]?.loadError);
   const unsavedStart = ui('Save or cancel the collaboration edits before starting.', '先保存或取消协作设置的修改，再开始。');
 
-  function draftForHost(hostId: string, catalog: CollaborationCatalog | null): CollaborationDraft {
-    return inheritCollaborationDraft(storedDefault(collaborationDefaults, hostId), catalog ?? { settings: null, rolePrompts: {} });
-  }
-
-  function openSettings(hostId: string) {
-    const host = hostOf(hostId);
-    const request = ++settingsRequest.current;
-    settingsDirtyRef.current = false;
-    setSettingsError(null);
-    setSettingsHost(hostId);
-    const known = collabCatalogs[hostId] ?? null;
-    const next = draftForHost(hostId, known);
-    setSettingsDraft(next);
-    setSettingsBaseline(next);
-    const apply = (catalog: CollaborationCatalog) => {
-      if (settingsRequest.current !== request || settingsDirtyRef.current) return;
-      const fresh = draftForHost(hostId, catalog);
-      setSettingsDraft(fresh);
-      setSettingsBaseline(fresh);
-    };
-    void withTimeout(host.rpc(readCollaborationCatalog, {}))
-      .then(catalog => {
-        setCollabCatalogs(previous => ({ ...previous, [hostId]: catalog }));
-        apply(catalog);
-      })
-      .catch(error => {
-        const failed = unavailableCatalog(parseTodoError(error));
-        setCollabCatalogs(previous => ({ ...previous, [hostId]: failed }));
-        apply(failed);
-      });
-  }
-
-  function changeSettingsHost(hostId: string) {
-    if (settingsDraft && settingsBaseline && !sameCollaborationDraft(settingsDraft, settingsBaseline)) {
-      setSettingsError(ui('Save or cancel these edits before switching machines.', '先保存或取消当前修改，再切换机器。'));
-      return;
-    }
-    openSettings(hostId);
-  }
-
-  function saveSettings() {
-    if (!settingsHost || !settingsDraft) return;
-    const agentCatalog = catalogs[settingsHost] ?? null;
-    const problem = collaborationDraftIssue(
-      settingsDraft,
-      collabCatalogs[settingsHost] ?? null,
-      agentCatalog ? agentCatalog.providers.map(entry => entry.provider) : null,
-    );
-    if (problem) {
-      setSettingsError(collaborationIssueText(problem));
-      return;
-    }
-    const snap = snapshotFromDraft(settingsDraft);
-    if (snap.error) {
-      setSettingsError(collaborationIssueText(snap.error));
-      return;
-    }
+  function rememberCollaboration(hostId: string, collaboration: TaskCollaboration | null) {
     const store = browserCollaborationStore();
-    if (!store) {
-      setSettingsError(ui('This browser cannot store the default.', '这个浏览器无法保存默认设置。'));
-      return;
-    }
+    if (!store) return;
     try {
-      writeCollaborationDefault(store, settingsHost, snap.collaboration);
-    } catch (error) {
-      setSettingsError(parseTodoError(error));
-      return;
+      writeCollaborationDefault(store, hostId, collaboration);
+      setCollaborationDefaults(readCollaborationDefaults(store));
+    } catch {
+      // The task is already saved. Missing the next starting point does not undo it.
     }
-    setCollaborationDefaults(readCollaborationDefaults(store));
-    settingsDirtyRef.current = false;
-    setSettingsError(null);
-    setSettingsHost(null);
-    setSettingsDraft(null);
-    setSettingsBaseline(null);
-  }
-
-  function closeSettings() {
-    settingsDirtyRef.current = false;
-    setSettingsError(null);
-    setSettingsHost(null);
-    setSettingsDraft(null);
-    setSettingsBaseline(null);
   }
 
   function startBlocked(task: { hostId: string; id: string }): boolean {
@@ -348,6 +263,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     const { hostId, ...task } = input;
     void run(hostOf(hostId), async rpc => {
       const created = await rpc(createTask, { ...task, modeId: null });
+      rememberCollaboration(hostId, task.collaboration);
       // The task exists now; close before starting so a failed start cannot lead to a second create.
       setEditorOpen(false);
       if (start) await rpc(startTask, { id: created.task.id });
@@ -387,11 +303,9 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     action={cardAction(task)}
     onOpen={() => setOpen({ hostId: task.hostId, id: task.id })}
   />);
-  // Every column sits in the same translucent well, with or without cards, so a busy column does not look bare.
-  const well = { borderRadius: 14, borderWidth: 1, borderColor: tint(colors.foreground, 0.08), backgroundColor: tint(colors.surface1, 0.35) } as const;
-  const empty = (column: BoardColumn) => <View style={{ flex: 1, minHeight: 64, alignItems: 'center', justifyContent: 'center' }}>
-    <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui(...COLUMN_EMPTY[column])}</Text>
-  </View>;
+  // A wide column needs a lane to scroll. It has no border: the cards already have one.
+  const lane = { borderRadius: 14, backgroundColor: tint(colors.surface1, 0.22) } as const;
+  const empty = (column: BoardColumn) => <Text style={{ color: colors.foregroundMuted, fontSize: 12, paddingVertical: 4, paddingHorizontal: 2 }}>{ui(...COLUMN_EMPTY[column])}</Text>;
 
   const hostName = hostFilter ? labelOf(hostFilter) : ui('All machines', '全部机器');
   const projectName = props.scope?.name ?? (project ? project.name : ui('All projects', '全部项目'));
@@ -446,7 +360,6 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
         </Menu> : null}
       </View>
       <View style={{ flex: 1 }} />
-      <Button label={ui('Collaboration', '协作')} icon="Users" iconOnly={compact && located.length > 0} variant="outline" onPress={() => { setMenu(null); openSettings(editorHost); }} colors={colors} />
       {/* With no tasks the centre tile creates one; the toolbar button joins once there is a board. */}
       {located.length > 0 ? <Button label={ui('New task', '新建任务')} icon="Plus" iconOnly={compact} onPress={() => { setMenu(null); setEditorOpen(true); }} colors={colors} /> : null}
     </View>
@@ -475,16 +388,14 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     </View>) : wide ? <View style={{ flex: 1, minHeight: 0, flexDirection: 'row', gap: 16, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16 }}>
       {BOARD_COLUMNS.map(column => <View key={column} style={{ flex: 1, minWidth: 0, gap: 8 }}>
         {header(column)}
-        <View style={[well, { flex: 1, minHeight: 0, overflow: 'hidden' }]}>
-          {columns[column].length === 0 ? empty(column) : <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 10, padding: 8 }}>{cards(column)}</ScrollView>}
+        <View style={[lane, { flex: 1, minHeight: 0, overflow: 'hidden' }]}>
+          {columns[column].length === 0 ? <View style={{ flex: 1, minHeight: 64, justifyContent: 'center', paddingHorizontal: 8 }}>{empty(column)}</View> : <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 10, padding: 8 }}>{cards(column)}</ScrollView>}
         </View>
       </View>)}
-    </View> : <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24, gap: 20 }}>
+    </View> : <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24, gap: 18 }}>
       {BOARD_COLUMNS.map(column => <View key={column} style={{ gap: 8 }}>
         {header(column)}
-        <View style={[well, { gap: 10, padding: columns[column].length === 0 ? 0 : 8 }]}>
-          {columns[column].length === 0 ? empty(column) : cards(column)}
-        </View>
+        {columns[column].length === 0 ? empty(column) : <View style={{ gap: 10 }}>{cards(column)}</View>}
       </View>)}
     </ScrollView>}
 
@@ -501,7 +412,6 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
         colors={colors}
         now={now}
         wide={width >= 720}
-        width={width || 640}
         busy={busy}
         onClose={() => {
           setUnsavedCollab(current => current && current.hostId === openTask.hostId && current.id === openTask.id ? null : current);
@@ -538,27 +448,6 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
       width={width || 640}
       onClose={() => setEditorOpen(false)}
       onSubmit={submitNew}
-    /> : null}
-    {settingsHost && settingsDraft ? <CollaborationEditorModal
-      title={ui('Collaboration for new tasks', '新建任务的协作')}
-      hint={ui('Saved on this machine for tasks you create later. Tasks already in the list keep their own copy.', '保存在这台机器上，只用于之后新建的任务。列表里已有的任务仍用各自的副本。')}
-      draft={settingsDraft}
-      catalog={catalogs[settingsHost] ?? null}
-      collaboration={collabCatalogs[settingsHost] ?? null}
-      colors={colors}
-      width={width || 640}
-      error={settingsError}
-      saveLabel={ui('Save default', '保存默认')}
-      hosts={hosts.map(host => ({ id: host.id, label: host.label }))}
-      hostId={settingsHost}
-      onHostChange={changeSettingsHost}
-      onChange={draft => {
-        settingsDirtyRef.current = settingsBaseline ? !sameCollaborationDraft(draft, settingsBaseline) : true;
-        setSettingsError(null);
-        setSettingsDraft(draft);
-      }}
-      onSave={saveSettings}
-      onCancel={closeSettings}
     /> : null}
   </View>;
 }

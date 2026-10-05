@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import { Icon } from '@getpaseo/plugin/client/react-native';
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
 import {
   COLLABORATION_ROLE_LABELS,
-  collaborationDraftIssue,
   collaborationModeLabel,
   collaborationStatus,
   collaborationWarning,
@@ -334,56 +333,4 @@ function CheckRow(props: { colors: Colors; checked: boolean; disabled?: boolean;
     </View>
     <Text style={{ flex: 1, color: colors.foreground, fontSize: 12 }}>{props.label}</Text>
   </Pressable>;
-}
-
-export function CollaborationEditorModal(props: {
-  title: string;
-  hint: string;
-  draft: CollaborationDraft;
-  catalog: Catalog | null;
-  collaboration: CollaborationCatalog | null;
-  colors: Colors;
-  width: number;
-  busy?: boolean;
-  error: string | null;
-  saveLabel: string;
-  hosts?: readonly { id: string; label: string }[];
-  hostId?: string;
-  onHostChange?(hostId: string): void;
-  onChange(draft: CollaborationDraft): void;
-  onSave(): void;
-  onCancel(): void;
-}) {
-  const { colors } = props;
-  const providerIds = props.catalog?.providers.map(provider => provider.provider) ?? null;
-  const issue = collaborationDraftIssue(props.draft, props.collaboration, props.catalog ? providerIds : null);
-  const [hostOpen, setHostOpen] = useState(false);
-  const cancel = () => { if (!props.busy) props.onCancel(); };
-  return <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 40, alignItems: 'center', justifyContent: 'center' }}>
-    <Pressable accessibilityLabel={ui('Cancel', '取消')} onPress={cancel} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.5)' }} />
-    <View style={{ width: Math.min(640, Math.max(280, props.width - 24)), maxHeight: '90%', borderRadius: 16, borderWidth: 1, borderColor: outline(colors), backgroundColor: colors.surface0 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 8 }}>
-        <Text style={{ flex: 1, color: colors.foreground, fontSize: 16, fontWeight: '700' }}>{props.title}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel={ui('Close', '关闭')} onPress={cancel} style={{ padding: 4 }}>
-          <Icon name="X" size={16} color={colors.foregroundMuted} />
-        </Pressable>
-      </View>
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16, gap: 12 }}>
-        <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{props.hint}</Text>
-        {props.hosts && props.hosts.length > 1 && props.hostId && props.onHostChange ? <Select
-          label={ui('Machine', '机器')} icon="Server" colors={colors}
-          value={props.hostId}
-          options={props.hosts.map(host => ({ value: host.id, label: host.label }))}
-          placeholder={ui('Choose a machine', '选择机器')}
-          open={hostOpen} onOpenChange={setHostOpen} onChange={props.onHostChange}
-        /> : null}
-        <CollaborationForm draft={props.draft} catalog={props.catalog} collaboration={props.collaboration} colors={colors} onChange={props.onChange} disabled={props.busy} />
-        {props.error || issue ? <Text style={{ color: colors.statusDanger, fontSize: 12, lineHeight: 18 }}>{props.error || (issue ? collaborationIssueText(issue) : '')}</Text> : null}
-      </ScrollView>
-      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, paddingHorizontal: 20, paddingVertical: 14, borderTopWidth: 1, borderTopColor: outline(colors) }}>
-        <Button label={ui('Cancel', '取消')} onPress={cancel} colors={colors} variant="ghost" disabled={props.busy} />
-        <Button label={props.saveLabel} onPress={props.onSave} colors={colors} disabled={props.busy || Boolean(issue)} />
-      </View>
-    </View>
-  </View>;
 }

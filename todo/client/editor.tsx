@@ -6,7 +6,7 @@ import { collaborationDraftIssue, inheritCollaborationDraft, snapshotFromDraft, 
 import { readBranches } from '../shared/rpc';
 import { taskTitle } from '../shared/title';
 import type { Catalog } from '../shared/schema';
-import { CollaborationEditorModal, CollaborationSummary, collaborationIssueText } from './collaboration';
+import { CollaborationForm, collaborationIssueText } from './collaboration';
 import { ui } from './i18n';
 import { Backdrop, Button, outline, tint, type Colors } from './kit';
 import { Select } from './select';
@@ -56,8 +56,6 @@ export function NewTaskDialog(props: {
   const [provider, setProvider] = useState(props.initialProvider ?? models[0]?.value ?? '');
   const [picker, setPicker] = useState<'host' | 'project' | 'branch' | 'agent' | null>(null);
   const [collaborationOverride, setCollaborationOverride] = useState<CollaborationDraft | null>(null);
-  const [collaborationEditor, setCollaborationEditor] = useState<CollaborationDraft | null>(null);
-  const [collaborationError, setCollaborationError] = useState<string | null>(null);
 
   // A host's catalog can arrive after the dialog opens, and switching hosts brings other projects and agents:
   // keep a choice that still exists there, otherwise fall back to the first one.
@@ -74,8 +72,6 @@ export function NewTaskDialog(props: {
   // Another machine has its own models and saved default. Drop the previous machine's override.
   useEffect(() => {
     setCollaborationOverride(null);
-    setCollaborationEditor(null);
-    setCollaborationError(null);
   }, [hostId]);
 
   useEffect(() => {
@@ -117,18 +113,6 @@ export function NewTaskDialog(props: {
       collaboration: snap.collaboration,
     }, start);
   };
-  const saveCollaborationEdit = () => {
-    if (!collaborationEditor) return;
-    const problem = collaborationDraftIssue(collaborationEditor, collaborationCatalog, catalog ? catalog.providers.map(entry => entry.provider) : null);
-    if (problem) {
-      setCollaborationError(collaborationIssueText(problem));
-      return;
-    }
-    setCollaborationOverride(collaborationEditor);
-    setCollaborationEditor(null);
-    setCollaborationError(null);
-  };
-
   return <Backdrop onClose={props.onClose} align="center">
     <View style={{ width: Math.min(640, props.width - 24), maxHeight: '90%', borderRadius: 16, borderWidth: 1, borderColor: outline(colors), backgroundColor: colors.surface0 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 18, paddingBottom: 4 }}>
@@ -137,7 +121,7 @@ export function NewTaskDialog(props: {
           <Icon name="X" size={16} color={colors.foregroundMuted} />
         </Pressable>
       </View>
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16, gap: 14 }}>
+      <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16, gap: 14 }}>
         <TextInput
           value={title}
           onChangeText={setTitle}
@@ -156,12 +140,10 @@ export function NewTaskDialog(props: {
         />
         {!props.scope && projects.length === 0 ? <TextInput value={repository} onChangeText={setRepository} placeholder={ui('/path/to/repository', '/仓库/路径')} placeholderTextColor={tint(colors.foregroundMuted, 0.55)} autoCapitalize="none" autoCorrect={false}
           style={{ height: 34, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 12, outlineStyle: 'solid', outlineWidth: 0 }} /> : null}
-        <View style={{ gap: 8, padding: 12, borderRadius: 12, borderWidth: 1, borderColor: outline(colors) }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={{ flex: 1, color: colors.foreground, fontSize: 13, fontWeight: '600' }}>{ui('Collaboration', '协作')}</Text>
-            <Button label={ui('Edit', '修改')} colors={colors} variant="outline" size="xs" onPress={() => { setCollaborationError(null); setCollaborationEditor(collaborationDraft); }} />
-          </View>
-          <CollaborationSummary collaboration={snapshotFromDraft(collaborationDraft).collaboration} catalog={catalog} colors={colors} />
+        <View style={{ gap: 8 }}>
+          <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: '600' }}>{ui('Collaboration', '协作')}</Text>
+          <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{ui('Used for this task. The next new task starts from this choice; tasks already in the list stay as they are.', '只用于这条任务。下次新建会沿用这次的选择，已有任务不变。')}</Text>
+          <CollaborationForm draft={collaborationDraft} catalog={catalog} collaboration={collaborationCatalog} colors={colors} disabled={props.busy} onChange={setCollaborationOverride} />
         </View>
       </ScrollView>
       {picker ? <Pressable accessibilityLabel={ui('Close list', '关闭列表')} onPress={() => setPicker(null)} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 5 }} /> : null}
@@ -204,20 +186,6 @@ export function NewTaskDialog(props: {
         <Button label={ui('Add to To do', '加入待办')} onPress={() => submit(false)} colors={colors} variant="outline" disabled={!ready || props.busy} />
         <Button label={ui('Add and start', '添加并开始')} icon="Play" onPress={() => submit(true)} colors={colors} disabled={!ready || props.busy} />
       </View>
-      {collaborationEditor ? <CollaborationEditorModal
-        title={ui('Collaboration for this task', '这个任务的协作')}
-        hint={ui('This copy is saved on the task. Cancel leaves the task draft unchanged. The machine default is not changed.', '这是写在这个任务上的副本。取消不会改任务草稿，也不会改这台机器的默认设置。')}
-        draft={collaborationEditor}
-        catalog={catalog}
-        collaboration={collaborationCatalog}
-        colors={colors}
-        width={props.width}
-        error={collaborationError}
-        saveLabel={ui('Use for this task', '用于这个任务')}
-        onChange={setCollaborationEditor}
-        onSave={saveCollaborationEdit}
-        onCancel={() => { setCollaborationEditor(null); setCollaborationError(null); }}
-      /> : null}
     </View>
   </Backdrop>;
 }

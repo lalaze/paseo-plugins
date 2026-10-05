@@ -6,7 +6,7 @@ import { collaborationDraftIssue, collaborationModeLabel, collaborationStatus, d
 import { canAccept, canCancel, canContinue, canRetry } from '../shared/machine';
 import type { Catalog, Task, TaskDiff } from '../shared/schema';
 import { HostTag, projectLabel, StatusChip } from './card';
-import { CollaborationEditorModal, CollaborationSummary, collaborationIssueText } from './collaboration';
+import { CollaborationForm, CollaborationSummary, collaborationIssueText } from './collaboration';
 import { explain, ui } from './i18n';
 import { Backdrop, Button, Dot, MONO, outline, SectionTitle, tint, type Colors } from './kit';
 
@@ -39,7 +39,6 @@ export function TaskSheet(props: SheetHandlers & {
   colors: Colors;
   now: number;
   wide: boolean;
-  width: number;
   busy: boolean;
   onClose(): void;
   onCollaborationDirty(dirty: boolean): void;
@@ -169,8 +168,17 @@ export function TaskSheet(props: SheetHandlers & {
               : ui('Collaboration settings were saved with the task and cannot be changed after it starts.', '协作设置已随任务保存，开始之后不能再改。')}
           </Text>
           {discarded ? <Text style={{ color: colors.statusWarning, fontSize: 12, lineHeight: 18 }}>{ui('Unsaved collaboration edits were not saved.', '未保存的协作修改没有写入。')}</Text> : null}
-          <CollaborationSummary collaboration={task.collaboration} phase={task.collaborationPhase} control={task.collaborationControl} acceptance={task.collaborationAcceptance} catalog={props.catalog} colors={colors} />
-          {editable ? <Button label={ui('Edit', '修改')} colors={colors} variant="outline" size="xs" onPress={() => { setCollabError(null); setCollabDraft(draftFromCollaboration(task.collaboration)); setEditing(true); }} /> : null}
+          {editing ? <>
+            <CollaborationForm draft={collabDraft} catalog={props.catalog} collaboration={props.collaborationCatalog} colors={colors} disabled={props.busy} onChange={draft => { setCollabError(null); setCollabDraft(draft); }} />
+            {collabError ? <Text style={{ color: colors.statusDanger, fontSize: 12, lineHeight: 18 }}>{collabError}</Text> : null}
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+              <Button label={ui('Cancel', '取消')} colors={colors} variant="ghost" size="xs" disabled={props.busy} onPress={cancelCollaboration} />
+              <Button label={ui('Save on this task', '保存到这个任务')} colors={colors} size="xs" disabled={props.busy} onPress={() => { void saveCollaboration(); }} />
+            </View>
+          </> : <>
+            <CollaborationSummary collaboration={task.collaboration} phase={task.collaborationPhase} control={task.collaborationControl} acceptance={task.collaborationAcceptance} catalog={props.catalog} colors={colors} />
+            {editable ? <Button label={ui('Edit', '修改')} colors={colors} variant="outline" size="xs" onPress={() => { setCollabError(null); setCollabDraft(draftFromCollaboration(task.collaboration)); setEditing(true); }} /> : null}
+          </>}
         </Section>
         <NextStep {...props} collaborationDirty={dirty} />
         <Section title={ui('Details', '详情')} colors={colors}>
@@ -198,21 +206,6 @@ export function TaskSheet(props: SheetHandlers & {
         </Section>
       </ScrollView>
     </View>
-    {editing ? <CollaborationEditorModal
-      title={ui('Collaboration for this task', '这个任务的协作')}
-      hint={ui('This copy is saved on the task. Cancel leaves the saved draft unchanged. The machine default is not changed.', '这是写在这个任务上的副本。取消不会改已保存的草稿，也不会改这台机器的默认设置。')}
-      draft={collabDraft}
-      catalog={props.catalog}
-      collaboration={props.collaborationCatalog}
-      colors={colors}
-      width={props.width}
-      busy={props.busy}
-      error={collabError}
-      saveLabel={ui('Save on this task', '保存到这个任务')}
-      onChange={draft => { setCollabError(null); setCollabDraft(draft); }}
-      onSave={() => { void saveCollaboration(); }}
-      onCancel={cancelCollaboration}
-    /> : null}
   </Backdrop>;
 }
 
