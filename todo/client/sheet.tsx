@@ -20,6 +20,7 @@ export interface SheetHandlers {
   onOpenSession: (() => void) | null;
 }
 
+/** "Provider · model", using catalog labels and falling back to the stored ids. */
 export function providerLabel(task: Task, catalog: Catalog | null): string {
   const [provider, ...rest] = task.provider.split('/');
   const model = rest.join('/');
@@ -30,6 +31,7 @@ export function providerLabel(task: Task, catalog: Catalog | null): string {
 
 const short = (sha: string | null) => (sha ? sha.slice(0, 8) : '—');
 
+/** One task: prompt, collaboration, diff, and the next action. An unstarted draft edits collaboration here. */
 export function TaskSheet(props: SheetHandlers & {
   task: Task;
   hostLabel?: string | null;
@@ -282,6 +284,7 @@ const STEP_NAME: Record<CleanupStep, readonly [string, string]> = {
   branch: ['the branch', '分支'],
 };
 
+/** After a merge: cleanup finished, not started yet, or stopped on one named step. */
 function mergedText(target: string, branch: string | null, leftover: CleanupStep | null, attempted: boolean, error: string | null): string {
   const merged = ui(`Merged into ${target}.`, `已合并到 ${target}。`);
   if (!leftover) return `${merged} ${ui(`Archived its sessions and removed the worktree and ${branch ?? 'the branch'}.`, `会话已归档，工作树和分支 ${branch ?? ''} 已删除。`)}`;
@@ -301,6 +304,7 @@ function Quote(props: { colors: Colors; children: string }) {
   return <Text selectable style={{ padding: 12, borderRadius: 12, backgroundColor: props.colors.surface2, color: props.colors.foreground, fontSize: 12, lineHeight: 18 }}>{props.children}</Text>;
 }
 
+/** Unified diff. A patch past the server limit arrives with truncated set. */
 function Diff(props: { patch: string; truncated: boolean; colors: Colors }) {
   const { colors } = props;
   const color = { add: colors.statusSuccess, del: colors.statusDanger, hunk: colors.foregroundMuted, meta: colors.foregroundMuted, context: colors.foreground };

@@ -13,6 +13,7 @@ import { Select } from './select';
 
 type Rpc = PluginClientContext['rpc'];
 
+/** What Add sends. Collaboration is the snapshot for this task, not the host's settings. */
 export interface NewTaskInput {
   title: string;
   prompt: string;
@@ -24,6 +25,7 @@ export interface NewTaskInput {
   collaboration: TaskCollaboration | null;
 }
 
+/** One dialog for the task and its collaboration. Cancel discards both. Add stores the snapshot on the task. */
 export function NewTaskDialog(props: {
   /** Hosts a task can be created on; the chosen one supplies the projects, branches and agents. */
   hosts: readonly { id: string; label: string }[];
@@ -142,7 +144,7 @@ export function NewTaskDialog(props: {
           style={{ height: 34, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 12, outlineStyle: 'solid', outlineWidth: 0 }} /> : null}
         <View style={{ gap: 8 }}>
           <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: '600' }}>{ui('Collaboration', '协作')}</Text>
-          <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{ui('Used for this task. The next new task starts from this choice; tasks already in the list stay as they are.', '只用于这条任务。下次新建会沿用这次的选择，已有任务不变。')}</Text>
+          <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{ui('Used for this task; the next new task starts from this choice.', '只用于这条任务，下次新建沿用这次选择。')}</Text>
           <CollaborationForm draft={collaborationDraft} catalog={catalog} collaboration={collaborationCatalog} colors={colors} disabled={props.busy} onChange={setCollaborationOverride} />
         </View>
       </ScrollView>

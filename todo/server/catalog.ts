@@ -2,6 +2,7 @@ import type { PaseoApi } from '@getpaseo/client';
 import { catalogSchema, type Catalog } from '../shared/schema';
 import type { GitPort } from './git';
 
+/** Git projects and ready providers for the new-task form. Disabled providers and unselectable models are left out. */
 export async function readCatalog(api: PaseoApi): Promise<Catalog> {
   const [projects, snapshot] = await Promise.all([api.projects.list(), api.providers.snapshot()]);
   return catalogSchema.parse({
@@ -21,6 +22,7 @@ export async function readCatalog(api: PaseoApi): Promise<Catalog> {
   });
 }
 
+/** Local branch names and the current HEAD, resolved from the repository root. */
 export async function readBranches(git: GitPort, repository: string) {
   const root = await git.resolveRepository(repository);
   return git.listBranches(root);

@@ -1,3 +1,4 @@
+/** Status names on cards. English and Chinese stay paired so a missing translation is a type error. */
 import { ui } from './i18n';
 import { TASK_STATUSES, type TaskStatus } from './machine';
 

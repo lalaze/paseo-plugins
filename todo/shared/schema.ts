@@ -1,3 +1,4 @@
+/** Task, review binding, and catalog shapes. strict() rejects a renamed field instead of ignoring it. */
 import { z } from 'zod';
 import { taskCollaborationSchema } from './collaboration';
 import { TASK_STATUSES } from './machine';

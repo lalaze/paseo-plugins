@@ -3,6 +3,7 @@ import { Icon } from '@getpaseo/plugin/client/react-native';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import {
   COLLABORATION_ROLE_LABELS,
+  blankCollaborationDraft,
   collaborationModeLabel,
   collaborationStatus,
   collaborationWarning,
@@ -20,11 +21,14 @@ import { explain, ui } from './i18n';
 import { Button, outline, SectionTitle, tint, type Colors } from './kit';
 import { Select, type SelectOption } from './select';
 
+/** Collaboration controls for one task. The form only edits a draft; saving it is the caller's job and never writes host settings. */
+
 type RoleName = 'director' | 'worker' | 'reviewer';
 
 const RUN_TIMEOUTS = [1, 2, 4, 8, 12, 24].map(hours => hours * 3_600_000);
 const TURN_TIMEOUTS = [5, 10, 15, 30, 60, 120].map(minutes => minutes * 60_000);
 
+/** This browser's localStorage, or null when it is missing or throws (private mode). */
 export function browserCollaborationStore(): CollaborationDefaultStore | null {
   try {
     const storage = (globalThis as { localStorage?: CollaborationDefaultStore }).localStorage;
@@ -35,6 +39,7 @@ export function browserCollaborationStore(): CollaborationDefaultStore | null {
   }
 }
 
+/** The sentence shown under the form for one draft problem. */
 export function collaborationIssueText(issue: CollaborationDraftIssue): string {
   switch (issue.code) {
     case 'loading':
@@ -70,6 +75,7 @@ function modelValue(selection: RoleSelection | null): string {
   return selection ? `${selection.provider}/${selection.model}` : '';
 }
 
+/** Models on this host. A saved model the catalog no longer lists stays in the menu so the form does not drop it. */
 function modelOptions(catalog: Catalog | null, selection: RoleSelection | null): SelectOption[] {
   const options = catalog?.providers.flatMap(entry => entry.models.map(model => ({
     value: `${entry.provider}/${model.id}`,
@@ -82,6 +88,7 @@ function modelOptions(catalog: Catalog | null, selection: RoleSelection | null):
   return options;
 }
 
+/** Permission modes for the selected provider. An empty value means the host's default permission. */
 function modeOptions(catalog: Catalog | null, selection: RoleSelection | null): SelectOption[] {
   const provider = selection ? catalog?.providers.find(entry => entry.provider === selection.provider) : undefined;
   const options = (provider?.modes ?? []).map(mode => ({ value: mode.id, label: mode.label }));
@@ -91,6 +98,7 @@ function modeOptions(catalog: Catalog | null, selection: RoleSelection | null): 
   return [{ value: '', label: ui('Default permission', '默认权限') }, ...options];
 }
 
+/** Preset timeouts plus a saved value that is not one of the presets. */
 function withChoice(current: number, choices: readonly number[]): number[] {
   return choices.includes(current) ? [...choices] : [...choices, current].sort((left, right) => left - right);
 }
@@ -100,6 +108,7 @@ function durationLabel(ms: number, unit: 'h' | 'm'): string {
   return unit === 'h' ? ui(`${count} h`, `${count} 小时`) : ui(`${count} min`, `${count} 分钟`);
 }
 
+/** Read-only roles, mode, and the host's phase. Off is one sentence. */
 export function CollaborationSummary(props: {
   collaboration: TaskCollaboration | null;
   phase?: string | null;
@@ -155,6 +164,7 @@ export function CollaborationSummary(props: {
   </View>;
 }
 
+/** Mode, roles, prompts, and limits. Rendered inside New task and an unstarted draft's sheet, not its own dialog. */
 export function CollaborationForm(props: {
   draft: CollaborationDraft;
   catalog: Catalog | null;
@@ -167,6 +177,24 @@ export function CollaborationForm(props: {
   const [picker, setPicker] = useState<string | null>(null);
   const disabled = props.disabled;
   const warning = collaborationWarning(props.collaboration);
+  /** Prompts and limits stay collapsed unless this draft already customizes them. */
+  const blank = blankCollaborationDraft();
+  const hostPrompt = (role: 'plan' | 'execute' | 'review') =>
+    (props.collaboration?.settings?.rolePrompts?.[role] ?? props.collaboration?.rolePrompts?.[role] ?? '').trim();
+  const customPrompts = (['plan', 'execute', 'review'] as const).some(role => {
+    const value = draft.prompts[role].trim();
+    return value !== '' && value !== hostPrompt(role);
+  });
+  const customAdvanced = customPrompts
+    || draft.maxReworks !== blank.maxReworks
+    || draft.maxAttempts !== blank.maxAttempts
+    || draft.turnTimeoutMs !== blank.turnTimeoutMs
+    || draft.runTimeoutMs !== blank.runTimeoutMs
+    || draft.requirePlanApproval !== blank.requirePlanApproval
+    || draft.preserved.allowDirectorSelection
+    || draft.preserved.verificationCommands.length > 0;
+  const [advanced, setAdvanced] = useState(customAdvanced);
+  const [editPrompts, setEditPrompts] = useState(customPrompts);
   const modes: Array<'off' | CollaborationMode> = ['off', 'full', 'execute_review'];
   const selectedMode = draft.enabled ? draft.mode : 'off';
   const setMode = (mode: 'off' | CollaborationMode) => {
@@ -248,9 +276,6 @@ export function CollaborationForm(props: {
           ? ui('Design, then execute, then review. You accept the result.', '设计 → 执行 → 审核 → 你验收。')
           : ui('One worker, then a separate reviewer. You accept the result.', '一个执行 Agent，独立审核后交你验收。')}
     </Text>
-    {draft.enabled ? <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>
-      {ui('The task already has its own worktree, so collaboration stays in that directory and does not open a second one.', '任务已经有独立工作树，协作就在这个目录里运行，不会再开一个工作树。')}
-    </Text> : null}
     {warning ? <Text style={{ color: colors.statusWarning, fontSize: 12, lineHeight: 18 }}>{warning}</Text> : null}
     {draft.enabled ? <>
       <View style={{ gap: 10 }}>
@@ -260,8 +285,11 @@ export function CollaborationForm(props: {
         {roleRow('reviewer', draft.mode === 'full')}
         {draft.mode === 'execute_review' ? <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui('The reviewer can use the same model as the worker, but it is a separate agent.', '审核可以和执行用同一个模型，但必须是独立的 Agent。')}</Text> : null}
       </View>
+      <Disclosure colors={colors} open={advanced} disabled={disabled} label={ui('Advanced settings', '高级设置')} onPress={() => setAdvanced(!advanced)} />
+      {advanced ? <>
       <View style={{ gap: 8 }}>
-        <SectionTitle colors={colors}>{ui('Prompts', '提示词')}</SectionTitle>
+        <Disclosure colors={colors} open={editPrompts} disabled={disabled} label={ui('Custom prompts', '自定义提示词')} onPress={() => setEditPrompts(!editPrompts)} />
+        {editPrompts ? <>
         <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{ui('This host uses its global role prompts. Explicit task prompts must match them; blank fields use the host defaults.', '这台主机使用统一角色提示词。填写的任务提示词必须与主机一致；留空使用主机默认设置。')}</Text>
         {(['plan', 'execute', 'review'] as const).map(role => <View key={role} style={{ gap: 4 }}>
             <Text style={{ color: colors.foreground, fontSize: 12 }}>{role === 'plan' ? ui('Design prompt', '设计提示词') : role === 'execute' ? ui('Execute prompt', '执行提示词') : ui('Review prompt', '审核提示词')}</Text>
@@ -275,6 +303,7 @@ export function CollaborationForm(props: {
             style={{ minHeight: 72, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: outline(colors), backgroundColor: colors.surface1, color: colors.foreground, fontSize: 12, lineHeight: 18, textAlignVertical: 'top', outlineStyle: 'solid', outlineWidth: 0 }}
           />
         </View>)}
+        </> : null}
       </View>
       <View style={{ gap: 8 }}>
         <SectionTitle colors={colors}>{ui('Limits', '限制')}</SectionTitle>
@@ -316,6 +345,7 @@ export function CollaborationForm(props: {
       {Object.keys(draft.preserved.categoryOverrides).length || Object.keys(draft.preserved.taskOverrides).length ? <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>
         {ui('Category and task assignments from the saved settings are kept.', '已保存设置里的类别和任务分配会保留。')}
       </Text> : null}
+      </> : null}
     </> : null}
     {picker ? <Pressable accessibilityLabel={ui('Close list', '关闭列表')} onPress={() => setPicker(null)} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 4 }} /> : null}
   </View>;
@@ -323,6 +353,14 @@ export function CollaborationForm(props: {
 
 function fieldStyle(colors: Colors) {
   return { height: 34, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 12, outlineStyle: 'solid' as const, outlineWidth: 0 };
+}
+
+function Disclosure(props: { colors: Colors; open: boolean; disabled?: boolean; label: string; onPress(): void }) {
+  const { colors } = props;
+  return <Pressable accessibilityRole="button" accessibilityState={{ expanded: props.open, disabled: props.disabled }} disabled={props.disabled} onPress={props.onPress} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 2, opacity: props.disabled ? 0.5 : 1 }}>
+    <Icon name={props.open ? 'ChevronDown' : 'ChevronRight'} size={14} color={colors.foregroundMuted} />
+    <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: '600' }}>{props.label}</Text>
+  </Pressable>;
 }
 
 function CheckRow(props: { colors: Colors; checked: boolean; disabled?: boolean; label: string; onPress(): void }) {

@@ -19,10 +19,12 @@ export type TurnKind = 'completed' | 'failed' | 'canceled';
 
 const EXECUTION: ReadonlySet<TaskStatus> = new Set(['preparing', 'running', 'needs_attention', 'canceling']);
 
+/** Preparing, running, waiting for permission, or canceling. These hold the repository's execution slot. */
 export function isExecution(status: TaskStatus): boolean {
   return EXECUTION.has(status);
 }
 
+/** What the buttons may offer. The engine checks the same functions, so the page cannot offer an action the server rejects. */
 export function canEnqueue(status: TaskStatus): boolean {
   return status === 'draft';
 }

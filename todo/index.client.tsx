@@ -6,6 +6,7 @@ import { WorkspaceTodoPanel } from './client/workspace';
 import { ui } from './client/i18n';
 import { readHostIdentity } from './shared/rpc';
 
+/** Sidebar page, explorer panel, and command-center entries. One bundle copy serves one host and registers it for the others. */
 export default function contribute(client: PluginClientContext) {
   // This copy of the bundle serves one host; register it so any host's Tasks page can gather this host's tasks.
   const registry = sharedHostRegistry();

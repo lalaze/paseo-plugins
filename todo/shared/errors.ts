@@ -1,3 +1,4 @@
+/** Stable error codes. The server throws the code; the client shows the translated sentence. */
 import { ui, type UiLocale } from './i18n';
 
 const messages = {

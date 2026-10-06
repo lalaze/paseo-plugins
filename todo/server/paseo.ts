@@ -14,6 +14,7 @@ const SYSTEM_PROMPT = [
   '聊天里宣布完成或要求合并不会被系统验收。',
 ].join('\n');
 
+/** Daemon address for this plugin. PASEO_TODO_URL wins; otherwise the address in ~/.paseo/config.json. */
 export function connectionConfig(env: NodeJS.ProcessEnv = process.env) {
   const home = env.PASEO_HOME ?? join(homedir(), '.paseo');
   let config: { daemon?: { listen?: string | number; password?: string } } = {};
@@ -27,6 +28,7 @@ export function connectionConfig(env: NodeJS.ProcessEnv = process.env) {
   return { url, password };
 }
 
+/** This machine's daemon: the agent API for a single-agent task, and a separate socket for collaboration. */
 export class PaseoTodoGateway implements AgentPort, CollaborationPort {
   private connecting: Promise<void> | null = null;
   private collaborationPort: (CollaborationPort & { close(): Promise<void> }) | null = null;

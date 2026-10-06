@@ -35,6 +35,7 @@ export function groupTasks<T extends Pick<Task, 'status' | 'updatedAt'>>(tasks: 
   return grouped;
 }
 
+/** Short age on a card: 12s, 5m, 3h, 4d. */
 export function relativeAge(at: number, now: number): string {
   const seconds = Math.max(0, Math.floor((now - at) / 1000));
   if (seconds < 60) return `${seconds}s`;
@@ -57,6 +58,7 @@ export function pendingCleanup(task: Pick<Task, 'status' | 'cleanup'>): CleanupS
 
 export type DiffLineKind = 'add' | 'del' | 'hunk' | 'meta' | 'context';
 
+/** One unified-diff line. A +++ header is meta, not an addition. */
 export function diffLineKind(line: string): DiffLineKind {
   if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ') || line.startsWith('index ')) return 'meta';
   if (line.startsWith('@@')) return 'hunk';
@@ -65,6 +67,7 @@ export function diffLineKind(line: string): DiffLineKind {
   return 'context';
 }
 
+/** Counts + and - lines. File headers are excluded by diffLineKind. */
 export function diffStats(patch: string): { additions: number; deletions: number } {
   let additions = 0;
   let deletions = 0;
@@ -76,6 +79,7 @@ export function diffStats(patch: string): { additions: number; deletions: number
   return { additions, deletions };
 }
 
+/** Test guard: every engine status is filed in exactly one column. */
 export function allStatusesFiled(): boolean {
   const filed = BOARD_COLUMNS.flatMap(column => STATUSES_BY_COLUMN[column]);
   return filed.length === TASK_STATUSES.length && TASK_STATUSES.every(status => filed.includes(status));

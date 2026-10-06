@@ -13,6 +13,7 @@ export interface CardAction {
   onPress(): void;
 }
 
+/** Project name, or the last path segment of the repository. */
 export function projectLabel(task: Task): string {
   return task.projectName ?? task.repository.split('/').filter(Boolean).pop() ?? task.repository;
 }
@@ -52,6 +53,7 @@ export function HostTag(props: { label: string; colors: Colors }) {
   </View>;
 }
 
+/** One task on the board. The button is the single next step; opening the card shows the rest. */
 export function TaskCard(props: { task: Task; hostLabel?: string | null; colors: Colors; now: number; action: CardAction | null; busy: boolean; onOpen(): void }) {
   const { colors, task } = props;
   const failed = Boolean(task.errorCode) && (task.status === 'failed' || task.status === 'needs_check' || task.status === 'merge_failed');

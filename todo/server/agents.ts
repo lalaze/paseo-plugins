@@ -1,3 +1,4 @@
+/** What the engine asks the daemon to do with one task's agent. */
 import type { TaskCollaboration } from '../shared/collaboration';
 
 export interface AgentInspection {

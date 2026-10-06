@@ -15,6 +15,7 @@ function report(error: unknown): void {
   console.error('[paseo-todo]', error);
 }
 
+/** Opens the task store, recovers the queue, then serves the RPCs. Daemon events that fail are logged; they do not reject an RPC. */
 export default function contribute(server: PluginServerContext) {
   let engine: TodoEngine | null = null;
   let stopped = false;

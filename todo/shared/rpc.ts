@@ -1,3 +1,4 @@
+/** Client and server share these definitions, so a renamed field fails typecheck on both sides. */
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
 import { collaborationCatalogSchema, taskCollaborationSchema } from './collaboration';
