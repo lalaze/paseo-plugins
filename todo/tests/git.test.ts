@@ -285,5 +285,34 @@ describe('git merge and capture', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it('snapshots with a fixed small number of git processes', async () => {
+    const root = await initRepo();
+    try {
+      const watched = spy();
+      const tool = createGit({ run: watched.run, worktreeRoot: await worktreeRoot() });
+      const ensured = await tool.ensureWorktree({
+        root, taskId: '88888888-8888-4888-8888-888888888888', branch: 'paseo-todo/eight', targetBranch: 'main', existingPath: null,
+      });
+      await writeFile(join(ensured.worktree, 'note.txt'), 'eight\n');
+      await tool.capture({ root, worktree: ensured.worktree, branch: ensured.branch, message: 'capture' });
+      watched.log.length = 0;
+      const snap = await tool.snapshot({ root, worktree: ensured.worktree, branch: ensured.branch, targetBranch: 'main' });
+      assert.equal(snap.clean, true);
+      // assertTaskCheckout (toplevel+common-dir, root common-dir, branch, operation markers) + HEAD/tree + status + target.
+      assert.deepEqual(watched.log, [
+        'rev-parse --show-toplevel --git-common-dir',
+        'rev-parse --git-common-dir',
+        'branch --show-current',
+        'rev-parse --git-path MERGE_HEAD --git-path CHERRY_PICK_HEAD --git-path REVERT_HEAD --git-path rebase-merge --git-path rebase-apply',
+        'rev-parse HEAD HEAD^{tree}',
+        'status --porcelain=v1 --untracked-files=all',
+        'rev-parse refs/heads/main',
+      ]);
+      assertSafe(watched.log);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 

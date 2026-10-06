@@ -39,6 +39,8 @@ const BOARD_MIN_WIDTH = 880;
 const TOOLBAR_MIN_WIDTH = 560;
 /** A host that does not answer in time counts as unreachable for this round instead of holding the board back. */
 const HOST_TIMEOUT = 8000;
+/** The open sheet also refetches on this slow tick, so external git edits show up even when the task row never changes. */
+const SHEET_REFRESH = 15_000;
 const NO_HOSTS = createHostRegistry();
 
 /** A workspace panel pins the list, new tasks and the queue button to that workspace's repository. */
@@ -67,6 +69,16 @@ const COLUMN_EMPTY: Record<BoardColumn, readonly [string, string]> = {
   done: ['Nothing done yet', '还没有完成的任务'],
 };
 
+/** Same load state and the same task ids with the same timestamps, in the same order: the board can keep the old object. */
+function sameList(previous: HostList | undefined, next: HostList): previous is HostList {
+  if (!previous || previous.loadError !== next.loadError || previous.tasks.length !== next.tasks.length) return false;
+  return previous.tasks.every((task, index) => {
+    const other = next.tasks[index];
+    return task.id === other.id && task.updatedAt === other.updatedAt;
+  });
+}
+
+/** A host that does not answer is marked unreachable for this round instead of holding the board. */
 function withTimeout<T>(promise: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -132,8 +144,10 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     try {
       const listed = await withTimeout(host.rpc(listTasks, scoped ? { repository: scoped } : {}));
       const next = { tasks: listed.tasks, loadError: listed.loadError };
-      listCache.set(`${host.id}\0${scoped ?? ''}`, next);
-      setLists(previous => ({ ...previous, [host.id]: next }));
+      const key = `${host.id}\0${scoped ?? ''}`;
+      const kept = sameList(listCache.get(key), next) ? listCache.get(key) as HostList : next;
+      listCache.set(key, kept);
+      setLists(previous => (previous[host.id] === kept ? previous : { ...previous, [host.id]: kept }));
       setUnreachable(previous => {
         if (!(host.id in previous)) return previous;
         const { [host.id]: _gone, ...rest } = previous;
@@ -175,16 +189,21 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     [hosts, lists],
   );
   const answered = hosts.every(host => host.id in lists);
+  const openListed = open ? located.find(task => task.hostId === open.hostId && task.id === open.id) : undefined;
 
-  // The open sheet follows the list's polling so its status and diff stay current.
+  // The open sheet refetches when the open task itself changes; a slow tick catches edits the row cannot see.
   useEffect(() => {
     if (!open) { setDetail(null); return; }
     const host = hostsRef.current.find(item => item.id === open.hostId);
     if (!host) return;
     let live = true;
-    void host.rpc(readTask, { id: open.id }).then(result => { if (live) setDetail({ hostId: host.id, ...result }); }).catch(error => { if (live) fail(error); });
-    return () => { live = false; };
-  }, [fail, open, lists]);
+    const load = () => {
+      void host.rpc(readTask, { id: open.id }).then(result => { if (live) setDetail({ hostId: host.id, ...result }); }).catch(error => { if (live) fail(error); });
+    };
+    load();
+    const timer = setInterval(load, SHEET_REFRESH);
+    return () => { live = false; clearInterval(timer); };
+  }, [fail, open, openListed?.updatedAt]);
 
   async function run<T>(host: TodoHost, action: (rpc: Rpc) => Promise<T>): Promise<T | null> {
     setBusy(true);
@@ -228,6 +247,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
   const selfBlocked = Boolean(lists[hosts[0].id]?.loadError);
   const unsavedStart = ui('Save or cancel the collaboration edits before starting.', '先保存或取消协作设置的修改，再开始。');
 
+  /** Remember this task's collaboration so the next new task on this machine starts there. */
   function rememberCollaboration(hostId: string, collaboration: TaskCollaboration | null) {
     const store = browserCollaborationStore();
     if (!store) return;

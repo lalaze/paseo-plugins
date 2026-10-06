@@ -10,6 +10,13 @@ import type { GitPort } from './git';
 import type { TaskStore } from './store';
 
 const EMPTY_DIFF: TaskDiff = { patch: '', files: [], truncated: false };
+/** Turn-event dedup keys are kept insertion-ordered and evicted past this size. */
+const CONSUMED_LIMIT = 1000;
+/** Backstop for startedTurn entries a terminal-state cleanup did not reach (older rounds' agents). */
+const STARTED_TURN_LIMIT = 1000;
+/** Background throttles measured on the monotonic clock; required syncs (accept, read, turn events) bypass them. */
+const SYNC_MIN_INTERVAL = 1000;
+const RECONCILE_MIN_INTERVAL = 5000;
 
 export interface TurnEvent {
   agentId: string;
@@ -41,6 +48,10 @@ export interface TodoEngineOptions {
   collaboration?: CollaborationPort;
   now?: () => number;
   newId?: () => string;
+  /** Monotonic clock for background throttles; `now` stays the source for timestamps written to tasks. */
+  clock?: () => number;
+  /** Test hook: override the startedTurn backstop size. */
+  startedTurnLimit?: number;
 }
 
 function requireCollaboration(value: TaskCollaboration | null | undefined): TaskCollaboration | null {
@@ -92,9 +103,15 @@ function mergeError(reason: string): TodoErrorCode {
   return 'merge-verify';
 }
 
+/**
+ * One process owns the queue. A repository runs one task at a time.
+ * A merge happens only from accept(), and only when the binding on screen matches the saved one.
+ */
 export class TodoEngine {
   private readonly now: () => number;
   private readonly newId: () => string;
+  private readonly clock: () => number;
+  private readonly startedTurnLimit: number;
   private readonly listeners = new Set<() => void>();
   private readonly repoTails = new Map<string, Promise<void>>();
   private readonly gitTails = new Map<string, Promise<void>>();
@@ -105,6 +122,9 @@ export class TodoEngine {
   private readonly permissions = new Map<string, Set<string>>();
   private readonly preparing = new Set<string>();
   private readonly collaborationSyncs = new Map<string, Promise<void>>();
+  private readonly collaborationSyncedAt = new Map<string, number>();
+  private readonly reconciles = new Map<string, Promise<void>>();
+  private readonly reconciledAt = new Map<string, number>();
   private readonly collaborationRecoveries = new Map<string, Promise<void>>();
   private readonly collaborationPoll: ReturnType<typeof setInterval>;
   private readonly idleWaiters: Array<() => void> = [];
@@ -116,10 +136,13 @@ export class TodoEngine {
   constructor(private readonly options: TodoEngineOptions) {
     this.now = options.now ?? (() => Date.now());
     this.newId = options.newId ?? (() => randomUUID());
+    this.clock = options.clock ?? (() => performance.now());
+    this.startedTurnLimit = options.startedTurnLimit ?? STARTED_TURN_LIMIT;
     this.collaborationPoll = setInterval(() => this.watchCollaborations(), 2000);
     this.collaborationPoll.unref();
   }
 
+  /** The saved board. Also starts a collaboration poll so phases do not wait for the next interval. */
   list() {
     this.watchCollaborations();
     return { tasks: this.options.store.list(), loadError: this.options.store.loadError, dataDir: this.options.store.dir };
@@ -132,6 +155,7 @@ export class TodoEngine {
     return { ...listed, tasks: listed.tasks.filter(task => task.repository === repository) };
   }
 
+  /** Save a draft. Does not open a worktree or a session. */
   async createTask(input: CreateTaskInput): Promise<Task> {
     if (this.disposed) throw todoError('store-invalid');
     this.ensureWritable();
@@ -156,6 +180,7 @@ export class TodoEngine {
     return task;
   }
 
+  /** Queue every draft in one repository, or every draft when repository is null. */
   async startQueue(repository: string | null): Promise<Task[]> {
     if (this.disposed) throw todoError('store-invalid');
     this.ensureWritable();
@@ -172,6 +197,7 @@ export class TodoEngine {
     return this.options.store.list();
   }
 
+  /** Queue one draft. The collaboration snapshot already saved on it is what will run. */
   async startTask(id: string): Promise<Task> {
     if (this.disposed) throw todoError('store-invalid');
     this.ensureWritable();
@@ -184,6 +210,7 @@ export class TodoEngine {
     return this.options.store.get(id);
   }
 
+  /** Replace the snapshot on an unstarted draft. A task that already has an operation id is refused. */
   async updateCollaboration(id: string, collaboration: TaskCollaboration | null): Promise<Task> {
     if (this.disposed) throw todoError('store-invalid');
     this.ensureWritable();
@@ -201,6 +228,7 @@ export class TodoEngine {
     });
   }
 
+  /** Host capabilities for the form. A host without collaboration returns a catalog error instead of throwing. */
   async collaborationCatalog(): Promise<CollaborationCatalog> {
     if (!this.options.collaboration) return unavailableCatalog(explain('collaboration-unavailable'));
     return this.options.collaboration.catalog();
@@ -224,6 +252,7 @@ export class TodoEngine {
     }
   }
 
+  /** A draft is canceled immediately. A live run stays canceling until its agent and collaboration run stop. */
   async cancel(id: string): Promise<Task> {
     if (this.disposed) throw todoError('cancel-rejected');
     let agentId: string | null = null;
@@ -251,6 +280,7 @@ export class TodoEngine {
     return this.options.store.get(id);
   }
 
+  /** A blocked collaboration keeps its run and waits for the repository slot. Anything else stops the old run first. */
   async retry(id: string): Promise<Task> {
     if (this.disposed) throw todoError('retry-rejected');
     this.ensureWritable();
@@ -272,6 +302,7 @@ export class TodoEngine {
     return this.options.store.get(id);
   }
 
+  /** Queue another round with the follow-up. Stops the previous collaboration run before the new session opens. */
   async continue(id: string, prompt: string): Promise<Task> {
     if (this.disposed) throw todoError('continue-rejected');
     this.ensureWritable();
@@ -371,10 +402,14 @@ export class TodoEngine {
     }
   }
 
+  /** A new turn on a finished single-agent session invalidates its review binding. Collaboration does not use this. */
   async onTurnStarted(event: TurnStartedEvent): Promise<void> {
     if (this.disposed) return;
+    // Re-insert so the map stays in recency order: the front is the agent idle longest, never one mid-turn.
+    this.startedTurn.delete(event.agentId);
     this.startedTurn.set(event.agentId, event.turnId);
-    const task = this.options.store.list().find(item => item.agentId === event.agentId);
+    while (this.startedTurn.size > this.startedTurnLimit) this.startedTurn.delete(this.startedTurn.keys().next().value as string);
+    const task = this.options.store.findByAgent(event.agentId);
     if (!task || task.collaboration) return;
     if (task.status !== 'awaiting_review' && task.status !== 'merge_failed') return;
     await this.lockTask(task.id, async () => {
@@ -389,12 +424,14 @@ export class TodoEngine {
     });
   }
 
+  /** Record the turn, then advance the task. A collaboration run is advanced by the host poll, not by this event alone. */
   async onTurnEnded(event: TurnEvent): Promise<void> {
     if (this.disposed) return;
     if (!this.remember(event)) return;
     await this.dispatchTurn(event);
   }
 
+  /** Single-agent permission. A collaboration task takes its permission state from the host run. */
   async onPermissionRequested(agentId: string, requestId: string): Promise<void> {
     if (this.disposed) return;
     const pending = this.permissions.get(agentId) ?? new Set<string>();
@@ -412,7 +449,7 @@ export class TodoEngine {
   /** Needs permission while any request is open; resolving one of two leaves the agent blocked on the other. */
   private async applyPermission(agentId: string): Promise<void> {
     const pending = (this.permissions.get(agentId)?.size ?? 0) > 0;
-    const task = this.options.store.list().find(item => item.agentId === agentId);
+    const task = this.options.store.findByAgent(agentId);
     // Collaboration permission comes from the host run, not one main-agent permission request.
     if (!task || task.collaboration) {
       if (!pending) this.permissions.delete(agentId);
@@ -426,6 +463,7 @@ export class TodoEngine {
     if (!pending) this.permissions.delete(agentId);
   }
 
+  /** Reattach sessions after a restart. Does not send the prompt again. */
   async recover(): Promise<void> {
     if (this.options.store.loadError) return;
     for (const task of this.options.store.list()) await this.recoverOne(task.id);
@@ -435,6 +473,7 @@ export class TodoEngine {
     this.tick();
   }
 
+  /** Stop the poll, wait for in-flight work, then release the store lock. */
   async dispose(): Promise<void> {
     this.disposed = true;
     clearInterval(this.collaborationPoll);
@@ -626,7 +665,21 @@ export class TodoEngine {
       seen.add(task.repository);
       void this.exclusive(task.repository, () => this.execute(task.id));
     }
-    for (const task of tasks) if (task.status === 'awaiting_review') void this.reconcile(task.id);
+    for (const task of tasks) if (task.status === 'awaiting_review') this.watchReconcile(task.id);
+  }
+
+  /** A tick-triggered reconcile at most every few seconds per task; read() and accept() still verify every time. */
+  private watchReconcile(id: string): void {
+    if (this.reconciles.has(id)) return;
+    const last = this.reconciledAt.get(id);
+    if (last !== undefined && this.clock() - last < RECONCILE_MIN_INTERVAL) return;
+    const run = this.reconcile(id).catch(() => undefined).finally(() => {
+      if (this.reconciles.get(id) === run) {
+        this.reconciles.delete(id);
+        this.reconciledAt.set(id, this.clock());
+      }
+    });
+    this.reconciles.set(id, run);
   }
 
   private async execute(id: string): Promise<void> {
@@ -853,12 +906,13 @@ export class TodoEngine {
 
   private consume(event: TurnEvent): void {
     this.consumed.add(this.eventKey(event));
+    while (this.consumed.size > CONSUMED_LIMIT) this.consumed.delete(this.consumed.values().next().value as string);
     const index = this.turns.findIndex(item => this.eventKey(item) === this.eventKey(event));
     if (index >= 0) this.turns.splice(index, 1);
   }
 
   private async dispatchTurn(event: TurnEvent): Promise<void> {
-    const task = this.options.store.list().find(item => item.agentId === event.agentId);
+    const task = this.options.store.findByAgent(event.agentId);
     if (!task) return;
     if (await this.applyTurn(task.id, event)) this.consume(event);
   }
@@ -868,7 +922,7 @@ export class TodoEngine {
     const pending = this.turns.filter(item => item.agentId === agentId);
     for (const event of pending) {
       if (this.consumed.has(this.eventKey(event))) continue;
-      const task = this.options.store.list().find(item => item.agentId === agentId);
+      const task = this.options.store.findByAgent(agentId);
       if (!task) continue;
       if (await this.applyTurn(task.id, event)) this.consume(event);
     }
@@ -1144,13 +1198,21 @@ export class TodoEngine {
     if (this.disposed || this.closed) return Promise.resolve();
     const previous = this.collaborationSyncs.get(id);
     if (previous && !options?.required) return previous;
+    // A background sync that just finished does not need to run again; a required one always does.
+    if (!options?.required) {
+      const last = this.collaborationSyncedAt.get(id);
+      if (last !== undefined && this.clock() - last < SYNC_MIN_INTERVAL) return previous ?? Promise.resolve();
+    }
     const release = this.enter();
     if (!release) return Promise.resolve();
     const run = (async () => {
       if (previous) await previous.catch(() => undefined);
       await this.syncCollaborationNow(id, options);
     })().finally(() => {
-      if (this.collaborationSyncs.get(id) === run) this.collaborationSyncs.delete(id);
+      if (this.collaborationSyncs.get(id) === run) {
+        this.collaborationSyncs.delete(id);
+        this.collaborationSyncedAt.set(id, this.clock());
+      }
       release();
     });
     this.collaborationSyncs.set(id, run);
@@ -1431,8 +1493,19 @@ export class TodoEngine {
     const release = this.enter();
     if (!release) return this.options.store.tryGet(task.id) ?? task;
     try {
-      const next = taskSchema.parse({ ...task, updatedAt: this.now() });
-      await this.options.store.replace(next);
+      const next = await this.options.store.replace({ ...task, updatedAt: this.now() });
+      // A terminal task's session gets no more turns for it, so its turn/permission bookkeeping can go,
+      // along with the per-task throttle and reconcile entries. taskTails stays: a queued lock could still
+      // be chained on it, and dropping the tail would let a new lock run concurrently.
+      if (next.status === 'merged' || next.status === 'canceled') {
+        if (next.agentId) {
+          this.startedTurn.delete(next.agentId);
+          this.permissions.delete(next.agentId);
+        }
+        this.collaborationSyncedAt.delete(next.id);
+        this.reconciledAt.delete(next.id);
+        this.reconciles.delete(next.id);
+      }
       for (const listener of [...this.listeners]) listener();
       return next;
     } finally {

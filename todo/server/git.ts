@@ -114,6 +114,7 @@ interface WorktreeRow {
   branch: string | null;
 }
 
+/** Task worktrees live under the plugin data dir, outside the repository, so the user's checkout is not switched. */
 export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {}): GitPort {
   const run = options.run ?? defaultGitRun;
   const worktreeRoot = options.worktreeRoot ?? join(todoDataDir(), 'worktrees');
@@ -129,6 +130,16 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
       throw new Error((result.stderr || result.stdout || `无法解析 ${ref}`).trim());
     }
     return value;
+  }
+
+  /** One rev-parse for several refs: one output line each, in order; a short or non-sha answer is an error. */
+  async function revs(cwd: string, refs: string[]): Promise<string[]> {
+    const result = await text(cwd, ['rev-parse', ...refs]);
+    const lines = result.stdout.trim().split('\n').map(line => line.trim());
+    if (result.code !== 0 || lines.length !== refs.length || lines.some(line => !shaSchema.safeParse(line).success)) {
+      throw new Error((result.stderr || result.stdout || `无法解析 ${refs.join(' ')}`).trim());
+    }
+    return lines;
   }
 
   async function porcelain(cwd: string): Promise<string> {
@@ -183,17 +194,19 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
     return trimmed.length > 2000 ? `${trimmed.slice(0, 2000)}…` : trimmed;
   }
 
-  async function gitPath(cwd: string, name: string): Promise<string | null> {
-    const located = await text(cwd, ['rev-parse', '--git-path', name]);
-    if (located.code !== 0) return null;
-    const raw = located.stdout.trim();
-    return isAbsolute(raw) ? raw : join(cwd, raw);
-  }
+  const OPERATION_MARKERS = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply'];
 
+  /** One rev-parse resolves every marker path, in order; a short answer means the output cannot be trusted. */
   async function operationInProgress(cwd: string): Promise<string | null> {
-    for (const name of ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply']) {
-      const path = await gitPath(cwd, name);
-      if (path && existsSync(path)) return name;
+    const located = await text(cwd, ['rev-parse', ...OPERATION_MARKERS.flatMap(name => ['--git-path', name])]);
+    if (located.code !== 0) return null;
+    const lines = located.stdout.trim().split('\n').map(line => line.trim());
+    if (lines.length !== OPERATION_MARKERS.length) {
+      throw new Error((located.stderr || located.stdout || '无法确认仓库状态').trim());
+    }
+    for (let index = 0; index < lines.length; index++) {
+      const raw = lines[index];
+      if (existsSync(isAbsolute(raw) ? raw : join(cwd, raw))) return OPERATION_MARKERS[index];
     }
     return null;
   }
@@ -206,10 +219,13 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
   }
 
   async function assertTaskCheckout(root: string, worktree: string, branch: string): Promise<void> {
-    const topOut = await text(worktree, ['rev-parse', '--show-toplevel']);
+    const topOut = await text(worktree, ['rev-parse', '--show-toplevel', '--git-common-dir']);
     if (topOut.code !== 0) throw todoError('worktree-moved', '任务目录不是 git 工作树');
-    if (await realpath(topOut.stdout.trim()) !== await realpath(worktree)) throw todoError('worktree-moved', '任务目录不是工作树根');
-    if (await commonDir(worktree) !== await commonDir(root)) throw todoError('worktree-moved', '任务目录不属于预期仓库');
+    const lines = topOut.stdout.trim().split('\n').map(line => line.trim());
+    if (lines.length !== 2) throw todoError('worktree-moved', '任务目录不是 git 工作树');
+    if (await realpath(lines[0]) !== await realpath(worktree)) throw todoError('worktree-moved', '任务目录不是工作树根');
+    const common = await realpath(isAbsolute(lines[1]) ? lines[1] : join(worktree, lines[1]));
+    if (common !== await commonDir(root)) throw todoError('worktree-moved', '任务目录不属于预期仓库');
     const current = await text(worktree, ['branch', '--show-current']);
     if (current.code !== 0 || current.stdout.trim() !== branch) throw todoError('worktree-moved', '任务目录当前分支不是任务分支');
     const busy = await operationInProgress(worktree);
@@ -244,8 +260,7 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
 
   async function snapshot(input: { root: string; worktree: string; branch: string; targetBranch: string }): Promise<BindingSnapshot> {
     await assertTaskCheckout(input.root, input.worktree, input.branch);
-    const head = await rev(input.worktree, 'HEAD');
-    const tree = await rev(input.worktree, `${head}^{tree}`);
+    const [head, tree] = await revs(input.worktree, ['HEAD', 'HEAD^{tree}']);
     const clean = (await porcelain(input.worktree)).trim() === '';
     const targetHead = await rev(input.root, `refs/heads/${input.targetBranch}`);
     return { head, tree, clean, targetHead };
@@ -270,6 +285,7 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
       const result = await text(root, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]);
       return result.code === 0;
     },
+    /** Reuse a checkout of the task branch, or create the branch from the target and add a worktree. */
     async ensureWorktree(input) {
       if (!branchSchema.safeParse(input.branch).success || !branchSchema.safeParse(input.targetBranch).success) {
         throw todoError('branch-invalid');
@@ -299,6 +315,7 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
       const top = await realpath((await text(desired, ['rev-parse', '--show-toplevel'])).stdout.trim());
       return { worktree: top, branch: input.branch, baseCommit: await rev(top, 'HEAD') };
     },
+    /** Commit a dirty task worktree, then refuse unless that commit is the task branch tip. */
     async capture(input) {
       await assertTaskCheckout(input.root, input.worktree, input.branch);
       if ((await porcelain(input.worktree)).trim()) {
@@ -310,10 +327,10 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
         if (committed.code !== 0) throw new Error(clip(committed.stderr || committed.stdout || '无法提交任务成果'));
       }
       await assertTaskCheckout(input.root, input.worktree, input.branch);
-      const commit = await rev(input.worktree, 'HEAD');
+      const [commit, tree] = await revs(input.worktree, ['HEAD', 'HEAD^{tree}']);
       const branchHead = await rev(input.root, `refs/heads/${input.branch}`);
       if (branchHead !== commit) throw todoError('worktree-moved', '提交没有落在任务分支上');
-      return { commit, tree: await rev(input.worktree, `${commit}^{tree}`) };
+      return { commit, tree };
     },
     snapshot,
     readTargetHead(root, branch) {
@@ -335,6 +352,7 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
         truncated: full.length > PATCH_LIMIT,
       };
     },
+    /** Build the merge commit with merge-tree. Does not check out or move the user's branch. */
     async prepareMerge(input) {
       const ready = await preflight(input);
       if ('ok' in ready) return ready;

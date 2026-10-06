@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { todoError, type TodoFailure } from '../shared/errors';
 import { storeFileSchema, taskSchema, type Task } from '../shared/schema';
 
+/** PASEO_TODO_DATA_DIR, or $PASEO_HOME/paseo-todo, or ~/.paseo/paseo-todo. */
 export function todoDataDir(env: NodeJS.ProcessEnv = process.env): string {
   return env.PASEO_TODO_DATA_DIR ?? join(env.PASEO_HOME ?? join(homedir(), '.paseo'), 'paseo-todo');
 }
@@ -18,6 +19,7 @@ function isTodoFailure(error: unknown, code: string): error is TodoFailure {
   return error instanceof Error && (error as TodoFailure).code === code;
 }
 
+/** state.json plus a directory lock, so a second process cannot write the same file. A corrupt file is left untouched. */
 export class TaskStore {
   readonly file: string;
   readonly lockFile: string;
@@ -73,6 +75,12 @@ export class TaskStore {
     return this.tasks.map(task => structuredClone(task));
   }
 
+  /** The one task a session belongs to; clones only the match, unlike list(). */
+  findByAgent(agentId: string): Task | null {
+    const task = this.tasks.find(item => item.agentId === agentId);
+    return task ? structuredClone(task) : null;
+  }
+
   tryGet(id: string): Task | null {
     const task = this.tasks.find(item => item.id === id);
     return task ? structuredClone(task) : null;
@@ -92,7 +100,7 @@ export class TaskStore {
     });
   }
 
-  async replace(task: Task): Promise<void> {
+  async replace(task: Task): Promise<Task> {
     const parsed = taskSchema.parse(task);
     await this.transaction(current => {
       const index = current.findIndex(item => item.id === parsed.id);
@@ -101,6 +109,7 @@ export class TaskStore {
       next[index] = parsed;
       return next;
     });
+    return parsed;
   }
 
   async dispose(): Promise<void> {
@@ -138,9 +147,8 @@ export class TaskStore {
     if (!this.writable || !this.token) throw todoError(this.loadError === 'store-locked' ? 'store-locked' : 'store-invalid');
     const run = this.queue.then(async () => {
       const next = change(this.tasks.map(task => structuredClone(task)));
-      const body = JSON.stringify({ version: 1, tasks: next }, null, 2);
-      storeFileSchema.parse(JSON.parse(body));
-      await this.writeBody(body);
+      // The in-memory tasks were validated on the way in; only the changed task is parsed, not the whole file.
+      await this.writeBody(JSON.stringify({ version: 1, tasks: next }, null, 2));
       this.tasks = next;
     });
     this.queue = run.then(() => undefined, () => undefined);

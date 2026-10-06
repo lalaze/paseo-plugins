@@ -51,6 +51,8 @@ function harness(options: {
   archive?: () => Promise<void>;
   removeWorktree?: GitPort['removeWorktree'];
   collaboration?: CollaborationPort;
+  clock?: () => number;
+  startedTurnLimit?: number;
 } = {}) {
   const archived: Array<{ taskId: string; workspaceId: string | null; worktree: string | null }> = [];
   const removed: string[] = [];
@@ -106,6 +108,8 @@ function harness(options: {
       const store = await TaskStore.open(dir);
       const engine = new TodoEngine({
         store, git, agents, ...(options.collaboration ? { collaboration: options.collaboration } : {}),
+        ...(options.clock ? { clock: options.clock } : {}),
+        ...(options.startedTurnLimit ? { startedTurnLimit: options.startedTurnLimit } : {}),
         now: () => now++, newId: () => `00000000-0000-4000-8000-${String(++seq).padStart(12, '0')}`,
       });
       this.engine = engine;
@@ -287,6 +291,54 @@ describe('engine rounds', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it('coalesces tick reconciles for a task awaiting review, but read still checks every time', async () => {
+    let tick = 0;
+    const box = harness({ clock: () => tick });
+    let snapshots = 0;
+    const snap = box.git.snapshot;
+    box.git.snapshot = async input => { snapshots += 1; return snap(input); };
+    await withEngine(box, async engine => {
+      const task = await reviewed(box, engine, 'calm');
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const calm = snapshots;
+      // More ticks inside the window do not re-snapshot the same task.
+      await engine.startQueue(null);
+      await engine.startQueue(null);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      assert.equal(snapshots, calm);
+      // A read reconciles regardless of the window.
+      await engine.read(task.id);
+      assert.equal(snapshots, calm + 1);
+      // Past the window, a tick reconciles again.
+      tick += 6000;
+      await engine.startQueue(null);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      assert.equal(snapshots, calm + 2);
+    });
+  });
+
+  it('evicts the longest-idle agent from the turn ledger, not one that keeps starting turns', async () => {
+    const box = harness({ startedTurnLimit: 2 });
+    await withEngine(box, async engine => {
+      const task = await draft(engine, 'busy');
+      await engine.startTask(task.id);
+      await waitFor(() => engine.list().tasks[0]?.status === 'running');
+      const agentId = box.created[0] ?? '';
+      await engine.onTurnStarted({ agentId, turnId: 't1' });
+      await engine.onTurnStarted({ agentId: 'idle-1', turnId: 'x1' });
+      // Refreshing the live agent moves it to the back; the overflow then drops idle-1, never it.
+      await engine.onTurnStarted({ agentId, turnId: 't2' });
+      await engine.onTurnStarted({ agentId: 'idle-2', turnId: 'x2' });
+      // The live entry still says t2: a stale end from t1 is consumed without capturing.
+      await engine.onTurnEnded({ agentId, turnId: 't1', outcome: { kind: 'completed' } });
+      assert.equal(engine.list().tasks[0]?.status, 'running');
+      assert.equal(box.captures.length, 0);
+      await engine.onTurnEnded({ agentId, turnId: 't2', outcome: { kind: 'completed' } });
+      assert.equal(engine.list().tasks[0]?.status, 'awaiting_review');
+      assert.equal(box.captures.length, 1);
+    });
   });
 
   it('finishes a cancel that arrives during worktree setup when no agent exists', async () => {
@@ -1436,6 +1488,35 @@ describe('collaboration lifecycle', () => {
       assert.equal(order[0], `workspace:/wt/${task.id}`);
       assert.equal(order[1], 'status');
       assert.equal(order[2], 'conversation.open');
+    });
+  });
+
+  it('throttles background collaboration syncs while a read always resyncs', async () => {
+    const host = new CollaborationHost();
+    let tick = 0;
+    const box = harness({ collaboration: host.port, clock: () => tick });
+    await withEngine(box, async engine => {
+      const task = await engine.createTask({
+        title: 'Poll', prompt: 'Do the work', repository: REPO, projectId: null, projectName: null,
+        targetBranch: 'main', provider: 'stub/model', modeId: null, collaboration: collaborationSnapshot(),
+      });
+      await engine.startTask(task.id);
+      await waitFor(() => engine.list().tasks[0]?.status === 'running');
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const synced = host.resyncs.length;
+      // Inside the window, board polls do not resync.
+      engine.list();
+      engine.list();
+      await new Promise(resolve => setTimeout(resolve, 20));
+      assert.equal(host.resyncs.length, synced);
+      // A read's required sync always runs.
+      await engine.read(task.id);
+      assert.equal(host.resyncs.length, synced + 1);
+      // Past the window, a board poll resyncs again.
+      tick += 2000;
+      engine.list();
+      await new Promise(resolve => setTimeout(resolve, 20));
+      assert.equal(host.resyncs.length, synced + 2);
     });
   });
 });
