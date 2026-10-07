@@ -28,6 +28,7 @@ function supported(locale: string | null | undefined): UiLocale | null {
   return normalized === 'zh' || normalized === 'zh-cn' || normalized.startsWith('zh-hans') ? 'zh-CN' : normalized.startsWith('en') ? 'en' : null;
 }
 
+/** Paseo's saved language wins. Otherwise the browser or system language. Anything else is English. */
 export function resolveUiLocale(runtime = globalThis as unknown as Runtime): UiLocale {
   const selected = paseoLanguage(runtime);
   if (selected) return supported(selected) ?? 'en';
@@ -40,6 +41,7 @@ export function resolveUiLocale(runtime = globalThis as unknown as Runtime): UiL
   catch { return 'en'; }
 }
 
+/** Pick the English or Chinese value for the current locale. */
 export function ui<T>(en: T, zhCN: T, runtime?: Runtime): T {
   return resolveUiLocale(runtime) === 'zh-CN' ? zhCN : en;
 }

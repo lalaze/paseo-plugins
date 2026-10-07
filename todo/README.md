@@ -8,6 +8,18 @@ The sidebar page gathers tasks from every connected host that has this plugin in
 
 Inside a workspace, the **Tasks** panel sits next to Files and Changes in the explorer (or run **Tasks for this project** from the command center). It shows the same columns stacked, only for that project, and adds new tasks to the project root. The sidebar page still shows every repository. Plugin ID: `paseo-todo`. It needs a Paseo daemon from 0.10 up to, but not including, 0.12.
 
+## Collaboration
+
+Collaboration is chosen in the **New task** dialog, not from a separate toolbar dialog. **Off** and "never saved" both leave a new task as a single agent; the host catalog only fills in the form. **Full flow** is design, then execute, then review. **Execute + review** skips design and needs its own reviewer. Roles, permission modes, prompts, and limits follow the host collaboration settings. Adding a task remembers that choice in this browser (`localStorage`, key `paseo-todo.collaboration-defaults.v1`) so the next new task on the same machine starts there. It is not written to the host's collaboration settings.
+
+Current hosts use their global role prompts even when a conversation supplies its own settings. Explicit task prompts must match the host prompts; blank fields use the host defaults. The plugin checks this before sending the goal and reports a mismatch instead of silently ignoring a task prompt. It never writes global prompts to work around this restriction. Execute + review can also choose the main conversation's agent separately from the worker and reviewer.
+
+**New task** starts from the choice remembered for that machine. Its collaboration controls sit in that same dialog, and **Add to To do** stores the snapshot on the task. Tasks already in the list are not changed. A draft that has not started is edited in its detail sheet, not a second dialog. **Cancel** discards the edit. A failed save keeps what you typed. **Start** and **Start all** will not drop an unsaved edit: that task, and **Start all** for its machine, stay put until you save or cancel. After the task starts, the snapshot is read-only. Switching machines reloads that machine's capabilities and models.
+
+A collaboration task opens its own worktree first, then enables collaboration in that directory before the goal is sent. A host that cannot run collaboration shows the error and does not fall back to a normal agent. The main agent's turn ending does not finish the collaboration. Plan approval and the collaboration result are accepted in the session (**Open session**); this page does not approve or accept them for you. While the session acceptance is still pending, the sheet asks you to open the session and will not merge. After the session is accepted, **Accept and merge** still checks the review binding on this page.
+
+Collaboration status is checked in the background while the plugin runs, including when this page is closed. Retrying a blocked run queues that same run behind other tasks in its repository; other retries and follow-ups stop the old run before opening a new session. Once a review binding has become stale, polling the same completed run will not capture later local edits as a newly reviewed result.
+
 `install-all.sh` does not install this plugin. Add it on its own:
 
 ```bash

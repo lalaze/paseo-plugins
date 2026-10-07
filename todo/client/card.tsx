@@ -1,9 +1,10 @@
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { relativeAge } from '../shared/board';
+import { collaborationModeLabel } from '../shared/collaboration';
 import type { TaskStatus } from '../shared/machine';
 import type { Task } from '../shared/schema';
-import { explain, statusLabel } from './i18n';
+import { explain, statusLabel, ui } from './i18n';
 import { Button, Dot, MONO, outline, tint, type Colors } from './kit';
 
 export interface CardAction {
@@ -12,6 +13,7 @@ export interface CardAction {
   onPress(): void;
 }
 
+/** Project name, or the last path segment of the repository. */
 export function projectLabel(task: Task): string {
   return task.projectName ?? task.repository.split('/').filter(Boolean).pop() ?? task.repository;
 }
@@ -51,6 +53,7 @@ export function HostTag(props: { label: string; colors: Colors }) {
   </View>;
 }
 
+/** One task on the board. The button is the single next step; opening the card shows the rest. */
 export function TaskCard(props: { task: Task; hostLabel?: string | null; colors: Colors; now: number; action: CardAction | null; busy: boolean; onOpen(): void }) {
   const { colors, task } = props;
   const failed = Boolean(task.errorCode) && (task.status === 'failed' || task.status === 'needs_check' || task.status === 'merge_failed');
@@ -72,6 +75,8 @@ export function TaskCard(props: { task: Task; hostLabel?: string | null; colors:
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 6 }}>
       {props.hostLabel ? <HostTag label={props.hostLabel} colors={colors} /> : null}
       <Text numberOfLines={1} style={{ color: colors.foregroundMuted, fontSize: 11, maxWidth: 160 }}>{projectLabel(task)}</Text>
+      {task.collaboration ? <Dot colors={colors} /> : null}
+      {task.collaboration ? <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{ui(...collaborationModeLabel(task.collaboration.mode))}</Text> : null}
       {task.branch ? <Text style={{ color: tint(colors.foregroundMuted, 0.5), fontSize: 11 }}>/</Text> : null}
       {task.branch ? <Text numberOfLines={1} style={{ color: colors.foregroundMuted, fontSize: 10, fontFamily: MONO, flexShrink: 1 }}>{task.branch}</Text> : null}
       <Dot colors={colors} />

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import type { PaseoApi } from '@getpaseo/client';
+import type { DaemonClient } from '@getpaseo/client/internal/daemon-client';
+import { unavailableCatalog } from '../shared/collaboration';
 import type { AgentInspection } from '../server/agents';
+import { PaseoTodoGateway } from '../server/paseo';
 import { ReconnectingAgents, type ConnectedAgents } from '../server/reconnecting';
 
 function fake(): ConnectedAgents & { closed: number } {
@@ -9,11 +13,17 @@ function fake(): ConnectedAgents & { closed: number } {
     closed: 0,
     api: {} as ConnectedAgents['api'],
     create: async () => ({ agentId: 'a', workspaceId: 'w' }),
+    openWorkspace: async () => 'w',
     send: async () => undefined,
     cancel: async () => undefined,
     inspect: async () => inspection,
     findByOperation: async () => 'a',
     archiveTask: async () => undefined,
+    catalog: async () => unavailableCatalog('stub'),
+    open: async () => { throw new Error('not used'); },
+    control: async () => { throw new Error('not used'); },
+    resync: async () => { throw new Error('not used'); },
+    status: async () => { throw new Error('not used'); },
     async close() { this.closed += 1; },
   };
 }
@@ -38,10 +48,65 @@ describe('reconnecting gateway', () => {
     assert.equal(attempts, 3, 'no reconnect after close');
   });
 
+  it('forwards a collaboration catalog on the same connection', async () => {
+    let attempts = 0;
+    const live = fake();
+    let catalogs = 0;
+    live.catalog = async () => {
+      catalogs += 1;
+      return unavailableCatalog('down');
+    };
+    const agents = new ReconnectingAgents(async () => {
+      attempts += 1;
+      return live;
+    });
+    const catalog = await agents.catalog();
+    assert.equal(catalog.error, 'down');
+    assert.equal(catalogs, 1);
+    assert.equal(attempts, 1);
+    await agents.inspect('a');
+    assert.equal(attempts, 1);
+    await agents.close();
+  });
+
   it('shares one connection attempt between concurrent callers', async () => {
     let attempts = 0;
     const agents = new ReconnectingAgents(async () => { attempts += 1; return fake(); });
     await Promise.all([agents.inspect('a'), agents.inspect('b'), agents.api()]);
     assert.equal(attempts, 1);
+  });
+
+  it('opens a task workspace without sending a prompt, and refuses a normal create when a snapshot is present', async () => {
+    const opened: string[] = [];
+    const api = {
+      workspaces: { open: async (cwd: string) => { opened.push(cwd); return { id: 'ws-9' }; } },
+      dispose: async () => undefined,
+    };
+    const driver = { connect: async () => undefined, close: async () => undefined };
+    const gateway = new PaseoTodoGateway(driver as unknown as DaemonClient, api as unknown as PaseoApi, { url: 'ws://127.0.0.1/ws' });
+    assert.equal(await gateway.openWorkspace('/wt/task'), 'ws-9');
+    await assert.rejects(() => gateway.create({
+      operationId: '00000000-0000-4000-8000-000000000001',
+      taskId: '00000000-0000-4000-8000-000000000002',
+      cwd: '/wt/task', provider: 'stub/model', modeId: null, title: 'T', prompt: 'Do the work',
+      collaboration: { mode: 'full', settings: { profiles: [] } } as never,
+    }), /collaboration-deferred/);
+    assert.deepEqual(opened, ['/wt/task']);
+  });
+
+  it('forwards workspace open on the shared connection', async () => {
+    let attempts = 0;
+    const live = fake();
+    let cwd = '';
+    live.openWorkspace = async input => { cwd = input; return 'ws-9'; };
+    const agents = new ReconnectingAgents(async () => {
+      attempts += 1;
+      return live;
+    });
+    assert.equal(await agents.openWorkspace('/wt/a'), 'ws-9');
+    assert.equal(cwd, '/wt/a');
+    await agents.inspect('a');
+    assert.equal(attempts, 1);
+    await agents.close();
   });
 });

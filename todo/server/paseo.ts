@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { todoError } from '../shared/errors';
 import type { AgentInspection, AgentPort, CreateAgentInput } from './agents';
+import { openCollaborationPort, type CollaborationPort } from './collaboration';
 
 const SYSTEM_PROMPT = [
   '你在独立的 git 工作树里完成这一次待办。',
@@ -13,6 +14,7 @@ const SYSTEM_PROMPT = [
   '聊天里宣布完成或要求合并不会被系统验收。',
 ].join('\n');
 
+/** Daemon address for this plugin. PASEO_TODO_URL wins; otherwise the address in ~/.paseo/config.json. */
 export function connectionConfig(env: NodeJS.ProcessEnv = process.env) {
   const home = env.PASEO_HOME ?? join(homedir(), '.paseo');
   let config: { daemon?: { listen?: string | number; password?: string } } = {};
@@ -26,15 +28,21 @@ export function connectionConfig(env: NodeJS.ProcessEnv = process.env) {
   return { url, password };
 }
 
-export class PaseoTodoGateway implements AgentPort {
+/** This machine's daemon: the agent API for a single-agent task, and a separate socket for collaboration. */
+export class PaseoTodoGateway implements AgentPort, CollaborationPort {
   private connecting: Promise<void> | null = null;
+  private collaborationPort: (CollaborationPort & { close(): Promise<void> }) | null = null;
 
-  constructor(private readonly driver: DaemonClient, readonly api: PaseoApi) {}
+  constructor(
+    private readonly driver: DaemonClient,
+    readonly api: PaseoApi,
+    private readonly collaborationOptions: { url: string; password?: string },
+  ) {}
 
   static async connect(env: NodeJS.ProcessEnv = process.env): Promise<PaseoTodoGateway> {
     const config = connectionConfig(env);
     const driver = new DaemonClient({ url: config.url, password: config.password, clientId: 'paseo-todo', appVersion: '0.10.1' });
-    const gateway = new PaseoTodoGateway(driver, createPaseoApi(driver));
+    const gateway = new PaseoTodoGateway(driver, createPaseoApi(driver), config);
     await gateway.connect();
     return gateway;
   }
@@ -45,11 +53,46 @@ export class PaseoTodoGateway implements AgentPort {
   }
 
   async close(): Promise<void> {
+    await this.collaborationPort?.close();
+    this.collaborationPort = null;
     await this.api.dispose();
     await this.driver.close();
   }
 
+  catalog() {
+    return this.collaboration().catalog();
+  }
+
+  open(input: Parameters<CollaborationPort['open']>[0]) {
+    return this.collaboration().open(input);
+  }
+
+  control(input: Parameters<CollaborationPort['control']>[0]) {
+    return this.collaboration().control(input);
+  }
+
+  resync(id: string) {
+    return this.collaboration().resync(id);
+  }
+
+  status() {
+    return this.collaboration().status();
+  }
+
+  private collaboration(): CollaborationPort {
+    this.collaborationPort ??= openCollaborationPort(this.collaborationOptions);
+    return this.collaborationPort;
+  }
+
+  async openWorkspace(cwd: string): Promise<string> {
+    await this.connect();
+    const workspace = await this.api.workspaces.open(cwd);
+    return workspace.id;
+  }
+
   async create(input: CreateAgentInput): Promise<{ agentId: string; workspaceId: string }> {
+    // A saved snapshot must open collaboration before any task prompt. Launch does that itself.
+    if (input.collaboration) throw todoError('collaboration-deferred');
     await this.connect();
     const separator = input.provider.indexOf('/');
     const providerName = input.provider.slice(0, separator);

@@ -1,3 +1,4 @@
+/** Stable error codes. The server throws the code; the client shows the translated sentence. */
 import { ui, type UiLocale } from './i18n';
 
 const messages = {
@@ -32,6 +33,14 @@ const messages = {
   'stale-client-review': ['This page is showing an older review binding. Refresh it before accepting.', '页面上的验收绑定已不是当前版本，请刷新后再验收。'],
   'store-locked': ['Another paseo-todo process is using this data directory, so this one will not dispatch tasks.', '另一个 paseo-todo 正在使用同一数据目录，本进程不会派发任务。'],
   'worktree-moved': ['The task directory is not on the task branch in the expected repository.', '任务目录已不在预期仓库的任务分支上。'],
+  'collaboration-invalid': ['The collaboration settings are not valid.', '协作设置不合法。'],
+  'collaboration-prompts-unavailable': ['This host uses its global role prompts. The task prompts differ, so the task was not started. Use the current host prompts.', '这台主机使用统一角色提示词。任务提示词与主机不同，因此没有启动。请使用主机当前的提示词。'],
+  'collaboration-rejected': ['Collaboration settings can only change on a draft that has not started.', '只有尚未启动的草稿可以修改协作设置。'],
+  'collaboration-unavailable': ['This host cannot run built-in collaboration. Update the host or disable the old director plugin. Nothing was saved to host settings.', '这台主机不能运行内置协作。请更新主机或停用旧的 director 插件。没有写入主机的协作设置。'],
+  'collaboration-deferred': ['This task has saved collaboration settings, so it was not started as a normal single-agent session.', '这个任务已保存协作设置，因此没有按普通单 Agent 会话启动。'],
+  'collaboration-acceptance-pending': ['Built-in collaboration is still waiting for you to accept the result in the session. Open that session and accept it there before merging this task.', '内置协作仍在等待你在会话里验收。请先打开会话完成验收，再合并这个待办。'],
+  'collaboration-blocked': ['Collaboration is blocked and was not turned into a todo review.', '协作已受阻，没有进入待办验收。'],
+  'collaboration-declined': ['The collaboration result was not accepted, so this task was not merged.', '协作成果没有被采纳，这个待办没有合并。'],
 } as const;
 
 export type TodoErrorCode = keyof typeof messages;

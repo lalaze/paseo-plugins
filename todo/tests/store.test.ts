@@ -93,4 +93,49 @@ describe('task store', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('finds a task by agent and hands out an isolated copy', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'todo-store-'));
+    try {
+      const store = await TaskStore.open(dir);
+      const task = { ...draft('11111111-1111-4111-8111-111111111111'), agentId: 'agent-1' };
+      await store.insert(task);
+      const found = store.findByAgent('agent-1');
+      assert.equal(found?.id, task.id);
+      assert.equal(store.findByAgent('agent-nope'), null);
+      assert.ok(found);
+      found.title = 'mutated';
+      assert.equal(store.findByAgent('agent-1')?.title, 'Task');
+      await store.dispose();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads an archive saved before collaboration fields existed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'todo-store-'));
+    try {
+      const legacy = {
+        version: 1,
+        tasks: [{
+          id: '11111111-1111-4111-8111-111111111111', title: 'Old', prompt: 'Work', pendingPrompt: null,
+          repository: '/tmp/repo', projectId: null, projectName: null, targetBranch: 'main', provider: 'stub/model',
+          modeId: null, status: 'draft', branch: null, worktree: null, baseCommit: null, agentId: null, workspaceId: null,
+          operationId: null, operationIds: [], review: null, lastOutcome: null, pendingMergeCommit: null,
+          mergeCommit: null, mergeMethod: null, errorCode: null, errorDetail: null, createdAt: 1, updatedAt: 1,
+        }],
+      };
+      await writeFile(join(dir, 'state.json'), JSON.stringify(legacy));
+      const store = await TaskStore.open(dir);
+      const task = store.get(legacy.tasks[0].id);
+      assert.equal(store.loadError, null);
+      assert.equal(task.collaboration, null);
+      assert.equal(task.collaborationConversationId, null);
+      assert.equal(task.collaborationRunId, null);
+      assert.equal(task.cleanup, null);
+      await store.dispose();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -1,4 +1,6 @@
+/** Task, review binding, and catalog shapes. strict() rejects a renamed field instead of ignoring it. */
 import { z } from 'zod';
+import { taskCollaborationSchema } from './collaboration';
 import { TASK_STATUSES } from './machine';
 
 export const shaSchema = z.string().regex(/^[0-9a-f]{40,64}$/);
@@ -40,6 +42,15 @@ export const taskSchema = z.object({
   targetBranch: branchSchema,
   provider: z.string().regex(/^[^/\s]+\/[^/\s].{0,240}$/),
   modeId: z.string().min(1).max(200).nullable(),
+  collaboration: taskCollaborationSchema.nullable().default(null),
+  collaborationConversationId: z.string().min(1).max(200).nullable().default(null),
+  collaborationRunId: z.string().min(1).max(200).nullable().default(null),
+  /** Last host run phase. Null until the conversation has a run. */
+  collaborationPhase: z.string().min(1).max(80).nullable().default(null),
+  /** Last host run control (`running`, `paused`, `needs_attention`, …). */
+  collaborationControl: z.string().min(1).max(80).nullable().default(null),
+  /** `pending` while the host still waits for the user to accept in the session. `accepted` after that acceptance. */
+  collaborationAcceptance: z.enum(['pending', 'accepted']).nullable().default(null),
   status: z.enum(TASK_STATUSES),
   branch: branchSchema.nullable(),
   worktree: z.string().min(1).nullable(),

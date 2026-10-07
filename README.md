@@ -66,6 +66,16 @@ paseo plugin add lalaze/paseo-plugins --path provider-update
 
 Details: [provider-update/README.md](provider-update/README.md)
 
+## [Shared MCP & skills](shared-tools)
+
+A **Shared MCP & skills** screen in Settings gives every provider on a host one list of MCP servers and one skill library. Shared servers are added to each new agent through Paseo's own `mcpServers` path, so Claude Code, Codex, OpenCode and the ACP providers all get them without any CLI config being edited; Pi joins once its MCP adapter is installed. Skills live in one library and are copied into each CLI's own skills folder (`~/.claude/skills`, `~/.codex/skills`, `~/.grok/skills`, `~/.kimi-code/skills`, …). Copies you edited, and skills of your own with the same name, are never overwritten without asking. Servers can be imported from Claude Code, Codex or pasted JSON, and existing skills from any provider's folder. Plugin ID: `paseo-shared-tools`. It is a separate install: `install-all.sh` and `update-all.sh` do not install or update it.
+
+```bash
+paseo plugin add lalaze/paseo-plugins --path shared-tools
+```
+
+Details: [shared-tools/README.md](shared-tools/README.md)
+
 ## [Pi Qwen thinking levels](pi-qwen-thinking)
 
 A Pi companion extension that forwards the selected thinking strength to the

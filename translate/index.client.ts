@@ -3,7 +3,7 @@ import type { PluginButtonContentProps, PluginClientContext, PluginSurfaceProps 
 import { registerTranslationClient } from './client/selection';
 import { TranslationSettingsScreen } from './client/settings';
 import { TranslationSurface } from './client/translator';
-import { ComposerTranslator } from './client/composer';
+import { ComposerTranslator, type ComposerDraft } from './client/composer';
 import { installComposerPills } from './client/pills';
 import { ui } from './client/i18n';
 import { runtimeInfoRpc } from './shared/rpc';
@@ -18,7 +18,7 @@ export default function contribute(client: PluginClientContext) {
     // iOS/Android: inline reply controls require the companion app capability.
     const Reply = (props: ReplyTranslationProps) => createElement(ReplyTranslator, { ...props, key: props.item.data.text, openSettings: () => client.openSettings('translate-settings') });
     cleanups.push(installReplyTranslations(client, Reply));
-    const Composer = (props: PluginButtonContentProps) => createElement(ComposerTranslator, { ...props, key: props.context === 'agent' ? props.agentId : props.workspaceId, paseo: client.paseo, openSettings: () => { props.close(); client.openSettings('translate-settings'); } });
+    const Composer = (props: PluginButtonContentProps) => createElement(ComposerTranslator, { ...props, key: props.context === 'agent' ? props.agentId : props.workspaceId, paseo: client.paseo, composer: (client as { composer?: ComposerDraft }).composer, openSettings: () => { props.close(); client.openSettings('translate-settings'); } });
     cleanups.push(installComposerPills(client, Composer));
   } else {
     // Desktop and Web: the DOM launcher beside the composer, plus the standalone page from the command center.

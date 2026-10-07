@@ -214,3 +214,64 @@ test('closing the sheet during reply loading prevents a subsequent translation r
     assert.equal(calls, 0);
   });
 });
+
+test('with composer access the sheet translates the typed draft as you pause and fills the message box', async () => {
+  await withMobile(async ({ Composer, harness, render, button, document, dom }) => {
+    const calls: string[] = [];
+    const filled: string[] = [];
+    let closed = 0;
+    const composer = { getText: () => '这个手机体验不够好', replaceText: (target: { agentId: string }, text: string) => { assert.equal(target.agentId, 'agent'); filled.push(text); } };
+    const props = { ...hostProps, context: 'agent', workspaceId: 'workspace', agentId: 'agent', close() { closed++; }, openSettings() {}, composer,
+      paseo: { agents: { ref: () => ({ send: async () => assert.fail('fill must not send') }) } } } as unknown as Parameters<typeof Composer>[0];
+    harness.translate = async input => { calls.push(input.text); return translation(`EN(${input.text})`); };
+    const pause = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 650)); });
+
+    await render(createElement(Composer, props));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    assert.equal(document.querySelector('textarea')!.value, '这个手机体验不够好');
+    assert.deepEqual(calls, ['这个手机体验不够好'], 'the typed draft translates straight away');
+    assert.doesNotMatch(document.body.textContent!, /翻译消息/);
+
+    const input = document.querySelector('textarea')!;
+    for (const value of ['手机', '手机端']) {
+      await act(async () => { input.value = value; input.dispatchEvent(new dom.window.Event('input', { bubbles: true })); });
+    }
+    assert.equal(calls.length, 1, 'no request while typing');
+    await pause();
+    assert.deepEqual(calls.slice(1), ['手机端'], 'one request after the pause');
+
+    await act(async () => button(/^填入输入框$/).click());
+    assert.deepEqual(filled, ['EN(手机端)']);
+    assert.equal(closed, 1);
+  });
+});
+
+test('composer text that is already English is not translated again', async () => {
+  await withMobile(async ({ Composer, harness, render, document }) => {
+    let calls = 0;
+    const composer = { getText: () => 'The phone experience is not good enough', replaceText() {} };
+    const props = { ...hostProps, context: 'agent', workspaceId: 'workspace', agentId: 'agent', close() {}, openSettings() {}, composer,
+      paseo: { agents: { ref: () => ({}) } } } as unknown as Parameters<typeof Composer>[0];
+    harness.translate = async () => { calls++; return translation('x'); };
+    await render(createElement(Composer, props));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)); });
+    assert.equal(document.querySelector('textarea')!.value, '');
+    assert.equal(calls, 0);
+  });
+});
+
+test('sending the translation clears the draft it came from', async () => {
+  await withMobile(async ({ Composer, harness, render, button }) => {
+    let text = '发出去';
+    const sent: string[] = [];
+    const composer = { getText: () => text, replaceText: (_: unknown, value: string) => { text = value; } };
+    const props = { ...hostProps, context: 'agent', workspaceId: 'workspace', agentId: 'agent', close() {}, openSettings() {}, composer,
+      paseo: { agents: { ref: () => ({ send: async (value: string) => { sent.push(value); } }) } } } as unknown as Parameters<typeof Composer>[0];
+    harness.translate = async () => translation('Send it');
+    await render(createElement(Composer, props));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    await act(async () => button(/^发送$/).click());
+    assert.deepEqual(sent, ['Send it']);
+    assert.equal(text, '');
+  });
+});

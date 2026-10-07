@@ -6,7 +6,8 @@ import type { Task } from '../shared/schema';
 function task(id: string, status: Task['status'], updatedAt: number): Task {
   return {
     id, title: id, prompt: id, pendingPrompt: null, repository: '/r', projectId: null, projectName: null,
-    targetBranch: 'main', provider: 'a/b', modeId: null, status, branch: null, worktree: null, baseCommit: null,
+    targetBranch: 'main', provider: 'a/b', modeId: null, collaboration: null, collaborationConversationId: null, collaborationRunId: null,
+    collaborationPhase: null, collaborationControl: null, collaborationAcceptance: null, status, branch: null, worktree: null, baseCommit: null,
     agentId: null, workspaceId: null, operationId: null, operationIds: [], review: null, lastOutcome: null,
     pendingMergeCommit: null, mergeCommit: null, mergeMethod: null, errorCode: null, errorDetail: null, cleanup: null,
     createdAt: 0, updatedAt,

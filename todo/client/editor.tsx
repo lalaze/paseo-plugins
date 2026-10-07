@@ -2,15 +2,18 @@ import { useEffect, useState } from 'react';
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { collaborationDraftIssue, inheritCollaborationDraft, snapshotFromDraft, storedDefault, type CollaborationCatalog, type CollaborationDraft, type TaskCollaboration } from '../shared/collaboration';
 import { readBranches } from '../shared/rpc';
 import { taskTitle } from '../shared/title';
 import type { Catalog } from '../shared/schema';
+import { CollaborationForm, collaborationIssueText } from './collaboration';
 import { ui } from './i18n';
 import { Backdrop, Button, outline, tint, type Colors } from './kit';
 import { Select } from './select';
 
 type Rpc = PluginClientContext['rpc'];
 
+/** What Add sends. Collaboration is the snapshot for this task, not the host's settings. */
 export interface NewTaskInput {
   title: string;
   prompt: string;
@@ -19,8 +22,10 @@ export interface NewTaskInput {
   projectName: string | null;
   targetBranch: string;
   provider: string;
+  collaboration: TaskCollaboration | null;
 }
 
+/** One dialog for the task and its collaboration. Cancel discards both. Add stores the snapshot on the task. */
 export function NewTaskDialog(props: {
   /** Hosts a task can be created on; the chosen one supplies the projects, branches and agents. */
   hosts: readonly { id: string; label: string }[];
@@ -28,6 +33,8 @@ export function NewTaskDialog(props: {
   rpcFor(hostId: string): Rpc;
   colors: Colors;
   catalogs: Readonly<Record<string, Catalog>>;
+  collaborationCatalogs: Readonly<Record<string, CollaborationCatalog>>;
+  collaborationDefaults: Readonly<Record<string, TaskCollaboration | null>>;
   /** Fixed project when opened from a workspace panel. */
   scope: { repository: string; name: string } | null;
   initialRepository: string | null;
@@ -50,6 +57,7 @@ export function NewTaskDialog(props: {
   const [targetBranch, setTargetBranch] = useState('');
   const [provider, setProvider] = useState(props.initialProvider ?? models[0]?.value ?? '');
   const [picker, setPicker] = useState<'host' | 'project' | 'branch' | 'agent' | null>(null);
+  const [collaborationOverride, setCollaborationOverride] = useState<CollaborationDraft | null>(null);
 
   // A host's catalog can arrive after the dialog opens, and switching hosts brings other projects and agents:
   // keep a choice that still exists there, otherwise fall back to the first one.
@@ -63,6 +71,11 @@ export function NewTaskDialog(props: {
     }
   }, [hostId, catalog]);
 
+  // Another machine has its own models and saved default. Drop the previous machine's override.
+  useEffect(() => {
+    setCollaborationOverride(null);
+  }, [hostId]);
+
   useEffect(() => {
     if (!repository) { setBranches([]); return; }
     let live = true;
@@ -75,18 +88,33 @@ export function NewTaskDialog(props: {
   }, [rpc, repository]);
 
   const project = projects.find(item => item.path === repository);
+  const collaborationCatalog = props.collaborationCatalogs[hostId] ?? null;
+  const collaborationDraft = collaborationOverride ?? inheritCollaborationDraft(
+    storedDefault(props.collaborationDefaults, hostId),
+    collaborationCatalog ?? { settings: null, rolePrompts: {} },
+  );
+  const collaborationProblem = collaborationDraftIssue(
+    collaborationDraft,
+    collaborationCatalog,
+    catalog ? catalog.providers.map(entry => entry.provider) : null,
+  );
   // The title may be left empty; the prompt's first line stands in for it.
   const missing = !prompt.trim() ? ui('Write what needs doing', '先写下任务内容')
     : !repository ? ui('Choose a project', '先选项目')
       : !targetBranch ? ui('Choose a branch to merge into', '先选合并到的分支')
         : !provider ? ui('Choose an agent', '先选 Agent')
-          : null;
+          : collaborationProblem ? collaborationIssueText(collaborationProblem)
+            : null;
   const ready = !missing;
-  const submit = (start: boolean) => props.onSubmit({
-    hostId, title: taskTitle(title, prompt), prompt: prompt.trim(), repository, targetBranch, provider,
-    projectId: project?.projectId ?? null, projectName: props.scope?.name ?? project?.name ?? null,
-  }, start);
-
+  const submit = (start: boolean) => {
+    const snap = snapshotFromDraft(collaborationDraft);
+    if (collaborationProblem || snap.error) return;
+    props.onSubmit({
+      hostId, title: taskTitle(title, prompt), prompt: prompt.trim(), repository, targetBranch, provider,
+      projectId: project?.projectId ?? null, projectName: props.scope?.name ?? project?.name ?? null,
+      collaboration: snap.collaboration,
+    }, start);
+  };
   return <Backdrop onClose={props.onClose} align="center">
     <View style={{ width: Math.min(640, props.width - 24), maxHeight: '90%', borderRadius: 16, borderWidth: 1, borderColor: outline(colors), backgroundColor: colors.surface0 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 18, paddingBottom: 4 }}>
@@ -95,7 +123,7 @@ export function NewTaskDialog(props: {
           <Icon name="X" size={16} color={colors.foregroundMuted} />
         </Pressable>
       </View>
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16, gap: 14 }}>
+      <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16, gap: 14 }}>
         <TextInput
           value={title}
           onChangeText={setTitle}
@@ -114,6 +142,11 @@ export function NewTaskDialog(props: {
         />
         {!props.scope && projects.length === 0 ? <TextInput value={repository} onChangeText={setRepository} placeholder={ui('/path/to/repository', '/仓库/路径')} placeholderTextColor={tint(colors.foregroundMuted, 0.55)} autoCapitalize="none" autoCorrect={false}
           style={{ height: 34, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 12, outlineStyle: 'solid', outlineWidth: 0 }} /> : null}
+        <View style={{ gap: 8 }}>
+          <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: '600' }}>{ui('Collaboration', '协作')}</Text>
+          <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{ui('Used for this task; the next new task starts from this choice.', '只用于这条任务，下次新建沿用这次选择。')}</Text>
+          <CollaborationForm draft={collaborationDraft} catalog={catalog} collaboration={collaborationCatalog} colors={colors} disabled={props.busy} onChange={setCollaborationOverride} />
+        </View>
       </ScrollView>
       {picker ? <Pressable accessibilityLabel={ui('Close list', '关闭列表')} onPress={() => setPicker(null)} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 5 }} /> : null}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingBottom: 14, zIndex: 10 }}>

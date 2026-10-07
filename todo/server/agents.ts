@@ -1,3 +1,6 @@
+/** What the engine asks the daemon to do with one task's agent. */
+import type { TaskCollaboration } from '../shared/collaboration';
+
 export interface AgentInspection {
   exists: boolean;
   active: boolean;
@@ -13,10 +16,14 @@ export interface CreateAgentInput {
   modeId: string | null;
   title: string;
   prompt: string;
+  /** Task snapshot. Null keeps the normal single-agent launch. */
+  collaboration: TaskCollaboration | null;
 }
 
 export interface AgentPort {
   create(input: CreateAgentInput): Promise<{ agentId: string; workspaceId: string }>;
+  /** Opens the task worktree's workspace and does not create an agent or send a prompt. */
+  openWorkspace(cwd: string): Promise<string>;
   send(input: { agentId: string; operationId: string; prompt: string }): Promise<void>;
   cancel(agentId: string): Promise<void>;
   inspect(agentId: string): Promise<AgentInspection>;

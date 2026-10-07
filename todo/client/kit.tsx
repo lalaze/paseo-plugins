@@ -21,6 +21,7 @@ export function outline(colors: Colors): string {
 
 export type ButtonVariant = 'primary' | 'outline' | 'ghost';
 
+/** Primary is filled, outline is a border, ghost is text. `xs` is the size used on cards. */
 export function Button(props: {
   label: string;
   icon?: string;
@@ -57,6 +58,7 @@ export function Button(props: {
   </Pressable>;
 }
 
+/** Toolbar chip. Pressable only when onPress is set; a scoped project filter is not. */
 export function Pill(props: { children: ReactNode; colors: Colors; onPress?(): void; active?: boolean; label?: string; style?: StyleProp<ViewStyle> }) {
   const { colors } = props;
   return <Pressable

@@ -1,6 +1,6 @@
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 import { todoError } from './shared/errors';
-import { acceptTask, cancelTask, cleanupTask, continueTask, createTask, listTasks, readBranches, readCatalog, readHostIdentity, readTask, retryTask, startQueue, startTask } from './shared/rpc';
+import { acceptTask, cancelTask, cleanupTask, continueTask, createTask, listTasks, readBranches, readCatalog, readCollaborationCatalog, readHostIdentity, readTask, retryTask, startQueue, startTask, updateTaskCollaboration } from './shared/rpc';
 import type { TurnKind } from './shared/machine';
 import { readBranches as branchesFor, readCatalog as catalogFor } from './server/catalog';
 import { TodoEngine } from './server/engine';
@@ -15,6 +15,7 @@ function report(error: unknown): void {
   console.error('[paseo-todo]', error);
 }
 
+/** Opens the task store, recovers the queue, then serves the RPCs. Daemon events that fail are logged; they do not reject an RPC. */
 export default function contribute(server: PluginServerContext) {
   let engine: TodoEngine | null = null;
   let stopped = false;
@@ -23,7 +24,7 @@ export default function contribute(server: PluginServerContext) {
   const ready = (async () => {
     const store = await TaskStore.open(todoDataDir());
     if (stopped) { await store.dispose(); return; }
-    engine = new TodoEngine({ store, git: createGit(), agents: gateway });
+    engine = new TodoEngine({ store, git: createGit(), agents: gateway, collaboration: gateway });
     for (const job of pending.splice(0)) job();
     // A failed recovery leaves the affected tasks as they were; it must not take the RPCs down with it.
     await engine.recover().catch(report);
@@ -44,6 +45,8 @@ export default function contribute(server: PluginServerContext) {
   server.handle(readHostIdentity, () => hostIdentity());
   server.handle(readTask, async ({ id }) => (await useEngine()).read(id));
   server.handle(readCatalog, async () => catalogFor(await gateway.api()));
+  server.handle(readCollaborationCatalog, async () => (await useEngine()).collaborationCatalog());
+  server.handle(updateTaskCollaboration, async ({ id, collaboration }) => ({ task: await (await useEngine()).updateCollaboration(id, collaboration) }));
   server.handle(readBranches, async ({ repository }) => branchesFor(createGit(), repository));
   server.handle(createTask, async input => ({ task: await (await useEngine()).createTask(input) }));
   server.handle(startQueue, async ({ repository }) => ({ tasks: await (await useEngine()).startQueue(repository) }));

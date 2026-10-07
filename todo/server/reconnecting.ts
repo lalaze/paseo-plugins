@@ -1,8 +1,9 @@
 import type { PaseoApi } from '@getpaseo/client';
 import { todoError } from '../shared/errors';
 import type { AgentInspection, AgentPort, CreateAgentInput } from './agents';
+import type { CollaborationPort } from './collaboration';
 
-export interface ConnectedAgents extends AgentPort {
+export interface ConnectedAgents extends AgentPort, CollaborationPort {
   readonly api: PaseoApi;
   close(): Promise<void>;
 }
@@ -35,6 +36,10 @@ export class ReconnectingAgents implements AgentPort {
     return (await this.get()).create(input);
   }
 
+  async openWorkspace(cwd: string): Promise<string> {
+    return (await this.get()).openWorkspace(cwd);
+  }
+
   async send(input: { agentId: string; operationId: string; prompt: string }): Promise<void> {
     return (await this.get()).send(input);
   }
@@ -53,6 +58,26 @@ export class ReconnectingAgents implements AgentPort {
 
   async archiveTask(input: { taskId: string; workspaceId: string | null; worktree: string | null }): Promise<void> {
     return (await this.get()).archiveTask(input);
+  }
+
+  async catalog() {
+    return (await this.get()).catalog();
+  }
+
+  async open(input: Parameters<CollaborationPort['open']>[0]) {
+    return (await this.get()).open(input);
+  }
+
+  async control(input: Parameters<CollaborationPort['control']>[0]) {
+    return (await this.get()).control(input);
+  }
+
+  async resync(id: string) {
+    return (await this.get()).resync(id);
+  }
+
+  async status() {
+    return (await this.get()).status();
   }
 
   async close(): Promise<void> {
