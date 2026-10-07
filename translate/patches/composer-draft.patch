@@ -1,0 +1,231 @@
+diff --git a/packages/app/src/composer/index.tsx b/packages/app/src/composer/index.tsx
+index 2597cb4b2..8cc076715 100644
+--- a/packages/app/src/composer/index.tsx
++++ b/packages/app/src/composer/index.tsx
+@@ -93,6 +93,7 @@ import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
+ import { useMentionableAgents } from "@/hooks/use-mentionable-agents";
+ import { expandAgentMentions } from "@/utils/agent-mention";
+ import { usePluginClientSlashCommands } from "@/plugins/client-slash-commands";
++import { usePluginComposerDraft } from "@/plugins/composer-draft";
+ import {
+   executePluginClientSlashCommand,
+   resolvePluginClientSlashCommand,
+@@ -1431,6 +1432,13 @@ function ComposerContentImpl({
+     [onChangeText],
+   );
+ 
++  usePluginComposerDraft({
++    serverId,
++    agentId,
++    getText: () => messageInputRef.current?.getText() ?? textSource.getSnapshot(),
++    replaceText: replaceUserInput,
++  });
++
+   const runClientSlashCommand = useCallback(
+     (command: ClientSlashCommand): boolean => {
+       if (!onClientSlashCommand) {
+diff --git a/packages/app/src/plugins/client-runtime.ts b/packages/app/src/plugins/client-runtime.ts
+index 6e7b13501..400a4b20d 100644
+--- a/packages/app/src/plugins/client-runtime.ts
++++ b/packages/app/src/plugins/client-runtime.ts
+@@ -8,6 +8,7 @@ import {
+   createPluginWorkspaceActionContext,
+ } from "./actions";
+ import { createPluginClientStateSource } from "./client-state/source";
++import { createPluginComposerDraft } from "./composer-draft";
+ import type { PluginClientRuntime } from "./evaluate";
+ import { createPluginNavigation } from "./navigation";
+ import { pluginButtonStore } from "./buttons";
+@@ -35,6 +36,7 @@ export function createPluginClientRuntime(
+     addHeaderButton(contribution) {
+       return pluginButtonStore.addHeaderButton(installation, contribution);
+     },
++    composer: createPluginComposerDraft(installation.serverId),
+     openPanel(panelId, options) {
+       openClientPanel({ installation, runtime, state, panelId, options });
+     },
+diff --git a/packages/app/src/plugins/composer-draft/index.test.tsx b/packages/app/src/plugins/composer-draft/index.test.tsx
+new file mode 100644
+index 000000000..1e0236395
+--- /dev/null
++++ b/packages/app/src/plugins/composer-draft/index.test.tsx
+@@ -0,0 +1,68 @@
++/** @vitest-environment jsdom */
++import React, { act } from "react";
++import { createRoot } from "react-dom/client";
++import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
++import { useDraftStore } from "@/stores/draft-store";
++import { createPluginComposerDraft, usePluginComposerDraft } from "./index";
++
++vi.mock("@react-native-async-storage/async-storage", () => ({
++  default: {
++    getItem: async () => null,
++    setItem: async () => undefined,
++    removeItem: async () => undefined,
++  },
++}));
++
++vi.mock("@/attachments/service", () => ({
++  garbageCollectAttachments: async () => undefined,
++}));
++
++beforeAll(() => {
++  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
++    value: true,
++    configurable: true,
++  });
++});
++
++describe("plugin composer draft", () => {
++  beforeEach(() => {
++    useDraftStore.setState({ drafts: {}, createModalDraft: null });
++    document.body.innerHTML = "<div id='root'></div>";
++  });
++
++  it("reads and replaces the text of a mounted composer", async () => {
++    let text = "你好";
++    function Composer() {
++      usePluginComposerDraft({
++        serverId: "host-1",
++        agentId: "agent-1",
++        getText: () => text,
++        replaceText: (next) => {
++          text = next;
++        },
++      });
++      return null;
++    }
++    const root = createRoot(document.getElementById("root")!);
++    await act(async () => root.render(<Composer />));
++    const draft = createPluginComposerDraft("host-1");
++
++    expect(draft.getText({ agentId: "agent-1" })).toBe("你好");
++    draft.replaceText({ agentId: "agent-1" }, "Hello");
++    expect(text).toBe("Hello");
++    expect(createPluginComposerDraft("host-2").getText({ agentId: "agent-1" })).toBe("");
++
++    await act(async () => root.unmount());
++  });
++
++  it("edits the saved draft when no composer is mounted", () => {
++    const draft = createPluginComposerDraft("host-1");
++
++    draft.replaceText({ agentId: "agent-2" }, "Saved for later");
++
++    expect(draft.getText({ agentId: "agent-2" })).toBe("Saved for later");
++    expect(useDraftStore.getState().getDraftInput("agent:host-1:agent-2")?.text).toBe(
++      "Saved for later",
++    );
++  });
++});
+diff --git a/packages/app/src/plugins/composer-draft/index.ts b/packages/app/src/plugins/composer-draft/index.ts
+new file mode 100644
+index 000000000..aad828ba9
+--- /dev/null
++++ b/packages/app/src/plugins/composer-draft/index.ts
+@@ -0,0 +1,58 @@
++import { useEffect, useRef } from "react";
++import type { PluginComposerDraft } from "@getpaseo/plugin/client";
++import { buildDraftStoreKey } from "@/stores/draft-keys";
++import { useDraftStore } from "@/stores/draft-store";
++
++interface MountedComposer {
++  getText(): string;
++  replaceText(text: string): void;
++}
++
++const mounted = new Map<string, MountedComposer[]>();
++const composerKey = (serverId: string, agentId: string) => `${serverId}\u0000${agentId}`;
++
++/** Lets plugins reach the composer the user is looking at for this agent. */
++export function usePluginComposerDraft(input: {
++  serverId: string;
++  agentId: string;
++  getText(): string;
++  replaceText(text: string): void;
++}): void {
++  const latest = useRef(input);
++  latest.current = input;
++  const { serverId, agentId } = input;
++  useEffect(() => {
++    const key = composerKey(serverId, agentId);
++    const composer: MountedComposer = {
++      getText: () => latest.current.getText(),
++      replaceText: (text) => latest.current.replaceText(text),
++    };
++    mounted.set(key, [...(mounted.get(key) ?? []), composer]);
++    return () => {
++      const rest = (mounted.get(key) ?? []).filter((entry) => entry !== composer);
++      if (rest.length) mounted.set(key, rest);
++      else mounted.delete(key);
++    };
++  }, [serverId, agentId]);
++}
++
++/** Mounted composers update on screen; otherwise the saved draft changes for next time. */
++export function createPluginComposerDraft(serverId: string): PluginComposerDraft {
++  return {
++    getText({ agentId }) {
++      const composers = mounted.get(composerKey(serverId, agentId));
++      if (composers?.length) return composers[composers.length - 1].getText();
++      const draftKey = buildDraftStoreKey({ serverId, agentId });
++      return useDraftStore.getState().getDraftInput(draftKey)?.text ?? "";
++    },
++    replaceText({ agentId }, text) {
++      const composers = mounted.get(composerKey(serverId, agentId));
++      if (composers?.length) {
++        for (const composer of composers) composer.replaceText(text);
++        return;
++      }
++      const draftKey = buildDraftStoreKey({ serverId, agentId });
++      useDraftStore.getState().editDraftText({ draftKey, text });
++    },
++  };
++}
+diff --git a/packages/app/src/plugins/evaluate.ts b/packages/app/src/plugins/evaluate.ts
+index 09e2dafd3..53c11674d 100644
+--- a/packages/app/src/plugins/evaluate.ts
++++ b/packages/app/src/plugins/evaluate.ts
+@@ -80,6 +80,7 @@ export type PluginClientRuntime = Pick<
+   | "openPanel"
+   | "addComposerPill"
+   | "addHeaderButton"
++  | "composer"
+ > & { hosts: ReturnType<typeof createPluginHosts> };
+ 
+ export function runPluginClientBundle(
+diff --git a/packages/plugin/src/client/contracts.ts b/packages/plugin/src/client/contracts.ts
+index 6dfd20d69..4e7d1f583 100644
+--- a/packages/plugin/src/client/contracts.ts
++++ b/packages/plugin/src/client/contracts.ts
+@@ -84,9 +84,18 @@ export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
+   agentId?: string;
+ }
+ 
++/** Reads and replaces the text in an agent's composer on this host. */
++export interface PluginComposerDraft {
++  getText(target: { agentId: string }): string;
++  /** Replaces the whole draft; a mounted composer shows the new text immediately. */
++  replaceText(target: { agentId: string }, text: string): void;
++}
++
+ export interface PluginClientContext extends PluginCommandCapabilities {
+   /** Whether timeline transformers can append UI while preserving the source row. */
+   readonly supportsTimelineAfter?: true;
++  /** Present on clients that let plugins edit the composer draft. */
++  readonly composer?: PluginComposerDraft;
+   addSettingsScreen(contribution: PluginSettingsScreenContribution): PluginCleanup;
+   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): PluginCleanup;
+   addSidebarItem(contribution: PluginSidebarContribution): PluginCleanup;
+diff --git a/packages/plugin/src/client/index.ts b/packages/plugin/src/client/index.ts
+index b6f0e342f..93177cadf 100644
+--- a/packages/plugin/src/client/index.ts
++++ b/packages/plugin/src/client/index.ts
+@@ -8,6 +8,7 @@ export type {
+   PluginAgentPanelProps,
+   PluginClientOpenPanelOptions,
+   PluginClientContext,
++  PluginComposerDraft,
+   PluginClientContribution,
+   PluginWorkspacePanelContribution,
+   PluginSettingsScreenContribution,

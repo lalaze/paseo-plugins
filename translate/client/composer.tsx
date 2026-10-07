@@ -3,15 +3,23 @@ import { Pressable, Text, View } from 'react-native';
 import { useAgent, type PluginButtonContentProps, type PluginClientContext } from '@getpaseo/plugin/client';
 import { ScrollView, TextInput, useToast } from '@getpaseo/plugin/client/react-native';
 import { ActionButton, TargetPicker, TranslationProgress } from './controls';
+import { isEnglishCompatibleDraft } from './english';
 import { localizeTranslationError, ui } from './i18n';
 import { latestAssistantText } from './reply';
 import { MAX_SOURCE_LENGTH, targetLabel, useTranslation } from './use-translation';
 
-type Props = PluginButtonContentProps & { paseo: Pick<PluginClientContext['paseo'], 'agents'>; openSettings(): void };
+/** Offered by app builds with the composer draft patch; older apps leave it undefined. */
+export type ComposerDraft = { getText(target: { agentId: string }): string; replaceText(target: { agentId: string }, text: string): void };
+type Props = PluginButtonContentProps & { paseo: Pick<PluginClientContext['paseo'], 'agents'>; composer?: ComposerDraft; openSettings(): void };
+
+export const LIVE_TRANSLATION_DELAY_MS = 600;
 
 /** Keeps draft translation separate from reading an AI reply in the native sheet. */
-export function ComposerTranslator({ theme, close, paseo, openSettings, ...props }: Props) {
+export function ComposerTranslator({ theme, close, paseo, composer, openSettings, ...props }: Props) {
   const agentId = props.context === 'agent' ? props.agentId : '';
+  // With composer access the sheet works like a keyboard's translate bar: it
+  // starts from the typed draft, translates as you pause, and fills the input.
+  const inline = !!composer && !!agentId;
   const draft = useTranslation();
   const reply = useTranslation();
   const [mode, setMode] = useState<'draft' | 'reply'>('draft');
@@ -30,6 +38,25 @@ export function ComposerTranslator({ theme, close, paseo, openSettings, ...props
   const { settings, configured, result, error, busy: translating, copied, progress, complete } = current;
   const busy = draft.busy || reply.busy || fetching || sending;
   const colors = theme.colors;
+
+  // Text that already reads as English was most likely filled in by this sheet.
+  const [prefill] = useState(() => {
+    const typed = inline ? composer.getText({ agentId }) : '';
+    return typed.trim() && !isEnglishCompatibleDraft(typed) ? typed.slice(0, MAX_SOURCE_LENGTH) : '';
+  });
+  useEffect(() => { if (prefill) draft.setSource(prefill); }, []);
+
+  useEffect(() => {
+    if (!inline || mode !== 'draft' || !draft.configured || !draft.source.trim()) return;
+    const timer = setTimeout(() => { void draft.run(draft.source); }, draft.source === prefill ? 0 : LIVE_TRANSLATION_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [inline, mode, draft.configured, draft.source, draft.target]);
+
+  const fill = () => {
+    if (!inline || !draft.result || !draft.complete || busy) return;
+    composer.replaceText({ agentId }, draft.result.translation);
+    close();
+  };
 
   const loadLatestReply = async () => {
     if (!agentId || busy || fetchingRef.current || !configured) return;
@@ -63,6 +90,8 @@ export function ComposerTranslator({ theme, close, paseo, openSettings, ...props
     draft.setError(null);
     try {
       await paseo.agents.ref(agentId).send(draft.result.translation);
+      // The sent translation replaces the draft it came from.
+      if (inline && prefill && composer.getText({ agentId }).slice(0, MAX_SOURCE_LENGTH) === prefill) composer.replaceText({ agentId }, '');
       toast.show(ui('Translation sent to this conversation', '译文已发送到当前对话'), { variant: 'success' });
       if (mounted.current) close();
     } catch (reason) {
@@ -90,14 +119,17 @@ export function ComposerTranslator({ theme, close, paseo, openSettings, ...props
     {settings.status === 'error' || settings.status === 'invalid' ? <Text accessibilityRole="alert" style={{ color: colors.statusDanger }}>{localizeTranslationError(settings.error)}</Text> : null}
 
     {mode === 'draft' ? <View style={{ gap: 10 }}>
-      <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{ui('Write or paste your message here. Review the translation before sending.', '在这里写下或粘贴消息，翻译后查看译文，再发送。')}</Text>
+      <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{inline
+        ? ui('Translates when you pause typing. Fill the message box, then edit or send as usual.', '停顿后自动翻译。填入输入框后可以继续修改，再正常发送。')
+        : ui('Write or paste your message here. Review the translation before sending.', '在这里写下或粘贴消息，翻译后查看译文，再发送。')}</Text>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
         <Text style={{ color: colors.foreground, fontWeight: '600' }}>{ui('Your message', '想发送的消息')}</Text>
         <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{draft.source.length}/{MAX_SOURCE_LENGTH}</Text>
       </View>
       <TextInput
         accessibilityLabel={ui('Text to translate', '需要翻译的文字')}
-        editable={!busy}
+        editable={inline ? !sending : !busy}
+        autoFocus={inline && !prefill}
         value={draft.source}
         onChangeText={draft.setSource}
         multiline
@@ -107,13 +139,16 @@ export function ComposerTranslator({ theme, close, paseo, openSettings, ...props
         placeholder={ui('Enter or paste a message…', '输入或粘贴要发送的消息…')}
         placeholderTextColor={colors.foregroundMuted}
         textAlignVertical="top"
-        style={{ minHeight: 110, maxHeight: 200, padding: 12, color: colors.foreground, backgroundColor: colors.surface1, borderWidth: 1, borderColor: colors.border, borderRadius: 12, fontSize: 16, lineHeight: 23, opacity: busy ? 0.7 : 1 }}
+        style={{ minHeight: 110, maxHeight: 200, padding: 12, color: colors.foreground, backgroundColor: colors.surface1, borderWidth: 1, borderColor: colors.border, borderRadius: 12, fontSize: 16, lineHeight: 23, opacity: !inline && busy ? 0.7 : 1 }}
       />
-      <TargetPicker compact theme={theme} value={draft.target} onChange={draft.setTarget} disabled={busy} />
-      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+      <TargetPicker compact theme={theme} value={draft.target} onChange={draft.setTarget} disabled={inline ? sending : busy} />
+      {inline ? <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{translating ? ui('Translating…', '翻译中…') : ''}</Text>
+        <ActionButton theme={theme} disabled={sending || !draft.source} label={ui('Clear', '清空')} onPress={() => draft.setSource('')} style={{ paddingHorizontal: 12 }} />
+      </View> : <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
         <ActionButton theme={theme} primary disabled={!draft.canTranslate || busy} label={translating ? ui('Translating…', '翻译中…') : ui('Translate message', '翻译消息')} onPress={() => { void draft.run(); }} style={{ flexGrow: 1 }} />
         <ActionButton theme={theme} disabled={busy || !draft.source} label={ui('Clear', '清空')} onPress={() => draft.setSource('')} />
-      </View>
+      </View>}
     </View> : <View style={{ gap: 10 }}>
       <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{ui('Translate the latest AI reply into Chinese. Long replies are translated in full.', '将最新的 AI 回复译成中文，长回复也会翻译全文。')}</Text>
       <ActionButton theme={theme} primary disabled={!agentId || !configured || busy} label={fetching && !translating ? ui('Loading reply…', '读取回复中…') : translating ? ui('Translating…', '翻译中…') : ui('Translate latest reply', '翻译最新回复')} onPress={() => { void loadLatestReply(); }} />
@@ -131,6 +166,7 @@ export function ComposerTranslator({ theme, close, paseo, openSettings, ...props
     {error ? <View style={{ gap: 8 }}>
       <Text accessibilityRole="alert" style={{ color: colors.statusDanger, lineHeight: 20 }}>{error}</Text>
       {mode === 'reply' && replyText ? <ActionButton theme={theme} disabled={busy} label={ui('Continue translation', '继续翻译')} onPress={() => { void reply.runReply(replyText); }} style={{ alignSelf: 'flex-start' }} /> : null}
+      {mode === 'draft' && inline && draft.source.trim() ? <ActionButton theme={theme} disabled={busy} label={ui('Retry', '重试')} onPress={() => { void draft.run(); }} style={{ alignSelf: 'flex-start' }} /> : null}
     </View> : null}
 
     {result ? <View style={{ gap: 12, padding: 14, borderWidth: 1, borderColor: colors.border, borderRadius: 12, backgroundColor: colors.surface1 }}>
@@ -138,7 +174,10 @@ export function ComposerTranslator({ theme, close, paseo, openSettings, ...props
         <Text style={{ color: colors.foreground, fontWeight: '700' }}>{ui(`Translation · ${targetLabel(result.target)}`, `译文 · ${targetLabel(result.target)}`)}</Text>
         <ActionButton theme={theme} disabled={!complete || busy} label={copied ? ui('Copied', '已复制') : ui('Copy', '复制')} color={copied ? colors.statusSuccess : undefined} onPress={() => { void current.copy(); }} style={{ paddingHorizontal: 12 }} />
       </View>
-      {mode === 'draft' ? <ActionButton theme={theme} primary disabled={!agentId || busy || !complete} label={sending ? ui('Sending…', '发送中…') : ui('Send translation', '发送译文')} onPress={() => { void send(); }} /> : null}
+      {mode === 'draft' && inline ? <View style={{ flexDirection: 'row', gap: 8 }}>
+        <ActionButton theme={theme} primary disabled={busy || !complete} label={ui('Fill message box', '填入输入框')} onPress={fill} style={{ flexGrow: 1 }} />
+        <ActionButton theme={theme} disabled={busy || !complete} label={sending ? ui('Sending…', '发送中…') : ui('Send', '发送')} onPress={() => { void send(); }} />
+      </View> : mode === 'draft' ? <ActionButton theme={theme} primary disabled={!agentId || busy || !complete} label={sending ? ui('Sending…', '发送中…') : ui('Send translation', '发送译文')} onPress={() => { void send(); }} /> : null}
       <Text selectable style={{ color: colors.foreground, fontSize: 16, lineHeight: 25 }}>{result.translation}</Text>
     </View> : null}
   </ScrollView>;
