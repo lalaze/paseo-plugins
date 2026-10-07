@@ -6,6 +6,11 @@ import { ui } from './i18n';
 import type { ReplyTranslationProps } from './reply-translation';
 import { useTranslation } from './use-translation';
 
+const COPY_SIZE = 22;
+const COPY_INSET = 6;
+/** The text stops short of the copy button pinned in the card's top-right corner, so the first line never runs under it. */
+const COPY_GUTTER = COPY_INSET + COPY_SIZE + 8;
+
 export function ReplyTranslator({ theme, item, openSettings }: ReplyTranslationProps & { openSettings(): void }) {
   const { settings, configured, result, error, busy, copied, progress, complete, runReply, copy } = useTranslation();
   const [expanded, setExpanded] = useState(false);
@@ -49,7 +54,7 @@ export function ReplyTranslator({ theme, item, openSettings }: ReplyTranslationP
     </View> : null}
     <TranslationProgress theme={theme} progress={progress} busy={busy} />
     {expanded && result ? <View style={{ borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface2 }}>
-      <Text selectable style={{ color: colors.foreground, fontSize: 16, lineHeight: 25, paddingHorizontal: 16, paddingVertical: 14 }}>{result.translation}</Text>
+      <Text selectable style={{ color: colors.foreground, fontSize: 16, lineHeight: 25, paddingLeft: 16, paddingRight: COPY_GUTTER, paddingVertical: 14 }}>{result.translation}</Text>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={copied ? ui('Copied', '已复制') : ui('Copy translation', '复制译文')}
@@ -58,7 +63,7 @@ export function ReplyTranslator({ theme, item, openSettings }: ReplyTranslationP
         hitSlop={8}
         onPress={() => { void copy(); }}
         style={({ pressed }) => ({
-          position: 'absolute', top: 12, right: 6, width: 22, height: 22, alignItems: 'center', justifyContent: 'center', borderRadius: 6,
+          position: 'absolute', top: 12, right: COPY_INSET, width: COPY_SIZE, height: COPY_SIZE, alignItems: 'center', justifyContent: 'center', borderRadius: 6,
           opacity: busy || !complete ? 0.4 : pressed ? 0.55 : 1,
         })}
       >
