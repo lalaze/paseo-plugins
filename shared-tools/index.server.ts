@@ -1,5 +1,8 @@
 import type { PluginServerContext } from '@getpaseo/plugin/server';
-import { deleteMcpServer, deleteSkill, importMcpServers, importSkill, overwriteSkill, readState, saveMcpServer, syncSkills, updateProvider } from './shared/rpc';
+import {
+  cancelSignIn, deleteMcpServer, deleteSkill, finishSignIn, importMcpServers, importSkill, overwriteSkill, readState, saveMcpServer,
+  signInStatus, signOut, startSignIn, syncSkills, updateProvider,
+} from './shared/rpc';
 import { sharedToolsDir } from './server/providers';
 import { SharedTools } from './server/service';
 
@@ -20,6 +23,14 @@ export default function contribute(server: PluginServerContext) {
   server.handle(deleteSkill, ({ name }) => tools.deleteSkill(name));
   server.handle(overwriteSkill, ({ name, provider }) => tools.overwriteSkill(name, provider));
   server.handle(syncSkills, () => tools.syncNow());
+  server.handle(startSignIn, ({ name }) => tools.startSignIn(name));
+  server.handle(finishSignIn, ({ name, callback }) => tools.finishSignIn(name, callback));
+  server.handle(signInStatus, ({ name }) => {
+    const flow = tools.signInStatus(name);
+    return { status: flow.status, error: flow.status === 'failed' ? flow.error : null };
+  });
+  server.handle(cancelSignIn, ({ name }) => { tools.cancelSignIn(name); return {}; });
+  server.handle(signOut, ({ name }) => tools.signOut(name));
 
   const stopCreate = server.before('agent.create', async ({ request }, { paseo }) => {
     try {

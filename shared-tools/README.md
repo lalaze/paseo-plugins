@@ -18,6 +18,15 @@ Shared servers are added to each new agent as Paseo creates it, through the same
 - A server the agent was created with under the same name (by a schedule, a delegation or another plugin) is kept as given. The names `paseo` and `director` belong to Paseo and are never used.
 - Only new agents get the servers. Agents that are already running, and resumed agents, keep the servers they were created with.
 
+### Signing in
+
+An http or sse server that uses OAuth (Figma, Linear, Notion, Sentry and other hosted servers) gets a **Sign in** button. The plugin signs in once on the host, the MCP way: it reads the server's protected resource metadata, registers itself with the authorization server, and uses PKCE. Every provider then gets the token as an `Authorization` header, so no CLI has to sign in by itself.
+
+- The approval page opens in the browser of the device running the app, even when the daemon is on another machine.
+- Afterwards the browser goes to `http://localhost:47821/callback`. On the host itself, or with the port forwarded (`ssh -L 47821:localhost:47821 host`), the plugin catches that page and finishes the sign-in by itself. Otherwise, such as over plain SSH or from a phone, that page does not load: copy its address from the address bar and paste it into the form.
+- Tokens are kept in `oauth.json` (mode 600) and refreshed when a new agent starts close to expiry. An agent keeps the token it was started with, so a long-running agent may need restarting once its token expires.
+- A server with its own `Authorization` header uses that header and shows no button. Servers whose authorization server does not let apps register themselves (dynamic client registration) cannot sign in this way; give them a token header.
+
 ## Skills
 
 The library is `$PASEO_HOME/shared-tools/skills` (by default `~/.paseo/shared-tools/skills`); each skill is a folder with a `SKILL.md`, as every one of these CLIs expects. Each skill is copied into the user-level skills folder of every provider with **Skills** on:
@@ -48,6 +57,7 @@ A custom provider is matched by its id, then by the executable it runs (`kimi ac
 Everything lives in `$PASEO_SHARED_TOOLS_DIR`, or `$PASEO_HOME/shared-tools`:
 
 - `config.json`: the shared servers in the usual `mcpServers` format, plus `enabled: false` and `providers: [...]` where set, and the per-provider switches. It may hold tokens, so it is written with mode 600. You can edit it by hand; an entry the plugin cannot read is reported on the screen and kept.
+- `oauth.json`: sign-ins, by server name (clients, access and refresh tokens), mode 600.
 - `skills/`: the library.
 - `backups/`: replaced copies and removed library skills.
 

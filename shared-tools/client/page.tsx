@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PluginClientContext, PluginSurfaceProps } from '@getpaseo/plugin/client';
-import { Icon, ScrollView, useToast } from '@getpaseo/plugin/client/react-native';
+import { openExternalUrl, type PluginClientContext, type PluginSurfaceProps } from '@getpaseo/plugin/client';
+import { copyText, Icon, ScrollView, useToast } from '@getpaseo/plugin/client/react-native';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
-import { blankDraft, draftFrom, matchesQuery, serverFromDraft, summarize, type ServerDraft } from '../shared/form';
+import { blankDraft, draftFrom, hasAuthHeader, matchesQuery, serverFromDraft, summarize, type ServerDraft } from '../shared/form';
 import { ui } from '../shared/i18n';
 import {
-  deleteMcpServer, deleteSkill, importMcpServers, importSkill, overwriteSkill, readState, saveMcpServer, syncSkills, updateProvider,
+  cancelSignIn, deleteMcpServer, deleteSkill, finishSignIn, importMcpServers, importSkill, overwriteSkill, readState, saveMcpServer,
+  signInStatus, signOut, startSignIn, syncSkills, updateProvider,
   type FoundSkill, type McpServer, type ProviderRow, type SharedState, type SkillRow, type TargetStatus,
 } from '../shared/rpc';
 import { Banner, Button, Card, Chip, Dot, Empty, Field, Heading, List, MONO, Muted, Switch, Tabs, type Colors } from './kit';
@@ -165,26 +166,157 @@ function McpTab(props: TabProps) {
 function ServerRow(props: TabProps & { server: McpServer; onEdit(): void }) {
   const { server, colors } = props;
   const [confirming, setConfirming] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
+  const auth = props.state.auth[server.name];
+  const canSignIn = server.config.type !== 'stdio' && !hasAuthHeader(server.config);
   const save = (patch: Partial<McpServer>) => props.run(() => props.rpc(saveMcpServer, { ...server, ...patch, previousName: server.name }));
-  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 11 }}>
-    <View style={{ flex: 1, minWidth: 0, gap: 3, opacity: server.enabled ? 1 : 0.55 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-        <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 13, fontWeight: '600', flexShrink: 1 }}>{server.name}</Text>
-        <Chip colors={colors} label={server.config.type} />
-        {server.providers ? <Chip colors={colors} label={`${ui('Only', '仅')} ${server.providers.map(props.providerLabel).join(', ')}`} /> : null}
+  return <View>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 11 }}>
+      <View style={{ flex: 1, minWidth: 0, gap: 3, opacity: server.enabled ? 1 : 0.55 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 13, fontWeight: '600', flexShrink: 1 }}>{server.name}</Text>
+          <Chip colors={colors} label={server.config.type} />
+          {server.providers ? <Chip colors={colors} label={`${ui('Only', '仅')} ${server.providers.map(props.providerLabel).join(', ')}`} /> : null}
+          {canSignIn && auth ? <Chip colors={colors} tone={auth.status === 'signed-in' ? 'success' : 'warning'}
+            label={auth.status === 'signed-in' ? ui('signed in', '已登录') : ui('sign-in expired', '登录已过期')} /> : null}
+        </View>
+        <Muted colors={colors} mono lines={1} selectable>{summarize(server.config)}</Muted>
       </View>
-      <Muted colors={colors} mono lines={1} selectable>{summarize(server.config)}</Muted>
+      {confirming
+        ? <>
+          <Button colors={colors} variant="danger" label={ui('Delete', '删除')} disabled={props.busy} onPress={() => void props.run(() => props.rpc(deleteMcpServer, { name: server.name }))} />
+          <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={() => setConfirming(false)} />
+        </>
+        : <>
+          {canSignIn && !signingIn
+            ? auth?.status === 'signed-in'
+              ? <Button colors={colors} variant="ghost" iconOnly icon="LogOut" label={ui('Sign out', '退出登录')} disabled={props.busy} onPress={() => void props.run(() => props.rpc(signOut, { name: server.name }))} />
+              : <Button colors={colors} variant="ghost" icon="LogIn" label={auth ? ui('Sign in again', '重新登录') : ui('Sign in', '登录')} disabled={props.busy} onPress={() => setSigningIn(true)} />
+            : null}
+          <Button colors={colors} variant="ghost" iconOnly icon="Pencil" label={ui('Edit', '编辑')} disabled={props.busy} onPress={props.onEdit} />
+          <Button colors={colors} variant="ghost" iconOnly icon="Trash2" label={ui('Delete', '删除')} disabled={props.busy} onPress={() => setConfirming(true)} />
+        </>}
+      <Switch colors={colors} label={`${server.name} ${ui('on', '开启')}`} value={server.enabled} disabled={props.busy} onChange={enabled => void save({ enabled })} />
     </View>
-    {confirming
-      ? <>
-        <Button colors={colors} variant="danger" label={ui('Delete', '删除')} disabled={props.busy} onPress={() => void props.run(() => props.rpc(deleteMcpServer, { name: server.name }))} />
-        <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={() => setConfirming(false)} />
-      </>
-      : <>
-        <Button colors={colors} variant="ghost" iconOnly icon="Pencil" label={ui('Edit', '编辑')} disabled={props.busy} onPress={props.onEdit} />
-        <Button colors={colors} variant="ghost" iconOnly icon="Trash2" label={ui('Delete', '删除')} disabled={props.busy} onPress={() => setConfirming(true)} />
-      </>}
-    <Switch colors={colors} label={`${server.name} ${ui('on', '开启')}`} value={server.enabled} disabled={props.busy} onChange={enabled => void save({ enabled })} />
+    {signingIn ? <SignInPanel {...props} name={server.name} onClose={() => setSigningIn(false)} /> : null}
+  </View>;
+}
+
+const POLL_MS = 2000;
+
+/** Rejects instead of throwing, also on a host whose app does not offer an external opener. */
+function openLink(url: string): Promise<void> {
+  return Promise.resolve().then(() => openExternalUrl(url));
+}
+
+/**
+ * The browser step runs on this device; the host catches the redirect itself when it can
+ * (same machine, or the port forwarded over SSH), and the pasted address finishes it otherwise.
+ */
+function SignInPanel(props: TabProps & { name: string; onClose(): void }) {
+  const { colors, name, rpc, run, onClose } = props;
+  const toast = useToast();
+  const [flow, setFlow] = useState<{ authorizationUrl: string; redirectUri: string; listening: boolean } | null>(null);
+  const [callback, setCallback] = useState('');
+  const [problem, setProblem] = useState<string | null>(null);
+  const [starting, setStarting] = useState(true);
+  const live = useRef(true);
+  useEffect(() => () => { live.current = false; }, []);
+
+  const finished = useCallback(async (next: SharedState | null) => {
+    toast.show(ui(`Signed in to ${name}. New agents get the token.`, `已登录 ${name}，新建的 Agent 会带上令牌。`), { variant: 'success' });
+    await run(async () => next ?? await rpc(readState, {}));
+    if (live.current) onClose();
+  }, [name, onClose, rpc, run, toast]);
+
+  const begin = useCallback(async () => {
+    setStarting(true);
+    setProblem(null);
+    try {
+      const started = await rpc(startSignIn, { name });
+      if (!live.current) return;
+      setFlow(started);
+      await openLink(started.authorizationUrl).catch(() => {
+        if (live.current) setProblem(ui('Could not open a browser here; copy the link below instead.', '无法在此打开浏览器，请复制下方链接。'));
+      });
+    } catch (cause) {
+      if (live.current) setProblem(message(cause));
+    } finally {
+      if (live.current) setStarting(false);
+    }
+  }, [name, rpc]);
+
+  useEffect(() => { void begin(); }, [begin]);
+
+  // The host may finish on its own when the redirect reaches its port.
+  useEffect(() => {
+    if (!flow?.listening) return;
+    let stopped = false;
+    const timer = setInterval(() => {
+      void rpc(signInStatus, { name }).then(result => {
+        if (stopped || !live.current) return;
+        if (result.status === 'done') { stopped = true; clearInterval(timer); void finished(null); }
+        else if (result.status === 'failed') setProblem(result.error);
+      }).catch(() => undefined);
+    }, POLL_MS);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [flow, finished, name, rpc]);
+
+  const finish = async () => {
+    setProblem(null);
+    try {
+      const next = await rpc(finishSignIn, { name, callback });
+      await finished(next);
+    } catch (cause) {
+      if (live.current) setProblem(message(cause));
+    }
+  };
+  const cancel = () => { void rpc(cancelSignIn, { name }).catch(() => undefined); onClose(); };
+  const port = flow ? new URL(flow.redirectUri).port : '';
+
+  return <View style={{ marginHorizontal: 14, marginBottom: 12, padding: 12, gap: 10, borderRadius: 8, backgroundColor: colors.surface2 }}>
+    {starting && !flow
+      ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <ActivityIndicator size="small" color={colors.foregroundMuted} />
+        <Muted colors={colors}>{ui('Finding how this server signs in…', '正在查找该服务器的登录方式…')}</Muted>
+      </View>
+      : null}
+    {flow ? <>
+      <View style={{ gap: 6 }}>
+        <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: '600' }}>{ui('1. Approve access in the browser on this device', '1. 在本设备的浏览器中授权')}</Text>
+        <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+          <Button colors={colors} icon="ExternalLink" label={ui('Open again', '重新打开')} onPress={() => void openLink(flow.authorizationUrl).catch(() => undefined)} />
+          <Button colors={colors} icon="Copy" label={ui('Copy link', '复制链接')} onPress={() => void copyText(flow.authorizationUrl).then(
+            () => toast.show(ui('Link copied.', '链接已复制。'), { variant: 'success' }),
+            () => toast.error(ui('Copying is not available here.', '此处无法复制。')),
+          )} />
+        </View>
+      </View>
+      <View style={{ gap: 6 }}>
+        <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: '600' }}>{ui('2. Paste the address the browser ends on', '2. 粘贴浏览器最后停留的地址')}</Text>
+        <Muted colors={colors} small>{ui(
+          `After you approve, the browser goes to ${flow.redirectUri}. When the host is another machine that page does not load; copy its full address from the address bar and paste it here.`,
+          `授权后浏览器会跳转到 ${flow.redirectUri}。若主机是另一台机器，该页面无法打开；从地址栏复制完整地址粘贴到这里即可。`,
+        )}</Muted>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Field colors={colors} value={callback} onChange={setCallback} onSubmit={() => { if (callback.trim()) void finish(); }} placeholder={`${flow.redirectUri}?code=…&state=…`} mono />
+          </View>
+          <Button colors={colors} variant="primary" label={ui('Finish', '完成')} disabled={props.busy || !callback.trim()} onPress={() => void finish()} />
+        </View>
+        <Muted colors={colors} small>{flow.listening
+          ? ui(
+            `On the host itself, or with the port forwarded (ssh -L ${port}:localhost:${port} …), this finishes on its own.`,
+            `在主机本机上，或已转发端口（ssh -L ${port}:localhost:${port} …）时，会自动完成。`,
+          )
+          : ui(`Port ${port} is in use on the host, so only pasting finishes this.`, `主机上的 ${port} 端口已被占用，只能粘贴地址完成。`)}</Muted>
+      </View>
+    </> : null}
+    {problem ? <Muted colors={colors} danger selectable>{problem}</Muted> : null}
+    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
+      {problem && !flow ? <Button colors={colors} label={ui('Try again', '重试')} disabled={starting} onPress={() => void begin()} /> : null}
+      <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={cancel} />
+    </View>
   </View>;
 }
 

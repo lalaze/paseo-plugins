@@ -66,6 +66,11 @@ export function matchesQuery(query: string, ...texts: (string | null | undefined
   return query.toLowerCase().split(/\s+/).filter(Boolean).every(word => haystack.includes(word));
 }
 
+/** A server with its own Authorization header uses that; only the others can sign in. */
+export function hasAuthHeader(config: McpConfig): boolean {
+  return config.type !== 'stdio' && Object.keys(config.headers ?? {}).some(name => name.toLowerCase() === 'authorization');
+}
+
 /** One line for the server list: the command with its arguments, or the URL. */
 export function summarize(config: McpConfig): string {
   return config.type === 'stdio' ? [config.command, ...(config.args ?? [])].join(' ') : config.url;
