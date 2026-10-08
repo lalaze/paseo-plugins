@@ -51,11 +51,17 @@ export type SkillRow = z.infer<typeof skillSchema>;
 export const foundSkillSchema = z.object({ name: z.string(), provider: z.string(), path: z.string(), description: z.string().nullable() });
 export type FoundSkill = z.infer<typeof foundSkillSchema>;
 
+/** A server the plugin holds an OAuth sign-in for. `expiresAt` is set only when the token cannot be refreshed. */
+export const authSchema = z.object({ status: z.enum(['signed-in', 'expired']), expiresAt: z.string().nullable(), scope: z.string().nullable() });
+export type AuthRow = z.infer<typeof authSchema>;
+
 export const stateSchema = z.object({
   dataDir: z.string(),
   libraryDir: z.string(),
   providers: z.array(providerSchema),
   mcpServers: z.array(mcpServerSchema),
+  /** By server name; servers without a sign-in are absent. */
+  auth: z.record(z.string(), authSchema),
   skills: z.array(skillSchema),
   /** Skills in a provider's folder that the library does not have yet. */
   found: z.array(foundSkillSchema),
@@ -110,3 +116,34 @@ export const overwriteSkill = defineRpc({
 });
 
 export const syncSkills = defineRpc({ name: 'sync-skills', input: z.object({}), output: stateSchema });
+
+/** Starts an OAuth sign-in; the app opens `authorizationUrl` in this device's browser. */
+export const startSignIn = defineRpc({
+  name: 'start-sign-in',
+  input: z.object({ name: z.string() }),
+  output: z.object({
+    authorizationUrl: z.string(),
+    redirectUri: z.string(),
+    /** False when the callback port on the host is taken, so only pasting the address finishes it. */
+    listening: z.boolean(),
+  }),
+});
+
+/** Finishes a sign-in with the address the browser ended on (or just its code). */
+export const finishSignIn = defineRpc({
+  name: 'finish-sign-in',
+  input: z.object({ name: z.string(), callback: z.string().max(8192) }),
+  output: stateSchema,
+});
+
+export const signInStatus = defineRpc({
+  name: 'sign-in-status',
+  input: z.object({ name: z.string() }),
+  output: z.object({ status: z.enum(['none', 'pending', 'done', 'failed']), error: z.string().nullable() }),
+});
+
+/** Cancels a pending sign-in and forgets the stored tokens. */
+export const signOut = defineRpc({ name: 'sign-out', input: z.object({ name: z.string() }), output: stateSchema });
+
+/** Drops a pending sign-in and keeps any tokens from an earlier one. */
+export const cancelSignIn = defineRpc({ name: 'cancel-sign-in', input: z.object({ name: z.string() }), output: z.object({}) });

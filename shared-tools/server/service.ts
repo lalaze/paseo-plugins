@@ -4,7 +4,8 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { PaseoApi } from '@getpaseo/client';
 import { nameSchema, type FoundSkill, type McpConfig, type McpServer, type ProviderRow, type SharedState, type SkillRow } from '../shared/rpc';
-import { normalizeServer, parseServerJson, readClaudeServers, readCodexServers, RESERVED_SERVERS, serversFor, type Parsed, type StoredServer } from './mcp';
+import { normalizeServer, parseServerJson, readClaudeServers, readCodexServers, RESERVED_SERVERS, serversFor, stripStored, type Parsed, type StoredServer } from './mcp';
+import { SignIns, type FlowStatus } from './oauth';
 import { expandHome, knownSkillsDir, mcpDefault } from './providers';
 import { importSkillDir, readLibrary, removeFromLibrary, syncTarget, type LibrarySkill, type Placement } from './skills';
 
@@ -50,8 +51,10 @@ export class SharedTools {
   private watcher: FSWatcher | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  readonly signIns: SignIns;
 
-  constructor(readonly root: string, private readonly home = homedir(), private readonly log: (error: unknown) => void = () => undefined) {
+  constructor(readonly root: string, private readonly home = homedir(), private readonly log: (error: unknown) => void = () => undefined, signIns?: SignIns) {
+    this.signIns = signIns ?? new SignIns(root, log);
     this.libraryDir = join(root, 'skills');
     this.backupDir = join(root, 'backups');
     this.configPath = join(root, 'config.json');
@@ -203,6 +206,7 @@ export class SharedTools {
       libraryDir: this.libraryDir,
       providers: this.rows(stored),
       mcpServers: mcpServers.sort((a, b) => a.name.localeCompare(b.name)),
+      auth: this.signIns.statuses(Object.fromEntries(mcpServers.map(server => [server.name, server.config]))),
       skills: report.skills,
       found: report.found,
       syncedAt: report.syncedAt,
@@ -220,6 +224,7 @@ export class SharedTools {
         catch (error) { this.log(error); }
       }
       if (save) await this.save(stored);
+      await this.signIns.load().catch(this.log);
       const report = resync || !this.report ? await this.sync(stored, force) : this.report;
       return this.snapshot(stored, report);
     });
@@ -238,7 +243,10 @@ export class SharedTools {
     return this.mutate(async stored => {
       if (RESERVED_SERVERS.has(input.name)) throw new Error(`"${input.name}" is reserved by Paseo.`);
       if (input.name !== input.previousName && input.name in stored.mcpServers) throw new Error(`A server named "${input.name}" is already shared.`);
-      if (input.previousName && input.previousName !== input.name) delete stored.mcpServers[input.previousName];
+      if (input.previousName && input.previousName !== input.name) {
+        delete stored.mcpServers[input.previousName];
+        await this.signIns.rename(input.previousName, input.name);
+      }
       stored.mcpServers[input.name] = { ...input.config, ...(input.enabled ? {} : { enabled: false }), ...(input.providers ? { providers: input.providers } : {}) };
       return { save: true, resync: false };
     });
@@ -247,7 +255,37 @@ export class SharedTools {
   deleteServer(name: string): Promise<SharedState> {
     return this.mutate(async stored => {
       delete stored.mcpServers[name];
+      await this.signIns.signOut(name);
       return { save: true, resync: false };
+    });
+  }
+
+  /** Signs in to a shared http or sse server; the app opens the returned URL in its own browser. */
+  async startSignIn(name: string): Promise<{ authorizationUrl: string; redirectUri: string; listening: boolean }> {
+    const server = this.servers(await this.load()).valid[name];
+    if (!server) throw new Error(`No shared server is named "${name}".`);
+    return this.signIns.start(name, stripStored(server));
+  }
+
+  finishSignIn(name: string, callback: string): Promise<SharedState> {
+    return this.mutate(async () => {
+      await this.signIns.finish(name, callback);
+      return { save: false, resync: false };
+    });
+  }
+
+  signInStatus(name: string): FlowStatus {
+    return this.signIns.status(name);
+  }
+
+  cancelSignIn(name: string): void {
+    this.signIns.cancel(name);
+  }
+
+  signOut(name: string): Promise<SharedState> {
+    return this.mutate(async () => {
+      await this.signIns.signOut(name);
+      return { save: false, resync: false };
     });
   }
 
@@ -320,6 +358,11 @@ export class SharedTools {
     }
     if (!this.row(provider, stored.providers[provider] ?? {}).mcp) return null;
     const added = serversFor(provider, this.servers(stored).valid, existing);
+    for (const [name, config] of Object.entries(added)) {
+      if (config.type === 'stdio') continue;
+      const header = await this.signIns.header(name, config).catch((error: unknown) => { this.log(error); return null; });
+      if (header) added[name] = { ...config, headers: { ...config.headers, Authorization: header } };
+    }
     return Object.keys(added).length ? added : null;
   }
 
@@ -350,6 +393,7 @@ export class SharedTools {
 
   stop(): void {
     this.stopped = true;
+    this.signIns.stop();
     this.watcher?.close();
     this.watcher = null;
     if (this.timer) clearTimeout(this.timer);
