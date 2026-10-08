@@ -41,7 +41,8 @@ function Meter({ label, value, text, resetsAt, theme, mobile = false }: { label:
       {value !== null ? <View accessibilityRole="progressbar" accessibilityLabel={ui(`${label} remaining quota`, `${label}剩余额度`)} accessibilityValue={{ min: 0, max: 100, now: value, text: ui(`${formatPercent(value)} remaining`, `剩余 ${formatPercent(value)}`) }} style={{ flex: 1, minWidth: 40, height: 4, borderRadius: 2, overflow: 'hidden', backgroundColor: theme.colors.surface2 }}>
         <View style={{ height: 4, width: `${value}%`, borderRadius: 2, backgroundColor: color }} />
       </View> : null}
-      {reset ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 16, flexShrink: 1, width: value !== null ? '52%' : undefined, textAlign: value !== null ? 'right' : 'left' }}>{reset}</Text> : null}
+      {value !== null ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 16, flexShrink: 1, width: '52%', textAlign: 'right' }}>{reset}</Text>
+        : reset ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 16, flexShrink: 1 }}>{reset}</Text> : null}
     </View> : null}
   </View>;
 }
