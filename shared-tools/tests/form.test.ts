@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 // The messages follow the host's language; pin it so a Chinese host runs the same assertions.
 (globalThis as { __PASEO_LOCALE__?: string }).__PASEO_LOCALE__ = 'en';
-import { blankDraft, draftFrom, serverFromDraft, summarize } from '../shared/form';
+import { blankDraft, draftFrom, matchesQuery, serverFromDraft, summarize } from '../shared/form';
 
 test('turns a stdio draft into a server and back', () => {
   const result = serverFromDraft({ ...blankDraft(), name: 'fs', command: ' npx ', args: '-y\n\n@scope/fs\n', env: 'ROOT=/a=b\n' });
@@ -25,4 +25,11 @@ test('names the first problem', () => {
   assert.match(error({ env: 'NOVALUE' })!, /Environment/);
   assert.match(error({ type: 'sse', url: 'ftp://x' })!, /URL/);
   assert.equal(error({}), null);
+});
+
+test('matches every word of a search across name, description and provider', () => {
+  assert.ok(matchesQuery('', 'anything'));
+  assert.ok(matchesQuery('  FRONT design ', 'frontend-design', 'Create distinctive interfaces'));
+  assert.ok(matchesQuery('claude front', 'frontend-design', undefined, 'Claude'));
+  assert.ok(!matchesQuery('front codex', 'frontend-design', 'Claude'));
 });

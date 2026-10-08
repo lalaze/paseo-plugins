@@ -1,6 +1,6 @@
 # paseo-shared-tools
 
-A **Shared MCP & skills** screen in Settings (also in the command center) that gives every provider on a host one list of MCP servers and one skill library, so Claude Code, Codex, Grok, Kimi, CodeBuddy, Pi and the rest work with the same tools. Plugin ID: `paseo-shared-tools`. It needs a Paseo daemon from 0.10 up to, but not including, 0.12. Install it on each host separately.
+A **Shared MCP & skills** page in the app's left sidebar, also available in Settings (the plugin's **…** menu), as a panel in each workspace's explorer next to Files and Changes and from the command center, that gives every provider on a host one list of MCP servers and one skill library, so Claude Code, Codex, Grok, Kimi, CodeBuddy, Pi and the rest work with the same tools. Plugin ID: `paseo-shared-tools`. It needs a Paseo daemon from 0.10 up to, but not including, 0.12. Install it on each host separately.
 
 ```bash
 paseo plugin add lalaze/paseo-plugins --path shared-tools

@@ -60,6 +60,12 @@ export function serverFromDraft(draft: ServerDraft): { server: McpServer } | { e
   }
 }
 
+/** True when every space-separated word of the query appears in one of the texts, ignoring case. */
+export function matchesQuery(query: string, ...texts: (string | null | undefined)[]): boolean {
+  const haystack = texts.filter(Boolean).join('\n').toLowerCase();
+  return query.toLowerCase().split(/\s+/).filter(Boolean).every(word => haystack.includes(word));
+}
+
 /** One line for the server list: the command with its arguments, or the URL. */
 export function summarize(config: McpConfig): string {
   return config.type === 'stdio' ? [config.command, ...(config.args ?? [])].join(' ') : config.url;
