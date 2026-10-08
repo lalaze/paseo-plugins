@@ -9,8 +9,10 @@ import { startConsumptionSync } from './server/consumption-sync';
 import { readWorkspaceCatalog } from './server/workspace-catalog';
 import { readWorkspaceSource } from './server/workspace-consumption';
 import { hasTranslateLedger } from './server/translate';
+import { registerAntigravityUsage } from './server/antigravity-usage';
 
 export default function contribute(server: PluginServerContext) {
+  registerAntigravityUsage(server);
   server.registerSettings(headerSettings);
   server.handle(readHostIdentity, () => hostIdentity());
   const consumption = new ConsumptionService();

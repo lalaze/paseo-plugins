@@ -13,7 +13,7 @@ const MARK = '// paseo-agy-quote:managed';
 const FILES = ['antigravity.js', 'antigravity-local.js'];
 const MANIFEST_ANCHOR = 'export const PROVIDER_USAGE_FETCHERS = [';
 const MANIFEST_PREFIX = `${MARK}\nimport { AntigravityQuotaProvider } from "./providers/antigravity.js";\n`;
-const MANIFEST_ENTRY = `\n    {\n        providerId: "antigravity-acp",\n        create: (options) => new AntigravityQuotaProvider({ logger: options.logger }),\n    },`;
+const MANIFEST_ENTRY = `\n    {\n        providerId: "antigravity",\n        create: (options) => new AntigravityQuotaProvider({ logger: options.logger }),\n    },`;
 export const sha = value => createHash('sha256').update(value).digest('hex');
 const json = path => JSON.parse(readFileSync(path, 'utf8'));
 const read = path => readFileSync(path, 'utf8');

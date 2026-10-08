@@ -47,7 +47,7 @@ node patch.mjs apply
 paseo daemon restart
 ```
 
-在 Paseo 中打开 **Plan usage** 并点击 **Refresh**。新增 **Google Antigravity 2.0**，优先显示 Gemini 和 Claude/GPT 两组各自的周额度与 5 小时额度。进度条表示**已使用**百分比，与 Paseo 其他项目一致，例如剩余 80% 显示已用 20%。仅显示真实返回的重置时间。
+在 Paseo 中打开 **Plan usage** 并点击 **Refresh**。新增 **Antigravity**（provider id `antigravity`，与官方 agy provider 相同），优先显示 Gemini 和 Claude/GPT 两组各自的周额度与 5 小时额度。进度条表示**已使用**百分比，与 Paseo 其他项目一致，例如剩余 80% 显示已用 20%。仅显示真实返回的重置时间。Paseo 0.11 起额度来自 usage source；已安装的额度速览插件会直接注册这份官方额度，本补丁仍供仍使用旧 quota-fetcher 的安装。
 
 `live` 只读取额度，不发送模型提示词，不消耗生成 token；它会打印当前账号的额度，但不输出账号标识或凭证。后台 `agy` 可能正常刷新它自己管理的登录状态。界面沿用 Paseo 原有缓存和 Refresh 行为。
 
@@ -129,7 +129,7 @@ paseo daemon restart
 
 ## 数据来源与边界
 
-- 从 Paseo 当前 `antigravity-acp.env.AGY_BIN`、`antigravity-hub.env.AGY_HUB_BIN`、`AGY_HUB_BIN` 读取路径，其次 `PATH` 中的 `agy`，再是 `~/.local/bin/agy`、Homebrew、`/usr/local/bin/agy`、`~/.gemini/bin/agy`。可用 `PASEO_ANTIGRAVITY_BIN` 指定绝对路径。配置目录沿用 `PASEO_HOME` 或 `~/.paseo`。
+- 读取官方 `agy`：先执行 `agy -p /usage --output-format json`（CLI 1.1.11 及以上的只读额度命令，不发送模型提示）。查找顺序为 `PASEO_ANTIGRAVITY_BIN`、`ANTIGRAVITY_CLI_PATH`、`PATH` 中的 `agy`，再是 `~/.local/bin/agy`、Homebrew、`/usr/local/bin/agy`、`~/.gemini/bin/agy`。不再读取已停用的 `antigravity-acp` / `antigravity-hub` 配置或 `AGY_HUB_BIN`。旧版 CLI 才会回退到本机短生命周期 Hub。
 - 仅复用同 UID、同一 `agy` 二进制的进程：Linux 用 `/proc` 匹配 inode 或 `/proc/pid/exe` 路径（含文件已被替换后的 `(deleted)`），并读取该进程拥有的监听 socket；macOS 用 `lsof`/`ps` 做同等范围的查找；不会扫描不相关的本地服务。
 - Hub 的 CSRF 来自该进程回环页面的 `window.__APP_CONFIG__`，不是命令行 `--csrf_token`。agy 1.2 CLI 不再在无参数启动时提供 LanguageServerService。
 - 若复用失败，启动专用短生命周期 Hub（`--hub`），只调用本地 HTTPS API，不输入提示词；读取结束后仅清理自己创建的进程。

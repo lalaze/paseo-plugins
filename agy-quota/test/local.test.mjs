@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { listeningPorts, requestQuota, parseLsofListenPorts, parseLsofTxtPids, csrfFromCommand, parseAppConfigCsrf, csrfFromOwnedPorts, exeLinkPath } from '../src/antigravity-local.js';
+import { listeningPorts, requestQuota, parseLsofListenPorts, parseLsofTxtPids, csrfFromCommand, parseAppConfigCsrf, csrfFromOwnedPorts, exeLinkPath, supportsUsagePrint, cliUsagePayload, binaryCandidates } from '../src/antigravity-local.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'agy-local-api-test-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -51,6 +51,21 @@ test('macOS lsof/ps parsers stay process-scoped and recover csrf tokens', () => 
 
 test('quota probe accepts loopback IPv6 host argument without throwing', async () => {
   assert.equal(await requestQuota(1, 'GetUserStatus', undefined, 50, '::1'), null);
+});
+
+test('official usage command is parsed and retired hub paths are ignored', () => {
+  assert.equal(supportsUsagePrint('1.1.10'), false);
+  assert.equal(supportsUsagePrint('1.3.1'), true);
+  const payload = cliUsagePayload(JSON.stringify({
+    num_turns: 0,
+    command: { name: 'usage', data: { groups: [{ name: 'Gemini Models', buckets: [{ id: 'gemini-weekly', window: 'weekly', remaining_fraction: 0.8, reset_time: '2026-10-15T07:43:08Z' }] }] } },
+  }));
+  assert.equal(payload.response.groups[0].displayName, 'Gemini Models');
+  assert.equal(payload.response.groups[0].buckets[0].remainingFraction, 0.8);
+  assert.equal(cliUsagePayload(JSON.stringify({ command: { name: 'usage', data: { groups: [] } }, num_turns: 1 })), null);
+  const candidates = binaryCandidates({ PASEO_ANTIGRAVITY_BIN: '/official/agy', AGY_HUB_BIN: '/retired/hub/agy', PATH: '/usr/bin' }, '/Users/example');
+  assert.equal(candidates[0], '/official/agy');
+  assert.equal(candidates.includes('/retired/hub/agy'), false);
 });
 
 test('hub page csrf is read only from process-owned loopback ports', async () => {

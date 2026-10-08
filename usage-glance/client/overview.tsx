@@ -96,7 +96,7 @@ export function Overview({ theme, host, layout, query, preference, currentProvid
   useEffect(() => { void preference.load(); }, [preference]);
   const providers = (result.data?.providers ?? []).filter(hasQuota);
   const current = currentProvider ? findUsage(providers, currentProvider) : undefined;
-  const pinnedId = selected && providers.some(item => item.providerId === selected) ? selected : null;
+  const pinnedId = selected ? findUsage(providers, selected)?.providerId ?? null : null;
   const visible = [...providers].sort((a, b) => Number(b === current) - Number(a === current));
   const stale = result.isError || isStale(result.data);
   const body = <View style={{ gap: popover ? 10 : 16, width: '100%', maxWidth: 780, alignSelf: 'center' }}>

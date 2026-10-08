@@ -46,14 +46,18 @@ export function formatBalance(balance: UsageBalance): string {
   return `${value.toLocaleString(uiNumberLocale(), { maximumFractionDigits: 2 })} ${unit}`;
 }
 
+const antigravityIds = new Set(['antigravity', 'antigravity-acp', 'antigravity-hub']);
+
 export function findUsage(providers: Usage[], provider: string): Usage | undefined {
-  // Both locally configured Antigravity bridges use the same agy account reader.
-  const id = provider === 'antigravity-hub' ? 'antigravity-acp' : provider;
-  return providers.find(entry => entry.providerId === id);
+  // Official Antigravity and the retired bridge ids share one agy account.
+  const direct = providers.find(entry => entry.providerId === provider);
+  if (direct || !antigravityIds.has(provider)) return direct;
+  return providers.find(entry => entry.providerId === 'antigravity')
+    ?? providers.find(entry => entry.providerId === 'antigravity-acp');
 }
 
 export function modelWindows(usage: Usage, model?: string | null): UsageWindow[] {
-  if (usage.providerId !== 'antigravity-acp' || !model) return usage.windows;
+  if ((usage.providerId !== 'antigravity' && usage.providerId !== 'antigravity-acp') || !model) return usage.windows;
   const family = /gemini/i.test(model) ? /gemini/i : /claude|gpt/i.test(model) ? /claude|gpt/i : null;
   if (!family) return usage.windows;
   const matches = usage.windows.filter(window => family.test(window.label));
@@ -83,7 +87,7 @@ export function summary(usage?: Usage, model?: string | null) {
   return { label: ui('Quota unknown', '额度未知'), tone: 'unknown' as Tone, remainingPct: null, detail: ui(`${usage.displayName} did not return a calculable remaining quota`, `${usage.displayName} 未返回可计算的剩余额度`) };
 }
 
-const aliases: Record<string, string> = { 'antigravity-acp': 'AGY', codex: 'Codex', kimi: 'Kimi', grok: 'Grok', claude: 'Claude', copilot: 'Copilot', cursor: 'Cursor', zai: 'GLM', minimax: 'MiniMax' };
+const aliases: Record<string, string> = { antigravity: 'AGY', 'antigravity-acp': 'AGY', codex: 'Codex', kimi: 'Kimi', grok: 'Grok', claude: 'Claude', copilot: 'Copilot', cursor: 'Cursor', zai: 'GLM', minimax: 'MiniMax' };
 
 export function providerShortName(usage: Usage): string {
   return aliases[usage.providerId] ?? Array.from(usage.displayName).slice(0, 6).join('');

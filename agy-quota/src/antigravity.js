@@ -35,8 +35,8 @@ export function quotaWindows(payload) {
 }
 
 export class AntigravityQuotaProvider {
-  providerId = 'antigravity-acp';
-  displayName = 'Google Antigravity 2.0';
+  providerId = 'antigravity';
+  displayName = 'Antigravity';
   constructor(options) {
     this.logger = options.logger.child({ module: 'antigravity-quota-provider' });
     this.readQuota = options.readQuota ?? readLocalQuota;

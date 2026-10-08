@@ -29,17 +29,24 @@ test('summary reports the limiting window without treating unknown values as zer
   assert.equal(summary(usage({ status: 'unavailable', windows: [{ id: 'old', label: 'old', remainingPct: 80 }] })).label, 'Quota unavailable');
 });
 
-test('Antigravity uses the matching model group and only the explicit bridge alias', () => {
-  const agy = usage({ providerId: 'antigravity-acp', windows: [
-    { id: 'g', label: 'Gemini · Weekly limit', remainingPct: 80 },
-    { id: 'c', label: 'Claude / GPT · 5-hour limit', remainingPct: 5 },
+test('official Antigravity quota is addressable by its provider id and the retired bridge ids', () => {
+  const official = usage({ providerId: 'antigravity', displayName: 'Antigravity', windows: [
+    { id: 'g', label: 'Gemini Models · Weekly limit', remainingPct: 80 },
+    { id: 'c', label: 'Claude and GPT models · 5-hour limit', remainingPct: 5 },
   ] });
-  assert.equal(findUsage([agy], 'antigravity-hub'), agy);
-  assert.equal(findUsage([agy], 'other-antigravity'), undefined);
-  assert.equal(summary(agy, 'gemini-3-pro').label, 'Remaining 80%');
-  assert.equal(summary(agy, 'claude-sonnet').label, 'Remaining 5%');
-  assert.equal(modelWindows(agy, 'opaque-model-id').length, 2);
-  assert.equal(summary(agy, null).label, 'Lowest remaining 5%');
+  assert.equal(findUsage([official], 'antigravity'), official);
+  assert.equal(findUsage([official], 'antigravity-hub'), official);
+  assert.equal(findUsage([official], 'antigravity-acp'), official);
+  assert.equal(findUsage([official], 'other-antigravity'), undefined);
+  assert.equal(summary(official, 'gemini-3-pro').label, 'Remaining 80%');
+  assert.equal(summary(official, 'claude-sonnet').label, 'Remaining 5%');
+  assert.equal(modelWindows(official, 'opaque-model-id').length, 2);
+  assert.equal(summary(official, null).label, 'Lowest remaining 5%');
+  assert.equal(providerShortName(official), 'AGY');
+  const legacy = usage({ providerId: 'antigravity-acp', windows: official.windows });
+  assert.equal(findUsage([legacy], 'antigravity-hub'), legacy);
+  assert.equal(findUsage([legacy], 'antigravity'), legacy);
+  assert.equal(summary(legacy, 'gemini-3-pro').label, 'Remaining 80%');
 });
 
 test('balances without known limits remain amounts and are not invented percentages', () => {
@@ -84,6 +91,9 @@ test('header can pin a provider instead of the lowest remaining quota', () => {
   assert.equal(pinned.label, 'AGY 88.4% left');
   assert.match(pinned.detail, /header is pinned/);
   assert.equal(headerSummary([agy, kimi, codex], 'antigravity-hub').label, 'AGY 88.4% left');
+  const official = usage({ providerId: 'antigravity', displayName: 'Antigravity', windows: [{ id: 'week', label: 'Weekly', remainingPct: 88.4 }] });
+  assert.equal(headerSummary([official, kimi, codex], 'antigravity').label, 'AGY 88.4% left');
+  assert.equal(headerSummary([official, kimi, codex], 'antigravity-acp').label, 'AGY 88.4% left');
   assert.equal(headerSummary([agy, kimi, unavailable], 'claude').label, 'Kimi 41% left');
   assert.match(headerSummary([agy, kimi, unavailable], 'claude').detail, /selected provider has no data/);
   assert.equal(headerSummary([usage({ providerId: 'kimi', displayName: 'Kimi', balances: [{ id: 'credits', label: 'Credits', unit: 'credits', remaining: 50 }] })], 'kimi').label, 'Kimi Remaining 50 credits');

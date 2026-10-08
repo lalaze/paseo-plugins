@@ -99,23 +99,58 @@ export async function csrfFromOwnedPorts(ports, timeoutMs = 800) {
   }
 }
 
+const USAGE_PRINT_VERSION = [1, 1, 11];
+
+/** `agy -p /usage` is a quota command only from CLI 1.1.11. Older releases treat it as a prompt. */
+export function supportsUsagePrint(versionText) {
+  const match = String(versionText).match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return false;
+  const version = [Number(match[1]), Number(match[2]), Number(match[3])];
+  for (let i = 0; i < USAGE_PRINT_VERSION.length; i += 1) {
+    if (version[i] > USAGE_PRINT_VERSION[i]) return true;
+    if (version[i] < USAGE_PRINT_VERSION[i]) return false;
+  }
+  return true;
+}
+
+/** Official `/usage` JSON, shaped for quotaWindows. A model turn is not a quota read. */
+export function cliUsagePayload(stdout) {
+  let payload;
+  try { payload = JSON.parse(String(stdout)); } catch { return null; }
+  if (!payload || payload.command?.name !== 'usage') return null;
+  if (typeof payload.num_turns === 'number' && payload.num_turns > 0) return null;
+  const groups = payload.command?.data?.groups;
+  if (!Array.isArray(groups)) return null;
+  return {
+    response: {
+      groups: groups.map(group => ({
+        displayName: typeof group?.name === 'string' ? group.name : group?.displayName,
+        buckets: (Array.isArray(group?.buckets) ? group.buckets : []).map(bucket => ({
+          bucketId: bucket?.bucketId ?? bucket?.id,
+          window: bucket?.window,
+          remainingFraction: bucket?.remainingFraction ?? bucket?.remaining_fraction ?? bucket?.remaining?.remainingFraction,
+          resetTime: bucket?.resetTime ?? bucket?.reset_time ?? bucket?.remaining?.resetTime,
+        })),
+      })),
+    },
+  };
+}
+
+/** Official agy only. Retired antigravity-hub / antigravity-acp paths are not consulted. */
+export function binaryCandidates(env = process.env, home = homedir()) {
+  const explicit = env.PASEO_ANTIGRAVITY_BIN || env.ANTIGRAVITY_CLI_PATH;
+  const fromPath = (env.PATH || '').split(delimiter).filter(Boolean).map(dir => join(dir, 'agy'));
+  return [explicit, ...fromPath, join(home, '.local/bin/agy'), '/opt/homebrew/bin/agy', '/usr/local/bin/agy', join(home, '.gemini/bin/agy')].filter(Boolean);
+}
+
 export async function resolveBinaries() {
   const home = homedir();
-  let config = {};
-  try {
-    config = JSON.parse(await fs.readFile(join(process.env.PASEO_HOME || join(home, '.paseo'), 'config.json'), 'utf8'));
-  } catch { /* Use standard installation below. */ }
-  const acp = config.agents?.providers?.['antigravity-acp']?.env?.AGY_BIN;
-  const hub = process.env.AGY_HUB_BIN || config.agents?.providers?.['antigravity-hub']?.env?.AGY_HUB_BIN;
-  const explicit = process.env.PASEO_ANTIGRAVITY_BIN || process.env.ANTIGRAVITY_CLI_PATH || acp;
-  const fromPath = (process.env.PATH || '').split(delimiter).filter(Boolean).map(dir => join(dir, 'agy'));
-  const candidates = [explicit, hub, ...fromPath, join(home, '.local/bin/agy'), '/opt/homebrew/bin/agy', '/usr/local/bin/agy', join(home, '.gemini/bin/agy')];
+  const candidates = binaryCandidates(process.env, home);
   const seen = new Set();
   const bins = [];
   let last;
   for (const bin of candidates) {
-    if (!bin) continue;
-    if (!isAbsolute(bin)) throw new Error('Antigravity binary must be absolute');
+    if (!bin || !isAbsolute(bin)) continue;
     try {
       await fs.access(bin, 1);
       const real = await fs.realpath(bin);
@@ -125,7 +160,25 @@ export async function resolveBinaries() {
     } catch (error) { last = error; }
   }
   if (bins.length) return bins;
-  throw last ?? new Error('Antigravity binary not found; set PASEO_ANTIGRAVITY_BIN or AGY_HUB_BIN');
+  throw last ?? new Error('Antigravity binary not found; set PASEO_ANTIGRAVITY_BIN');
+}
+
+function runBounded(file, args, timeoutMs) {
+  return new Promise(resolve => {
+    execFile(file, args, { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (error, stdout) => {
+      resolve(!error && typeof stdout === 'string' ? stdout : '');
+    });
+  });
+}
+
+/** Prefer the official read-only usage command. Hub reuse stays only for older CLIs. */
+async function readCliQuota(bin, parse) {
+  const version = await run(bin, ['--version']);
+  if (!supportsUsagePrint(version)) return null;
+  const converted = cliUsagePayload(await runBounded(bin, ['-p', '/usage', '--output-format', 'json', '--print-timeout', '12s'], 15000));
+  if (!converted) return null;
+  const windows = parse(converted);
+  return windows?.length ? windows : null;
 }
 
 export async function resolveBinary() {
@@ -265,12 +318,17 @@ async function freeLoopbackPort() {
   return port;
 }
 
-/** Reuse signed-in agy/hub or own one short-lived Hub. Never send a prompt. */
+/** Read official `agy -p /usage` first. Hub reuse is only a fallback for older CLIs. Never send a prompt. */
 export async function readLocalQuota(parse, { trace = () => {} } = {}) {
   if (!supported()) return null;
   const bins = await resolveBinaries();
   trace(`binary ${bins.join(' ')}`);
   for (const bin of bins) {
+    const cli = await readCliQuota(bin, parse);
+    if (cli) {
+      trace(`official usage command ${bin}`);
+      return cli;
+    }
     const reused = await reuseBinary(bin, parse, Date.now() + 4000);
     if (reused) {
       trace(`reused existing agy ${bin}`);
