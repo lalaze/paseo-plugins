@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键更新本仓库已安装的插件、额度补丁和 Hub ACP。
+# 一键更新本仓库已安装的插件和额度补丁；Hub ACP 不自动挂载入口。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,7 +15,8 @@ usage() {
 拉取本仓库最新 main，然后更新已经安装的：
   - paseo-usage-glance / paseo-translate
   - Antigravity 额度补丁、可选 Kimi 续期
-  - Antigravity Hub ACP
+
+Antigravity Hub ACP 入口已停用，源码保留，不参与自动更新或挂载。
 
 Director 已归档，请使用 Paseo 内置协作；即使已安装也不会处理旧插件。
 
@@ -288,7 +289,8 @@ update_plugin usage-glance paseo-usage-glance
 update_plugin translate paseo-translate
 update_patch agy-quota patch.mjs "Antigravity 额度补丁"
 update_patch kimi-quota kimi-patch.mjs "Kimi 续期补丁"
-update_hub
+note "SKIP antigravity-hub（入口已停用；源码保留）"
+skip=$((skip + 1))
 
 if [ "$DRY_RUN" = 0 ]; then
   if [ "$need_restart" = 1 ]; then

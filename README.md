@@ -2,13 +2,13 @@
 
 Multi-package repository of Paseo plugins and companion extensions. The two active Paseo plugins support daemon and app versions 0.8.x through 0.11.x, including prereleases. The separate quota and notification patches retain their own version restrictions. Enable plugins under **Settings → Plugins** on the target host first. Each active package can also be installed on its own as described below; see each directory's README for updating, uninstalling and limitations.
 
-Install the active packages at once (two plugins, the quota patch, Kimi renewal and the Hub ACP):
+Install the active packages at once (two plugins, the quota patch and Kimi renewal):
 
 ```bash
 ./install-all.sh
 ```
 
-By default this installs from the local checkout, so keep this directory around. `--git` installs the plugins from GitHub instead; `--replace` removes the old single-repo sources before installing; `--dry-run` only previews. `--skip-quota` / `--skip-kimi` / `--skip-hub` skip the corresponding items.
+By default this installs from the local checkout, so keep this directory around. `--git` installs the plugins from GitHub instead; `--replace` removes the old single-repo sources before installing; `--dry-run` only previews. `--skip-quota` / `--skip-kimi` skip the corresponding patches. Antigravity Hub is retained as source only; the install and update scripts do not register its provider entry. `--skip-hub` remains accepted for older commands.
 
 Update the active packages that are installed:
 
@@ -122,7 +122,7 @@ Details: [agy-quota/README.md](agy-quota/README.md)
 
 ## [Antigravity Hub ACP](antigravity-hub)
 
-Connects the local Antigravity Hub to Paseo ACP, with model selection, streaming replies, tool progress and Plan mode. This is an ACP provider, not a `paseo plugin` package.
+Retained for reference and manual use. Its provider entry is no longer registered by `install-all.sh` or `update-all.sh`; use the regular Antigravity provider in Paseo. The commands below explicitly restore the optional Hub ACP entry.
 
 ```bash
 git clone git@github.com:lalaze/paseo-plugins.git

@@ -2,7 +2,9 @@
 
 `hub.mjs` 将本机 Antigravity Hub 接入 Paseo 的 ACP provider。与 [额度补丁](../agy-quota/README.md) 独立，支持模型选择、流式回复、工具进度、逐次审批、取消及本桥接创建的会话恢复。本目录是 [paseo-plugins](../README.md) 中的配套扩展，通过写入 Paseo 配置安装，不是 `paseo plugin` 包。Provider ID 为 `antigravity-hub`。
 
-## 安装
+当前保留源码，Paseo 中的 Hub 提供商入口已移除。一键安装和更新不会重新挂载它。日常使用普通 Antigravity 提供商；下方安装命令仅用于显式恢复 Hub 入口。
+
+## 手动恢复入口
 
 ```bash
 git clone git@github.com:lalaze/paseo-plugins.git

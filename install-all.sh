@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键安装本仓库的插件、额度补丁和 Hub ACP。
+# 一键安装本仓库的插件和额度补丁；Hub ACP 源码保留，不自动挂载入口。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,7 +9,7 @@ DRY_RUN=0
 USE_GIT=0
 REPLACE=0
 SKIP_KIMI=0
-SKIP_HUB=0
+SKIP_HUB=1
 SKIP_QUOTA=0
 
 usage() {
@@ -19,7 +19,8 @@ usage() {
 从本仓库安装启用的包：
   - paseo-usage-glance / paseo-translate
   - Antigravity 额度补丁、Kimi 按需续期
-  - Antigravity Hub ACP
+
+Antigravity Hub ACP 入口已停用，源码保留，不参与默认安装。
 
 Director 已归档，请使用 Paseo 内置协作；即使已安装也不会处理旧插件。
 
@@ -28,10 +29,10 @@ Director 已归档，请使用 Paseo 内置协作；即使已安装也不会处�
 选项:
   --git          插件从 GitHub 安装（paseo plugin add lalaze/paseo-plugins --path …）
                  默认从本仓库本地目录安装，本目录需长期保留
-  --replace      卸掉旧来源后改从本仓库安装；Hub 对已有条目使用 --replace-existing
+  --replace      卸掉旧来源后改从本仓库安装
   --skip-quota   不装 Antigravity 额度补丁
   --skip-kimi    不装 Kimi 续期补丁
-  --skip-hub     不装 Antigravity Hub ACP
+  --skip-hub     兼容旧参数；Hub 入口已默认停用
   --dry-run      只打印将要执行的步骤
   -h, --help     显示说明
 EOF
@@ -313,7 +314,7 @@ else
 fi
 
 if [ "$SKIP_HUB" = 1 ]; then
-  note "SKIP antigravity-hub（--skip-hub）"
+  note "SKIP antigravity-hub（入口已停用；源码保留）"
   skip=$((skip + 1))
 else
   install_hub
