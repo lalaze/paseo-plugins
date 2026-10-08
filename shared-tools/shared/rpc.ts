@@ -14,11 +14,17 @@ export type McpConfig = z.infer<typeof mcpConfigSchema>;
 /** Letters, digits, `_` and `-`: every provider accepts these as a server or skill name. */
 export const nameSchema = z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
 
-export const mcpServerSchema = z.object({
+export const providerAccessSchema = z.object({
+  /** Null allows all providers; an empty list allows none. */
+  providers: z.array(z.string().min(1)).nullable(),
+  /** Denials take precedence over the allowlist. */
+  excludedProviders: z.array(z.string().min(1)).optional(),
+});
+export type ProviderAccess = z.infer<typeof providerAccessSchema>;
+
+export const mcpServerSchema = providerAccessSchema.extend({
   name: nameSchema,
   enabled: z.boolean(),
-  /** Null shares the server with every provider that has MCP switched on. */
-  providers: z.array(z.string()).nullable(),
   config: mcpConfigSchema,
 });
 export type McpServer = z.infer<typeof mcpServerSchema>;
@@ -41,7 +47,7 @@ export type ProviderRow = z.infer<typeof providerSchema>;
 export const targetStatuses = ['synced', 'modified', 'conflict', 'error'] as const;
 export type TargetStatus = (typeof targetStatuses)[number];
 
-export const skillSchema = z.object({
+export const skillSchema = providerAccessSchema.extend({
   name: z.string(),
   description: z.string().nullable(),
   targets: z.array(z.object({ provider: z.string(), status: z.enum(targetStatuses), message: z.string().nullable() })),
@@ -52,7 +58,7 @@ export const foundSkillSchema = z.object({ name: z.string(), provider: z.string(
 export type FoundSkill = z.infer<typeof foundSkillSchema>;
 
 /** A server the plugin holds an OAuth sign-in for. `expiresAt` is set only when the token cannot be refreshed. */
-export const authSchema = z.object({ status: z.enum(['signed-in', 'expired']), expiresAt: z.string().nullable(), scope: z.string().nullable() });
+export const authSchema = z.object({ status: z.enum(['signed-in', 'expired']), expiresAt: z.string().nullable(), scope: z.string().nullable(), source: z.string().nullable() });
 export type AuthRow = z.infer<typeof authSchema>;
 
 export const stateSchema = z.object({
@@ -108,6 +114,12 @@ export const importSkill = defineRpc({
 
 export const deleteSkill = defineRpc({ name: 'delete-skill', input: z.object({ name: z.string() }), output: stateSchema });
 
+export const updateSkillAccess = defineRpc({
+  name: 'update-skill-access',
+  input: providerAccessSchema.extend({ name: nameSchema }),
+  output: stateSchema,
+});
+
 /** Replaces one provider's copy with the library's; the copy it replaces is moved to the backup folder. */
 export const overwriteSkill = defineRpc({
   name: 'overwrite-skill',
@@ -117,15 +129,19 @@ export const overwriteSkill = defineRpc({
 
 export const syncSkills = defineRpc({ name: 'sync-skills', input: z.object({}), output: stateSchema });
 
-/** Starts an OAuth sign-in; the app opens `authorizationUrl` in this device's browser. */
+/** Looks for native MCP authorization first; otherwise starts browser OAuth. */
 export const startSignIn = defineRpc({
   name: 'start-sign-in',
-  input: z.object({ name: z.string() }),
+  input: z.object({ name: z.string(), reuseExisting: z.boolean().default(true), via: z.literal('codex').optional() }),
   output: z.object({
     authorizationUrl: z.string(),
     redirectUri: z.string(),
     /** False when the callback port on the host is taken, so only pasting the address finishes it. */
     listening: z.boolean(),
+    /** Existing native MCP authorization was linked; no browser step is needed. */
+    reused: z.boolean().optional(),
+    source: z.string().nullable().optional(),
+    via: z.literal('codex').optional(),
   }),
 });
 

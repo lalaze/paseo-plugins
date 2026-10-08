@@ -2,6 +2,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { credentialLabels, credentialProviders, savedCredentials, type CredentialProvider, type SavedCredential } from './credentials';
 import { hasAuthHeader } from '../shared/form';
 import type { McpConfig } from '../shared/rpc';
 
@@ -48,7 +50,8 @@ export interface Tokens { access_token: string; refresh_token?: string; expires_
 /** One server's sign-in as kept in oauth.json. `url` ties it to the URL it was granted for. */
 export interface Grant { url: string; issuer: string; token_endpoint: string; resource: string | null; client: Client; tokens: Tokens }
 
-export interface AuthStatus { status: 'signed-in' | 'expired'; expiresAt: string | null; scope: string | null }
+export interface AuthStatus { status: 'signed-in' | 'expired'; expiresAt: string | null; scope: string | null; source: string | null }
+interface Source { url: string; provider: CredentialProvider; id: string }
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -250,6 +253,8 @@ function escapeHtml(text: string): string {
 export class SignIns {
   private readonly path: string;
   private grants: Record<string, Grant> | null = null;
+  private sources: Record<string, Source> = {};
+  private borrowed = new Map<string, SavedCredential>();
   private readonly flows = new Map<string, Flow>();
   private readonly refreshing = new Map<string, Promise<Grant | null>>();
   private writes: Promise<unknown> = Promise.resolve();
@@ -257,7 +262,7 @@ export class SignIns {
   private listening = false;
   private opening: Promise<void> | null = null;
 
-  constructor(readonly root: string, private readonly log: (error: unknown) => void = () => undefined, private readonly fetcher: Fetch = fetch, private readonly listen = true) {
+  constructor(readonly root: string, private readonly log: (error: unknown) => void = () => undefined, private readonly fetcher: Fetch = fetch, private readonly listen = true, private readonly home = homedir()) {
     this.path = join(root, 'oauth.json');
   }
 
@@ -273,14 +278,52 @@ export class SignIns {
       catch { this.log(new Error(`${this.path} is not valid JSON; sign in again.`)); }
     }
     this.grants ??= (record(parsed?.servers) ?? {}) as Record<string, Grant>;
+    for (const [name, value] of Object.entries(record(parsed?.sources) ?? {})) {
+      const source = record(value);
+      if (typeof source?.url === 'string' && typeof source.id === 'string' && credentialProviders.includes(source.provider as CredentialProvider)) {
+        this.sources[name] = { url: source.url, provider: source.provider as CredentialProvider, id: source.id };
+      }
+    }
     return this.grants;
+  }
+
+  /** Re-read linked caches so native refreshes and sign-outs are visible on this page. */
+  async readSources(): Promise<void> {
+    await this.load();
+    for (const [name, source] of Object.entries(this.sources)) {
+      const latest = (await savedCredentials(this.home, source.url, source.provider)).find(item => item.id === source.id);
+      if (latest) this.borrowed.set(name, latest);
+      else this.borrowed.delete(name);
+    }
+  }
+
+  /** Find an existing MCP authorization before attempting dynamic registration. */
+  async reuse(name: string, config: McpConfig, only?: CredentialProvider): Promise<string | null> {
+    if (config.type === 'stdio' || hasAuthHeader(config)) return null;
+    await this.load();
+    const candidates = await savedCredentials(this.home, config.url, only);
+    for (const candidate of candidates) {
+      if (candidate.tokens.expires_at !== undefined && candidate.tokens.expires_at <= Date.now()) continue;
+      // Verify a revoked credential before telling the user it can be reused.
+      const result = await probe(this.fetcher, { ...config, headers: { ...config.headers, Authorization: `Bearer ${candidate.tokens.access_token}` } }).catch(() => null);
+      if (!result || result.status < 200 || result.status >= 300) continue;
+      this.sources[name] = { url: config.url, provider: candidate.provider, id: candidate.id };
+      this.borrowed.set(name, candidate);
+      await this.save();
+      return credentialLabels[candidate.provider];
+    }
+    if (candidates.length) {
+      const labels = [...new Set(candidates.map(item => credentialLabels[item.provider]))].join(', ');
+      throw new Error(`Found an MCP authorization in ${labels}, but it is expired or could not be verified. Sign in to this MCP server in that client, then try again. / 找到了 ${labels} 的 MCP 授权，但已过期或验证失败。请先在该客户端重新授权此 MCP，再重试。`);
+    }
+    return null;
   }
 
   private save(): Promise<void> {
     const job = async () => {
       await mkdir(this.root, { recursive: true });
       const temporary = `${this.path}.${process.pid}.tmp`;
-      await writeFile(temporary, `${JSON.stringify({ version: 1, servers: this.grants ?? {} }, null, 2)}\n`, { mode: 0o600 });
+      await writeFile(temporary, `${JSON.stringify({ version: 1, servers: this.grants ?? {}, sources: this.sources }, null, 2)}\n`, { mode: 0o600 });
       await rename(temporary, this.path);
     };
     const run = this.writes.then(job, job);
@@ -299,6 +342,18 @@ export class SignIns {
         status: expired ? 'expired' : 'signed-in',
         expiresAt: grant.tokens.expires_at && !grant.tokens.refresh_token ? new Date(grant.tokens.expires_at).toISOString() : null,
         scope: grant.tokens.scope ?? null,
+        source: null,
+      };
+    }
+    for (const [name, source] of Object.entries(this.sources)) {
+      const config = servers[name];
+      if (!config || config.type === 'stdio' || config.url !== source.url) continue;
+      const tokens = this.borrowed.get(name)?.tokens;
+      out[name] = {
+        status: !tokens || (tokens.expires_at !== undefined && tokens.expires_at <= Date.now()) ? 'expired' : 'signed-in',
+        expiresAt: tokens?.expires_at !== undefined ? new Date(tokens.expires_at).toISOString() : null,
+        scope: tokens?.scope ?? null,
+        source: credentialLabels[source.provider],
       };
     }
     return out;
@@ -339,6 +394,8 @@ export class SignIns {
       const tokens = await exchangeCode(flow.grant, code, flow.verifier, this.fetcher);
       const grants = await this.load();
       grants[flow.name] = { ...flow.grant, tokens };
+      delete this.sources[flow.name];
+      this.borrowed.delete(flow.name);
       await this.save();
       flow.result = 'done';
     } catch (error) {
@@ -367,22 +424,40 @@ export class SignIns {
   async signOut(name: string): Promise<void> {
     this.cancel(name);
     const grants = await this.load();
-    if (!(name in grants)) return;
+    if (!(name in grants) && !(name in this.sources)) return;
     delete grants[name];
+    delete this.sources[name];
+    this.borrowed.delete(name);
     await this.save();
   }
 
   async rename(from: string, to: string): Promise<void> {
     const grants = await this.load();
-    if (from === to || !(from in grants)) return;
-    grants[to] = grants[from]!;
-    delete grants[from];
+    if (from === to || (!(from in grants) && !(from in this.sources))) return;
+    if (from in grants) { grants[to] = grants[from]!; delete grants[from]; }
+    if (from in this.sources) {
+      this.sources[to] = this.sources[from]!;
+      delete this.sources[from];
+      const cached = this.borrowed.get(from);
+      if (cached) this.borrowed.set(to, cached);
+      this.borrowed.delete(from);
+    }
     await this.save();
   }
 
   /** The header for a new agent, refreshing first when the token is about to run out. Null when there is nothing usable. */
   async header(name: string, config: McpConfig): Promise<string | null> {
     if (config.type === 'stdio' || hasAuthHeader(config)) return null;
+    await this.load();
+    const source = this.sources[name];
+    if (source) {
+      if (source.url !== config.url) return null;
+      const latest = (await savedCredentials(this.home, source.url, source.provider)).find(item => item.id === source.id);
+      if (latest) this.borrowed.set(name, latest);
+      else this.borrowed.delete(name);
+      if (!latest || (latest.tokens.expires_at !== undefined && latest.tokens.expires_at <= Date.now())) return null;
+      return `Bearer ${latest.tokens.access_token}`;
+    }
     let grant = (await this.load())[name];
     if (!grant || grant.url !== config.url) return null;
     const expires = grant.tokens.expires_at;

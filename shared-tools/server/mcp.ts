@@ -4,12 +4,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { mcpConfigSchema, nameSchema, type McpConfig } from '../shared/rpc';
+import { allowsProvider } from '../shared/access';
 
 /** Servers Paseo adds itself: the daemon's own tools and collaboration's director. */
 export const RESERVED_SERVERS = new Set(['paseo', 'director']);
 
-/** How a shared server is kept on disk: the usual `mcpServers` entry plus two plugin keys. */
-export type StoredServer = McpConfig & { enabled?: boolean; providers?: string[] };
+/** The usual `mcpServers` entry plus the plugin's enable and provider permission keys. */
+export type StoredServer = McpConfig & { enabled?: boolean; providers?: string[]; excludedProviders?: string[] };
 
 const KNOWN_TYPES = new Set(['stdio', 'http', 'sse', 'streamable-http', 'streamablehttp']);
 
@@ -104,7 +105,7 @@ export async function readCodexServers(command = 'codex'): Promise<Parsed> {
 }
 
 export function stripStored(server: StoredServer): McpConfig {
-  const { enabled: _enabled, providers: _providers, ...config } = server;
+  const { enabled: _enabled, providers: _providers, excludedProviders: _excludedProviders, ...config } = server;
   return mcpConfigSchema.parse(config);
 }
 
@@ -116,7 +117,7 @@ export function serversFor(provider: string, shared: Record<string, StoredServer
   const added: Record<string, McpConfig> = {};
   for (const [name, server] of Object.entries(shared)) {
     if (server.enabled === false || RESERVED_SERVERS.has(name) || existing?.[name] !== undefined) continue;
-    if (server.providers && !server.providers.includes(provider)) continue;
+    if (!allowsProvider(server, provider)) continue;
     added[name] = stripStored(server);
   }
   return added;

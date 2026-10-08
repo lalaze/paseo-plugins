@@ -13,14 +13,21 @@ From a local checkout, `cd shared-tools && npm ci && npm run check` typechecks, 
 Shared servers are added to each new agent as Paseo creates it, through the same `mcpServers` field Paseo uses for its own tools. Paseo translates them for each provider: Claude's SDK options, Codex's `mcp_servers`, OpenCode, ACP sessions (Grok, Kimi, CodeBuddy, Copilot, Antigravity Hub, …) and Pi's MCP adapter. No CLI's own config file is changed, so agents started outside Paseo do not see them.
 
 - Add a server by hand (stdio command, or an HTTP/SSE URL with headers), paste an `mcpServers` object in the format Claude Code, Cursor and Gemini use, or import Claude Code's user servers (`~/.claude.json`) or Codex's (`codex mcp list --json`). Servers switched off in Codex are not imported; one that reads its token from `bearer_token_env_var` is skipped, since Paseo can only pass literal headers.
-- A server can be switched off, or limited to some providers.
+- Each server's **Provider permissions** button (people icon), also available in its add/edit form, offers **Allow all**, **Allowlist**, and **Denylist**. An allowlist permits only the selected providers; an empty allowlist permits nobody. A denylist excludes the selected providers and allows the rest, including future providers. An empty denylist allows everyone. The provider's **MCP** switch must also be on. Existing configurations keep their original behavior.
 - Each provider has an **MCP** switch. Pi starts with it off: Pi only runs MCP servers with the `pi-mcp-adapter` extension, and Paseo refuses to start an agent whose provider cannot run the servers it is given. Turn it on once the adapter is installed.
 - A server the agent was created with under the same name (by a schedule, a delegation or another plugin) is kept as given. The names `paseo` and `director` belong to Paseo and are never used.
 - Only new agents get the servers. Agents that are already running, and resumed agents, keep the servers they were created with.
 
 ### Signing in
 
-An http or sse server that uses OAuth (Figma, Linear, Notion, Sentry and other hosted servers) gets a **Sign in** button. The plugin signs in once on the host, the MCP way: it reads the server's protected resource metadata, registers itself with the authorization server, and uses PKCE. Every provider then gets the token as an `Authorization` header, so no CLI has to sign in by itself.
+An http or sse server without an `Authorization` header gets a **Find authorization / sign in** button. It first looks for existing MCP OAuth authorization on the daemon host, matches the full server URL (not its display name), and verifies the access token against that server. A successful match shows **via Codex**, **via Claude Code** or **via Kimi** and needs no browser or new client registration. Every provider then gets the token as an `Authorization` header.
+
+- Supported file caches: Codex's `~/.codex/.credentials.json`, Claude Code's `~/.claude/.credentials.json` (`mcpOAuth`), and Kimi CLI's FastMCP `mcp-oauth` store under `~/.kimi-code` or `~/.kimi`. OS keychains, custom data directories and other cache formats are not scanned. An LLM-provider login is not an MCP authorization.
+- Reused authorization stays owned by its original client. Only the source and MCP URL are saved in the plugin; access and refresh tokens are not copied. The page and new agents read the source again, picking up native refreshes and sign-outs. The plugin does not refresh borrowed tokens, avoiding conflicts with rotating refresh tokens. If the source token expires, authorize that MCP again in the original client and retry. Existing agents still keep their original token.
+- Expired or unverifiable matches produce a message naming the client. **Browser sign-in** bypasses the cache search when you want a separate authorization. This is also useful for servers that permit registration; some, including Figma's remote MCP, restrict which clients may register.
+- **Authorize with Codex** asks the real Codex CLI to obtain a new authorization for an HTTP server. The host needs `codex` on its PATH with `mcp login --no-browser` support. The plugin passes temporary MCP settings without editing `config.toml`, opens the authorization link on the app device, and submits the pasted full callback URL to the CLI. Even if the callback page cannot load, its address can be pasted. After Codex saves the credential, the plugin verifies and links it. Cancel, timeout and plugin reload terminate the pending CLI process. This uses Codex's file credential store under `~/.codex` so the shared plugin can read it; no Codex account/model session is started.
+
+When no saved authorization is found, the plugin signs in once on the host, the MCP way: it reads the server's protected resource metadata, registers itself with the authorization server, and uses PKCE.
 
 - The approval page opens in the browser of the device running the app, even when the daemon is on another machine.
 - Afterwards the browser goes to `http://localhost:47821/callback`. On the host itself, or with the port forwarded (`ssh -L 47821:localhost:47821 host`), the plugin catches that page and finishes the sign-in by itself. Otherwise, such as over plain SSH or from a phone, that page does not load: copy its address from the address bar and paste it into the form.
@@ -29,7 +36,7 @@ An http or sse server that uses OAuth (Figma, Linear, Notion, Sentry and other h
 
 ## Skills
 
-The library is `$PASEO_HOME/shared-tools/skills` (by default `~/.paseo/shared-tools/skills`); each skill is a folder with a `SKILL.md`, as every one of these CLIs expects. Each skill is copied into the user-level skills folder of every provider with **Skills** on:
+The library is `$PASEO_HOME/shared-tools/skills` (by default `~/.paseo/shared-tools/skills`); each skill is a folder with a `SKILL.md`, as every one of these CLIs expects. Each skill is copied into the user-level skills folder of each allowed provider with **Skills** on:
 
 | Provider | Folder |
 | --- | --- |
@@ -46,6 +53,7 @@ The library is `$PASEO_HOME/shared-tools/skills` (by default `~/.paseo/shared-to
 
 A custom provider is matched by its id, then by the executable it runs (`kimi acp` → Kimi Code). For any other provider, set a folder on its row. Providers that share a folder are synced once.
 
+- **Provider permissions:** each library skill has the same **Allow all / Allowlist / Denylist** controls as MCP servers. Saving applies the rule immediately and removes untouched managed copies from denied providers. Edited copies and independent skills or links remain, with a note explaining that they are still on disk; these rules control plugin sharing rather than a CLI's independently installed tools. If providers share a folder but have different effective permissions, the skill is withheld from that folder and a warning asks you to set separate folders. The plugin removes its untouched copy there to prevent sharing through the common folder.
 - **Getting started:** the screen lists skills it finds in the providers' folders. **Add to library** copies one in; any other folder from disk can be added by path. The provider's own copy, being identical, is adopted rather than duplicated.
 - **Editing:** edit the files in the library. Changes reach every provider within a couple of seconds, or on **Sync now**.
 - **Ownership:** every copy has a `.paseo-shared-tools.json` manifest. The plugin only updates or removes copies with a manifest that have not been edited since it wrote them. A skill of your own with the same name shows as **name taken**, and a copy edited in a provider's folder shows as **edited there**; both are left alone until you choose **Replace**, which first moves the existing copy to `~/.paseo/shared-tools/backups`.
@@ -56,8 +64,8 @@ A custom provider is matched by its id, then by the executable it runs (`kimi ac
 
 Everything lives in `$PASEO_SHARED_TOOLS_DIR`, or `$PASEO_HOME/shared-tools`:
 
-- `config.json`: the shared servers in the usual `mcpServers` format, plus `enabled: false` and `providers: [...]` where set, and the per-provider switches. It may hold tokens, so it is written with mode 600. You can edit it by hand; an entry the plugin cannot read is reported on the screen and kept.
-- `oauth.json`: sign-ins, by server name (clients, access and refresh tokens), mode 600.
+- `config.json`: the shared servers in the usual `mcpServers` format, plus `enabled: false`, `providers: [...]` (allowlist), and `excludedProviders: [...]` (denylist) where set, the per-provider switches, and `skillAccess` rules keyed by skill name with the same permission fields. Missing/null `providers` allows everyone; `providers: []` allows nobody. Denials take precedence if both lists are hand-edited. These metadata fields are never passed to MCP clients. It may hold tokens, so it is written with mode 600. You can edit it by hand; an entry the plugin cannot read is reported on the screen and kept. Invalid permission rules stop sharing the affected resource rather than allowing everyone.
+- `oauth.json`: sign-ins, by server name (clients, access and refresh tokens for browser sign-ins; source references for reused native authorization), mode 600.
 - `skills/`: the library.
 - `backups/`: replaced copies and removed library skills.
 

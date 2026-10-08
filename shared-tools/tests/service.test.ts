@@ -96,3 +96,117 @@ test('a provider seen for the first time at agent creation gets its skills first
   await tools.mcpFor('claude', undefined, paseo);
   assert.ok((await readdir(join(home, '.claude/skills'))).includes('tdd'));
 });
+
+
+test('persists MCP allowlists and denylists across reloads, renames, and enable switches', async () => {
+  await tools.state(paseo);
+  let state = await tools.saveServer({ name: 'docs', previousName: null, enabled: true, providers: null, excludedProviders: ['kimi'], config: { type: 'http', url: 'https://d/mcp' } });
+  assert.equal(await tools.mcpFor('kimi', undefined, paseo), null);
+  assert.deepEqual(await tools.mcpFor('claude', undefined, paseo), { docs: { type: 'http', url: 'https://d/mcp' } });
+  tools.stop();
+  tools = new SharedTools(join(home, '.paseo/shared-tools'), home);
+  state = await tools.state(paseo);
+  assert.deepEqual(state.mcpServers[0]!.excludedProviders, ['kimi']);
+  state = await tools.saveServer({ ...state.mcpServers[0]!, name: 'renamed', previousName: 'docs', enabled: false });
+  state = await tools.saveServer({ ...state.mcpServers[0]!, previousName: 'renamed', enabled: true });
+  assert.equal(await tools.mcpFor('kimi', undefined, paseo), null);
+  await tools.saveServer({ ...state.mcpServers[0]!, previousName: 'renamed', providers: [], excludedProviders: [] });
+  assert.equal(await tools.mcpFor('claude', undefined, paseo), null);
+});
+
+test('skill permissions apply per skill and survive reloads; empty allowlists remove managed copies', async () => {
+  await skill(tools.libraryDir, 'restricted');
+  await skill(tools.libraryDir, 'unrestricted');
+  await tools.state(paseo);
+  let state = await tools.updateSkillAccess({ name: 'restricted', providers: ['claude'] });
+  assert.deepEqual(state.skills.find(s => s.name === 'restricted')!.targets.map(t => t.provider), ['claude']);
+  for (const dir of ['.kimi-code/skills', '.pi/agent/skills']) {
+    assert.deepEqual(await readdir(join(home, dir)), ['unrestricted']);
+  }
+  tools.stop();
+  tools = new SharedTools(join(home, '.paseo/shared-tools'), home);
+  state = await tools.state(paseo);
+  assert.deepEqual(state.skills.find(s => s.name === 'restricted')!.providers, ['claude']);
+  state = await tools.updateSkillAccess({ name: 'restricted', providers: null, excludedProviders: ['claude'] });
+  assert.deepEqual(state.skills.find(s => s.name === 'restricted')!.targets.map(t => t.provider), ['kimi', 'pi']);
+  assert.deepEqual(await readdir(join(home, '.claude/skills')), ['unrestricted']);
+  state = await tools.updateSkillAccess({ name: 'restricted', providers: [] });
+  assert.equal(state.skills.find(s => s.name === 'restricted')!.targets.length, 0);
+  assert.deepEqual(await readdir(join(home, '.kimi-code/skills')), ['unrestricted']);
+  state = await tools.updateSkillAccess({ name: 'restricted', providers: null });
+  assert.equal(state.skills.find(s => s.name === 'restricted')!.targets.length, 3);
+  await tools.updateProvider({ provider: 'pi', skills: false });
+  state = await tools.updateSkillAccess({ name: 'restricted', providers: null, excludedProviders: ['kimi'] });
+  assert.deepEqual(state.skills.find(s => s.name === 'restricted')!.targets.map(t => t.provider), ['claude']);
+});
+
+test('new providers follow allowlist and denylist rules', async () => {
+  await skill(tools.libraryDir, 'allowed');
+  await skill(tools.libraryDir, 'denied');
+  await tools.state(paseo);
+  await tools.updateSkillAccess({ name: 'allowed', providers: ['claude'] });
+  await tools.updateSkillAccess({ name: 'denied', providers: null, excludedProviders: ['kimi'] });
+  await tools.saveServer({ name: 'only', previousName: null, enabled: true, providers: ['claude'], config: { type: 'stdio', command: 'only' } });
+  await tools.saveServer({ name: 'others', previousName: null, enabled: true, providers: null, excludedProviders: ['kimi'], config: { type: 'stdio', command: 'others' } });
+  const future = { ...paseo, providers: { snapshot: async () => ({ entries: [...entries, { provider: 'gemini', status: 'ready', enabled: true, label: 'Gemini' }] }) } } as unknown as Paseo;
+  assert.deepEqual(await tools.mcpFor('gemini', undefined, future), { others: { type: 'stdio', command: 'others' } });
+  assert.deepEqual(await readdir(join(home, '.gemini/skills')), ['denied']);
+});
+
+test('denying a skill keeps edited and independent copies and reports that they remain', async () => {
+  await skill(tools.libraryDir, 'edited');
+  await skill(tools.libraryDir, 'independent');
+  await skill(join(home, '.claude/skills'), 'independent');
+  await writeFile(join(home, '.claude/skills/independent/SKILL.md'), 'My independent skill');
+  await tools.state(paseo);
+  await writeFile(join(home, '.claude/skills/edited/SKILL.md'), 'My edited copy');
+  let state = await tools.updateSkillAccess({ name: 'edited', providers: null, excludedProviders: ['claude'] });
+  assert.match(state.notes.join('\n'), /edited after/);
+  assert.equal(await readFile(join(home, '.claude/skills/edited/SKILL.md'), 'utf8'), 'My edited copy');
+  state = await tools.updateSkillAccess({ name: 'independent', providers: [] });
+  assert.match(state.notes.join('\n'), /independent skill or link/);
+  assert.equal(await readFile(join(home, '.claude/skills/independent/SKILL.md'), 'utf8'), 'My independent skill');
+});
+
+test('a shared skills folder cannot bypass provider permissions', async () => {
+  await skill(tools.libraryDir, 'restricted');
+  await skill(tools.libraryDir, 'unrestricted');
+  await tools.state(paseo);
+  await tools.updateProvider({ provider: 'kimi', skillsDir: '~/.claude/skills' });
+  let state = await tools.updateSkillAccess({ name: 'restricted', providers: ['claude'] });
+  assert.match(state.notes.join('\n'), /same skills folder/);
+  assert.equal(state.skills.find(s => s.name === 'restricted')!.targets[0]!.status, 'error');
+  assert.deepEqual(await readdir(join(home, '.claude/skills')), ['unrestricted']);
+  // Even an explicit overwrite request cannot distribute to a denied provider.
+  await tools.overwriteSkill('restricted', 'claude');
+  assert.deepEqual(await readdir(join(home, '.claude/skills')), ['unrestricted']);
+  state = await tools.updateProvider({ provider: 'kimi', skillsDir: '' });
+  assert.deepEqual(state.skills.find(s => s.name === 'restricted')!.targets.map(t => [t.provider, t.status]), [['claude', 'synced']]);
+  assert.deepEqual(await readdir(join(home, '.kimi-code/skills')), ['unrestricted']);
+});
+
+test('malformed hand-edited policies never fall back to sharing with everyone', async () => {
+  await skill(tools.libraryDir, 'restricted');
+  await tools.state(paseo);
+  const path = join(tools.root, 'config.json');
+  const config = JSON.parse(await readFile(path, 'utf8'));
+  config.mcpServers = { docs: { command: 'docs', excludedProviders: 'kimi' } };
+  config.skillAccess = { restricted: { providers: 'claude' } };
+  await writeFile(path, JSON.stringify(config));
+  const state = await tools.state(paseo);
+  assert.deepEqual(state.mcpServers, []);
+  assert.deepEqual(state.skills[0]!.providers, []);
+  assert.match(state.notes.join('\n'), /invalid provider permissions/);
+  assert.deepEqual(await readdir(join(home, '.claude/skills')), []);
+  assert.equal(await tools.mcpFor('claude', undefined, paseo), null);
+});
+
+test('deleting a library skill clears its policy and unknown skill policy updates are rejected', async () => {
+  await skill(tools.libraryDir, 'restricted');
+  await tools.state(paseo);
+  await tools.updateSkillAccess({ name: 'restricted', providers: [] });
+  await tools.deleteSkill('restricted');
+  const config = JSON.parse(await readFile(join(tools.root, 'config.json'), 'utf8'));
+  assert.equal(config.skillAccess.restricted, undefined);
+  await assert.rejects(tools.updateSkillAccess({ name: 'missing', providers: null }), /No library skill/);
+});

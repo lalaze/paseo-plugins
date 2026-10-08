@@ -33,3 +33,14 @@ test('matches every word of a search across name, description and provider', () 
   assert.ok(matchesQuery('claude front', 'frontend-design', undefined, 'Claude'));
   assert.ok(!matchesQuery('front codex', 'frontend-design', 'Claude'));
 });
+
+
+test('preserves empty allowlists and denylists through editing', () => {
+  for (const access of [{ providers: [] }, { providers: null, excludedProviders: ['kimi', 'future-provider'] }]) {
+    const result = serverFromDraft({ ...blankDraft(), name: 'fs', command: 'fs', ...access });
+    assert.ok('server' in result);
+    assert.deepEqual(serverFromDraft(draftFrom(result.server)), result);
+    assert.deepEqual(result.server.providers, access.providers);
+    assert.deepEqual(result.server.excludedProviders, 'excludedProviders' in access ? access.excludedProviders : undefined);
+  }
+});

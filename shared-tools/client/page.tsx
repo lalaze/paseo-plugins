@@ -4,10 +4,11 @@ import { copyText, Icon, ScrollView, useToast } from '@getpaseo/plugin/client/re
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { blankDraft, draftFrom, hasAuthHeader, matchesQuery, serverFromDraft, summarize, type ServerDraft } from '../shared/form';
 import { ui } from '../shared/i18n';
+import { accessMode, type AccessMode } from '../shared/access';
 import {
   cancelSignIn, deleteMcpServer, deleteSkill, finishSignIn, importMcpServers, importSkill, overwriteSkill, readState, saveMcpServer,
-  signInStatus, signOut, startSignIn, syncSkills, updateProvider,
-  type FoundSkill, type McpServer, type ProviderRow, type SharedState, type SkillRow, type TargetStatus,
+  signInStatus, signOut, startSignIn, syncSkills, updateProvider, updateSkillAccess,
+  type FoundSkill, type McpServer, type ProviderAccess, type ProviderRow, type SharedState, type SkillRow, type TargetStatus,
 } from '../shared/rpc';
 import { Banner, Button, Card, Chip, Dot, Empty, Field, Heading, List, MONO, Muted, Switch, Tabs, type Colors } from './kit';
 
@@ -68,8 +69,8 @@ export function SharedToolsPage(props: PluginSurfaceProps & { rpc: Rpc }) {
         <View style={{ flex: 1, gap: 3 }}>
           <Text style={{ color: colors.foreground, fontSize: 18, fontWeight: '700' }}>{ui('Shared MCP & skills', '共享 MCP 与技能')}</Text>
           <Muted colors={colors}>{ui(
-            `One set of MCP servers and skills for every provider on ${props.host.label}.`,
-            `${props.host.label} 上所有 Provider 共用一套 MCP 服务器和技能。`,
+            `Share MCP servers and skills with selected providers on ${props.host.label}.`,
+            `在 ${props.host.label} 上按 Provider 共享 MCP 服务器和技能。`,
           )}</Muted>
         </View>
         <Button colors={colors} icon="RefreshCw" label={ui('Sync now', '立即同步')} iconOnly={compact} disabled={busy} onPress={() => void run(() => props.rpc(syncSkills, {}))} />
@@ -99,6 +100,64 @@ interface TabProps {
   rpc: Rpc;
   run(job: () => Promise<SharedState | null>): Promise<boolean>;
   providerLabel(id: string): string;
+}
+
+function AccessSummary(props: Pick<TabProps, 'colors' | 'providerLabel'> & { access: ProviderAccess }) {
+  const { access } = props;
+  const labels = (ids: string[]) => ids.map(props.providerLabel).join(', ');
+  return <>
+    {access.providers !== null ? <Chip colors={props.colors} label={access.providers.length
+      ? `${ui('Allowlist', '白名单')}: ${labels(access.providers)}` : ui('Allowlist: nobody', '白名单：不允许任何 Provider')} /> : null}
+    {access.excludedProviders?.length ? <Chip colors={props.colors} tone="warning" label={`${ui('Denylist', '黑名单')}: ${labels(access.excludedProviders)}`} /> : null}
+  </>;
+}
+
+/** The same permission controls serve both MCP servers and library skills. */
+function AccessFields(props: TabProps & { access: ProviderAccess; onChange(access: ProviderAccess): void; kind?: 'mcp' | 'skills' }) {
+  const { colors, access } = props;
+  const [mode, setMode] = useState<AccessMode>(() => accessMode(access));
+  const selected = mode === 'allow' ? access.providers ?? [] : access.excludedProviders ?? [];
+  const changeMode = (next: AccessMode) => {
+    if (next === mode) return;
+    setMode(next);
+    props.onChange({ providers: next === 'allow' ? [] : null, excludedProviders: [] });
+  };
+  const toggle = (id: string) => {
+    const ids = selected.includes(id) ? selected.filter(value => value !== id) : [...selected, id];
+    props.onChange(mode === 'allow' ? { providers: ids, excludedProviders: [] } : { providers: null, excludedProviders: ids });
+  };
+  const ids = [...new Set([...props.state.providers.map(row => row.id), ...(access.providers ?? []), ...(access.excludedProviders ?? [])])];
+  return <View style={{ gap: 8 }}>
+    <Text style={{ color: colors.foregroundMuted, fontSize: 11, fontWeight: '600' }}>{ui('Provider permissions', 'Provider 权限')}</Text>
+    <Tabs<AccessMode> colors={colors} small value={mode} onChange={changeMode} items={[
+      { id: 'all', label: ui('Allow all', '全部允许') },
+      { id: 'allow', label: ui('Allowlist', '白名单') },
+      { id: 'deny', label: ui('Denylist', '黑名单') },
+    ]} />
+    <Muted colors={colors} small>{mode === 'allow'
+      ? ui('Only selected providers are allowed. An empty list allows nobody.', '仅允许选中的 Provider；不选表示全部禁止。')
+      : mode === 'deny' ? ui('Selected providers are denied; all others are allowed.', '禁止选中的 Provider，其余全部允许。')
+      : ui('All providers are allowed, including new ones.', '允许所有 Provider，包括之后新增的。')}</Muted>
+    {mode !== 'all' ? <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+      {ids.map(id => <Chip key={id} colors={colors} label={props.providerLabel(id)} selected={selected.includes(id)} onPress={() => toggle(id)} />)}
+      {!ids.length ? <Muted colors={colors} small>{ui('No providers discovered yet.', '暂未发现 Provider。')}</Muted> : null}
+    </View> : null}
+    <Muted colors={colors} small>{props.kind === 'skills'
+      ? ui('The provider’s Skills switch must also be on. Saving removes untouched managed copies from denied providers; edited or independent copies are kept. Providers sharing a folder need matching permissions or separate folders.', '还需开启 Provider 的技能总开关。保存后会移除被禁止方的未改动托管副本；改过或独立的副本会保留。共用目录的 Provider 需设置相同权限或分开目录。')
+      : ui('The provider’s MCP switch must also be on. Applies to new agents.', '还需开启 Provider 的 MCP 总开关；对新建 Agent 生效。')}</Muted>
+  </View>;
+}
+
+function AccessPanel(props: TabProps & { access: ProviderAccess; kind?: 'mcp' | 'skills'; onSave(access: ProviderAccess): Promise<boolean>; onClose(): void }) {
+  const [access, setAccess] = useState<ProviderAccess>({ providers: props.access.providers, excludedProviders: props.access.excludedProviders ?? [] });
+  return <View style={{ margin: 12, padding: 12, gap: 12, borderRadius: 8, backgroundColor: props.colors.surface2 }}>
+    <AccessFields {...props} access={access} onChange={setAccess} />
+    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
+      <Button colors={props.colors} variant="ghost" label={ui('Cancel', '取消')} onPress={props.onClose} />
+      <Button colors={props.colors} variant="primary" label={ui('Save', '保存')} disabled={props.busy}
+        onPress={() => void props.onSave(access).then(ok => ok && props.onClose())} />
+    </View>
+  </View>;
 }
 
 /* ---------------------------------------------------------------- MCP */
@@ -167,6 +226,7 @@ function ServerRow(props: TabProps & { server: McpServer; onEdit(): void }) {
   const { server, colors } = props;
   const [confirming, setConfirming] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
+  const [accessOpen, setAccessOpen] = useState(false);
   const auth = props.state.auth[server.name];
   const canSignIn = server.config.type !== 'stdio' && !hasAuthHeader(server.config);
   const save = (patch: Partial<McpServer>) => props.run(() => props.rpc(saveMcpServer, { ...server, ...patch, previousName: server.name }));
@@ -176,9 +236,10 @@ function ServerRow(props: TabProps & { server: McpServer; onEdit(): void }) {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 13, fontWeight: '600', flexShrink: 1 }}>{server.name}</Text>
           <Chip colors={colors} label={server.config.type} />
-          {server.providers ? <Chip colors={colors} label={`${ui('Only', '仅')} ${server.providers.map(props.providerLabel).join(', ')}`} /> : null}
+          <AccessSummary {...props} access={server} />
           {canSignIn && auth ? <Chip colors={colors} tone={auth.status === 'signed-in' ? 'success' : 'warning'}
             label={auth.status === 'signed-in' ? ui('signed in', '已登录') : ui('sign-in expired', '登录已过期')} /> : null}
+          {canSignIn && auth?.source ? <Chip colors={colors} label={ui(`via ${auth.source}`, `来自 ${auth.source}`)} /> : null}
         </View>
         <Muted colors={colors} mono lines={1} selectable>{summarize(server.config)}</Muted>
       </View>
@@ -191,14 +252,16 @@ function ServerRow(props: TabProps & { server: McpServer; onEdit(): void }) {
           {canSignIn && !signingIn
             ? auth?.status === 'signed-in'
               ? <Button colors={colors} variant="ghost" iconOnly icon="LogOut" label={ui('Sign out', '退出登录')} disabled={props.busy} onPress={() => void props.run(() => props.rpc(signOut, { name: server.name }))} />
-              : <Button colors={colors} variant="ghost" icon="LogIn" label={auth ? ui('Sign in again', '重新登录') : ui('Sign in', '登录')} disabled={props.busy} onPress={() => setSigningIn(true)} />
+              : <Button colors={colors} variant="ghost" icon="LogIn" label={auth ? ui('Sign in again', '重新登录') : ui('Find authorization / sign in', '查找授权 / 登录')} disabled={props.busy} onPress={() => setSigningIn(true)} />
             : null}
+          <Button colors={colors} variant="ghost" iconOnly icon="Users" label={ui('Provider permissions', 'Provider 权限')} disabled={props.busy} onPress={() => setAccessOpen(value => !value)} />
           <Button colors={colors} variant="ghost" iconOnly icon="Pencil" label={ui('Edit', '编辑')} disabled={props.busy} onPress={props.onEdit} />
           <Button colors={colors} variant="ghost" iconOnly icon="Trash2" label={ui('Delete', '删除')} disabled={props.busy} onPress={() => setConfirming(true)} />
         </>}
       <Switch colors={colors} label={`${server.name} ${ui('on', '开启')}`} value={server.enabled} disabled={props.busy} onChange={enabled => void save({ enabled })} />
     </View>
-    {signingIn ? <SignInPanel {...props} name={server.name} onClose={() => setSigningIn(false)} /> : null}
+    {accessOpen ? <AccessPanel {...props} access={server} onClose={() => setAccessOpen(false)} onSave={access => save(access)} /> : null}
+    {signingIn ? <SignInPanel {...props} name={server.name} canUseCodex={server.config.type === 'http'} onClose={() => setSigningIn(false)} /> : null}
   </View>;
 }
 
@@ -213,14 +276,16 @@ function openLink(url: string): Promise<void> {
  * The browser step runs on this device; the host catches the redirect itself when it can
  * (same machine, or the port forwarded over SSH), and the pasted address finishes it otherwise.
  */
-function SignInPanel(props: TabProps & { name: string; onClose(): void }) {
+function SignInPanel(props: TabProps & { name: string; canUseCodex: boolean; onClose(): void }) {
   const { colors, name, rpc, run, onClose } = props;
   const toast = useToast();
-  const [flow, setFlow] = useState<{ authorizationUrl: string; redirectUri: string; listening: boolean } | null>(null);
+  const [flow, setFlow] = useState<{ authorizationUrl: string; redirectUri: string; listening: boolean; via?: 'codex' } | null>(null);
   const [callback, setCallback] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
   const [starting, setStarting] = useState(true);
   const live = useRef(true);
+  const callbacks = useRef({ toast, onClose });
+  callbacks.current = { toast, onClose };
   useEffect(() => () => { live.current = false; }, []);
 
   const finished = useCallback(async (next: SharedState | null) => {
@@ -229,12 +294,18 @@ function SignInPanel(props: TabProps & { name: string; onClose(): void }) {
     if (live.current) onClose();
   }, [name, onClose, rpc, run, toast]);
 
-  const begin = useCallback(async () => {
+  const begin = useCallback(async (reuseExisting = true, via?: 'codex') => {
     setStarting(true);
     setProblem(null);
     try {
-      const started = await rpc(startSignIn, { name });
+      const started = await rpc(startSignIn, { name, reuseExisting, via });
       if (!live.current) return;
+      if (started.reused) {
+        callbacks.current.toast.show(ui(`Using the MCP authorization from ${started.source}.`, `已复用 ${started.source} 的 MCP 授权。`), { variant: 'success' });
+        await run(() => rpc(readState, {}));
+        if (live.current) callbacks.current.onClose();
+        return;
+      }
       setFlow(started);
       await openLink(started.authorizationUrl).catch(() => {
         if (live.current) setProblem(ui('Could not open a browser here; copy the link below instead.', '无法在此打开浏览器，请复制下方链接。'));
@@ -244,13 +315,13 @@ function SignInPanel(props: TabProps & { name: string; onClose(): void }) {
     } finally {
       if (live.current) setStarting(false);
     }
-  }, [name, rpc]);
+  }, [name, rpc, run]);
 
   useEffect(() => { void begin(); }, [begin]);
 
   // The host may finish on its own when the redirect reaches its port.
   useEffect(() => {
-    if (!flow?.listening) return;
+    if (!flow || (!flow.listening && flow.via !== 'codex')) return;
     let stopped = false;
     const timer = setInterval(() => {
       void rpc(signInStatus, { name }).then(result => {
@@ -278,10 +349,11 @@ function SignInPanel(props: TabProps & { name: string; onClose(): void }) {
     {starting && !flow
       ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <ActivityIndicator size="small" color={colors.foregroundMuted} />
-        <Muted colors={colors}>{ui('Finding how this server signs in…', '正在查找该服务器的登录方式…')}</Muted>
+        <Muted colors={colors}>{ui('Looking for existing MCP authorization…', '正在查找已有 MCP 授权…')}</Muted>
       </View>
       : null}
     {flow ? <>
+      {flow.via === 'codex' ? <Muted colors={colors}>{ui('Codex is handling this authorization. After approval, paste the final browser address below; new agents will use its saved credential.', '此授权由 Codex 发起。浏览器授权后，请将最后停留的地址粘贴到下方；新建 Agent 会复用其保存的凭据。')}</Muted> : null}
       <View style={{ gap: 6 }}>
         <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: '600' }}>{ui('1. Approve access in the browser on this device', '1. 在本设备的浏览器中授权')}</Text>
         <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
@@ -304,7 +376,9 @@ function SignInPanel(props: TabProps & { name: string; onClose(): void }) {
           </View>
           <Button colors={colors} variant="primary" label={ui('Finish', '完成')} disabled={props.busy || !callback.trim()} onPress={() => void finish()} />
         </View>
-        <Muted colors={colors} small>{flow.listening
+        <Muted colors={colors} small>{flow.via === 'codex'
+          ? ui('Paste the full callback address even if the browser says the page cannot load.', '即使浏览器提示页面无法打开，也请复制完整回调地址粘贴到这里。')
+          : flow.listening
           ? ui(
             `On the host itself, or with the port forwarded (ssh -L ${port}:localhost:${port} …), this finishes on its own.`,
             `在主机本机上，或已转发端口（ssh -L ${port}:localhost:${port} …）时，会自动完成。`,
@@ -313,23 +387,20 @@ function SignInPanel(props: TabProps & { name: string; onClose(): void }) {
       </View>
     </> : null}
     {problem ? <Muted colors={colors} danger selectable>{problem}</Muted> : null}
-    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
+    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 6 }}>
       {problem && !flow ? <Button colors={colors} label={ui('Try again', '重试')} disabled={starting} onPress={() => void begin()} /> : null}
+      {!flow && props.canUseCodex ? <Button colors={colors} label={ui('Authorize with Codex', '通过 Codex 授权')} disabled={starting} onPress={() => void begin(false, 'codex')} /> : null}
+      {problem && !flow ? <Button colors={colors} label={ui('Browser sign-in', '浏览器重新授权')} disabled={starting} onPress={() => void begin(false)} /> : null}
       <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={cancel} />
     </View>
   </View>;
 }
 
 function ServerForm(props: TabProps & { draft: ServerDraft; previousName: string | null; onClose(): void }) {
-  const { colors, state } = props;
+  const { colors } = props;
   const [draft, setDraft] = useState(props.draft);
   const [problem, setProblem] = useState<string | null>(null);
   const set = (patch: Partial<ServerDraft>) => setDraft(current => ({ ...current, ...patch }));
-  const toggleProvider = (id: string) => {
-    const current = draft.providers ?? [];
-    const next = current.includes(id) ? current.filter(p => p !== id) : [...current, id];
-    set({ providers: next.length ? next : null });
-  };
   const submit = () => {
     const result = serverFromDraft(draft);
     if ('error' in result) { setProblem(result.error); return; }
@@ -360,12 +431,7 @@ function ServerForm(props: TabProps & { draft: ServerDraft; previousName: string
         <Field colors={colors} label="URL" value={draft.url} onChange={url => set({ url })} placeholder="https://example.com/mcp" mono />
         <Field colors={colors} label={ui('Headers, Name: value per line', '请求头，每行 Name: value')} value={draft.headers} onChange={headers => set({ headers })} multiline mono placeholder="Authorization: Bearer …" />
       </>}
-    <View style={{ gap: 6 }}>
-      <Text style={{ color: colors.foregroundMuted, fontSize: 11, fontWeight: '600' }}>{ui('Providers · none selected means every one with MCP on', 'Provider · 不选即所有开启 MCP 的')}</Text>
-      <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-        {state.providers.map(row => <Chip key={row.id} colors={colors} label={row.label} selected={draft.providers?.includes(row.id) ?? false} onPress={() => toggleProvider(row.id)} />)}
-      </View>
-    </View>
+    <AccessFields {...props} access={draft} onChange={set} />
     {problem ? <Muted colors={colors} danger>{problem}</Muted> : null}
     <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
       <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={props.onClose} />
@@ -414,7 +480,7 @@ function SkillsTab(props: TabProps) {
       : <>
         {!filtered || skills.length ? <View style={{ gap: 8 }}>
           <Heading colors={colors} title={ui('Library', '技能库')} count={count(skills.length, state.skills.length)}
-            hint={ui('Copied into every provider with skills on. Copies edited there are never overwritten without asking.', '复制到每个开启技能的 Provider；在 Provider 里改过的副本不会被直接覆盖。')} />
+            hint={ui('Copied to allowed providers with skills on. Copies edited there are preserved.', '复制到获准且开启技能的 Provider；在 Provider 里改过的副本会保留。')} />
           {state.skills.length === 0
             ? <Empty colors={colors} icon="BookOpen" title={ui('The library is empty', '技能库是空的')}
               hint={ui('Add skills your providers already have from the list below, or add a folder with a SKILL.md.', '从下方列表加入各 Provider 已有的技能，或添加含 SKILL.md 的文件夹。')} />
@@ -434,6 +500,7 @@ function SkillsTab(props: TabProps) {
 function SkillItem(props: TabProps & { skill: SkillRow }) {
   const { skill, colors } = props;
   const [confirming, setConfirming] = useState(false);
+  const [accessOpen, setAccessOpen] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const synced = skill.targets.filter(target => !needsLook(target));
   const issues = skill.targets.filter(needsLook);
@@ -441,9 +508,13 @@ function SkillItem(props: TabProps & { skill: SkillRow }) {
   return <View style={{ paddingHorizontal: 14, paddingVertical: 11, gap: 7 }}>
     <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
       <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
-        <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: '600' }}>{skill.name}</Text>
+        <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: '600' }}>{skill.name}</Text>
+          <AccessSummary {...props} access={skill} />
+        </View>
         {skill.description ? <Muted colors={colors} small lines={2}>{skill.description}</Muted> : null}
       </View>
+      <Button colors={colors} variant="ghost" iconOnly icon="Users" label={ui('Provider permissions', 'Provider 权限')} disabled={props.busy} onPress={() => setAccessOpen(value => !value)} />
       {confirming
         ? <>
           <Button colors={colors} variant="danger" label={ui('Remove everywhere', '从所有位置移除')} disabled={props.busy} onPress={() => void props.run(() => props.rpc(deleteSkill, { name: skill.name }))} />
@@ -461,8 +532,10 @@ function SkillItem(props: TabProps & { skill: SkillRow }) {
       {issues.map(target => <Chip key={target.provider} colors={colors} tone={statusTones[target.status]} selected={open === target.provider}
         label={`${props.providerLabel(target.provider)} · ${statusLabels[target.status]}`}
         onPress={() => setOpen(current => current === target.provider ? null : target.provider)} />)}
-      {skill.targets.length === 0 ? <Muted colors={colors} small>{ui('No provider has skills on.', '没有开启技能的 Provider。')}</Muted> : null}
+      {skill.targets.length === 0 ? <Muted colors={colors} small>{ui('No allowed provider has skills on.', '没有获准且开启技能的 Provider。')}</Muted> : null}
     </View>
+    {accessOpen ? <AccessPanel {...props} kind="skills" access={skill} onClose={() => setAccessOpen(false)}
+      onSave={access => props.run(() => props.rpc(updateSkillAccess, { name: skill.name, ...access }))} /> : null}
     {confirming ? <Muted colors={colors} small>{ui('Moves the library copy to the backups and removes the untouched copies from every provider.', '把技能库中的副本移到备份目录，并从各 Provider 删除未改动的副本。')}</Muted> : null}
     {opened ? <View style={{ gap: 8, padding: 10, borderRadius: 8, backgroundColor: colors.surface2 }}>
       {opened.message ? <Muted colors={colors} selectable danger={opened.status === 'error'}>{opened.message}</Muted> : null}

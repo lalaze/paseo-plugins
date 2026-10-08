@@ -325,7 +325,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
   />);
   // A wide column needs a lane to scroll. It has no border: the cards already have one.
   const lane = { borderRadius: 14, backgroundColor: tint(colors.surface1, 0.22) } as const;
-  const empty = (column: BoardColumn) => <Text style={{ color: colors.foregroundMuted, fontSize: 12, paddingVertical: 4, paddingHorizontal: 2 }}>{ui(...COLUMN_EMPTY[column])}</Text>;
+  const empty = (column: BoardColumn, centered = false) => <Text style={{ color: colors.foregroundMuted, fontSize: 12, paddingVertical: 4, paddingHorizontal: 2, textAlign: centered ? 'center' : 'left' }}>{ui(...COLUMN_EMPTY[column])}</Text>;
 
   const hostName = hostFilter ? labelOf(hostFilter) : ui('All machines', '全部机器');
   const projectName = props.scope?.name ?? (project ? project.name : ui('All projects', '全部项目'));
@@ -409,7 +409,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
       {BOARD_COLUMNS.map(column => <View key={column} style={{ flex: 1, minWidth: 0, gap: 8 }}>
         {header(column)}
         <View style={[lane, { flex: 1, minHeight: 0, overflow: 'hidden' }]}>
-          {columns[column].length === 0 ? <View style={{ flex: 1, minHeight: 64, justifyContent: 'center', paddingHorizontal: 8 }}>{empty(column)}</View> : <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 10, padding: 8 }}>{cards(column)}</ScrollView>}
+          {columns[column].length === 0 ? <View style={{ flex: 1, minHeight: 64, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 }}>{empty(column, true)}</View> : <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 10, padding: 8 }}>{cards(column)}</ScrollView>}
         </View>
       </View>)}
     </View> : <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24, gap: 18 }}>

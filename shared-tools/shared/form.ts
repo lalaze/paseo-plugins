@@ -6,6 +6,7 @@ export interface ServerDraft {
   name: string;
   enabled: boolean;
   providers: string[] | null;
+  excludedProviders?: string[];
   type: McpConfig['type'];
   command: string;
   args: string;
@@ -20,7 +21,7 @@ export function blankDraft(): ServerDraft {
 
 export function draftFrom(server: McpServer): ServerDraft {
   const { config } = server;
-  const base = { ...blankDraft(), name: server.name, enabled: server.enabled, providers: server.providers, type: config.type };
+  const base = { ...blankDraft(), name: server.name, enabled: server.enabled, providers: server.providers, excludedProviders: server.excludedProviders, type: config.type };
   if (config.type === 'stdio') {
     return { ...base, command: config.command, args: (config.args ?? []).join('\n'), env: Object.entries(config.env ?? {}).map(([k, v]) => `${k}=${v}`).join('\n') };
   }
@@ -54,7 +55,7 @@ export function serverFromDraft(draft: ServerDraft): { server: McpServer } | { e
       const headers = pairs(draft.headers, ':', ui('Headers', '请求头'));
       config = mcpConfigSchema.parse({ type: draft.type, url: draft.url.trim(), ...(headers ? { headers } : {}) });
     }
-    return { server: { name: name.data, enabled: draft.enabled, providers: draft.providers, config } };
+    return { server: { name: name.data, enabled: draft.enabled, providers: draft.providers, excludedProviders: draft.excludedProviders, config } };
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }

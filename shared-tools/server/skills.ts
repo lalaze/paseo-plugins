@@ -210,7 +210,9 @@ export async function syncTarget(target: Target, librarySkillNames: ReadonlySet<
       } catch (error) { notes.push(`${path} could not be removed: ${message(error)}`); }
       continue;
     }
-    if (!librarySkillNames.has(name) && await isSkillDir(path)) {
+    if (librarySkillNames.has(name) && await isSkillDir(path)) {
+      notes.push(`${path} was kept: it is an independent skill or link, so shared provider permissions cannot remove it.`);
+    } else if (await isSkillDir(path)) {
       for (const provider of target.providers) found.push({ name, provider, path, description: await readDescription(path) });
     }
   }

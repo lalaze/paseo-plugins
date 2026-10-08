@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
@@ -149,4 +149,109 @@ test('new agents get the shared server with the sign-in header', async () => {
   assert.deepEqual(Object.keys((await tools.signOut('drive')).auth), []);
   assert.deepEqual(await tools.mcpFor('claude', undefined, paseo), { drive: { type: 'http', url: MCP } });
   tools.stop();
+});
+
+async function codexCredentials(access: string, expires = Date.now() + 3600_000) {
+  await mkdir(join(root, '.codex'), { recursive: true });
+  await writeFile(join(root, '.codex/.credentials.json'), JSON.stringify({
+    'different-name|hash': { server_url: MCP, access_token: access, expires_at: expires, refresh_token: 'owned-by-codex', client_id: 'native-client' },
+  }));
+}
+
+test('links existing native authorization without registering and observes native refresh and sign-out', async () => {
+  await codexCredentials('native-access');
+  const calls: string[] = [];
+  const fetcher = (async (input: string | URL, init?: RequestInit) => {
+    calls.push(String(input));
+    assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer native-access');
+    return new Response('{}', { status: 200 });
+  }) as typeof fetch;
+  const signIns = new SignIns(join(root, 'shared'), () => undefined, fetcher, false, root);
+  assert.equal(await signIns.reuse('files', { type: 'http', url: MCP }), 'Codex');
+  assert.deepEqual(calls, [MCP]);
+  assert.equal(await signIns.header('files', { type: 'http', url: MCP }), 'Bearer native-access');
+  assert.equal(signIns.statuses({ files: { type: 'http', url: MCP } }).files?.source, 'Codex');
+  const saved = await readFile(join(root, 'shared/oauth.json'), 'utf8');
+  assert.equal(saved.includes('native-access'), false);
+  assert.equal(saved.includes('owned-by-codex'), false);
+  assert.equal((await stat(join(root, 'shared/oauth.json'))).mode & 0o777, 0o600);
+
+  await codexCredentials('refreshed-by-codex');
+  const reloaded = new SignIns(join(root, 'shared'), () => undefined, fetcher, false, root);
+  assert.equal(await reloaded.header('files', { type: 'http', url: MCP }), 'Bearer refreshed-by-codex');
+  assert.equal(await reloaded.header('files', { type: 'http', url: `${MCP}?other` }), null);
+  assert.equal(await reloaded.header('files', { type: 'http', url: MCP, headers: { Authorization: 'Bearer explicit' } }), null);
+  await reloaded.rename('files', 'renamed');
+  assert.equal(await reloaded.header('renamed', { type: 'http', url: MCP }), 'Bearer refreshed-by-codex');
+  await codexCredentials('expired', Date.now() - 1);
+  assert.equal(await reloaded.header('renamed', { type: 'http', url: MCP }), null);
+  assert.equal(reloaded.statuses({ renamed: { type: 'http', url: MCP } }).renamed?.status, 'expired');
+  await rm(join(root, '.codex/.credentials.json'));
+  await reloaded.readSources();
+  assert.equal(await reloaded.header('renamed', { type: 'http', url: MCP }), null);
+  await reloaded.signOut('renamed');
+  assert.deepEqual(reloaded.statuses({ renamed: { type: 'http', url: MCP } }), {});
+  signIns.stop();
+  reloaded.stop();
+});
+
+test('rejects expired native tokens even with refresh tokens, and does not refresh the originating client', async () => {
+  await codexCredentials('expired', Date.now() - 1);
+  const fetcher = (async () => { assert.fail('An expired borrowed token must never be sent or refreshed'); }) as typeof fetch;
+  const signIns = new SignIns(join(root, 'shared'), () => undefined, fetcher, false, root);
+  await assert.rejects(signIns.reuse('files', { type: 'http', url: MCP }), /Codex.*expired/);
+  assert.deepEqual(signIns.statuses({ files: { type: 'http', url: MCP } }), {});
+});
+
+test('tries another client when the first token has been revoked, without modifying either cache', async () => {
+  await codexCredentials('revoked', Date.now() + 7200_000);
+  await mkdir(join(root, '.claude'), { recursive: true });
+  const claude = JSON.stringify({ mcpOAuth: { entry: { serverUrl: MCP, accessToken: 'working', expiresAt: Date.now() + 3600_000 } } });
+  await writeFile(join(root, '.claude/.credentials.json'), claude);
+  const fetcher = (async (_input: string | URL, init?: RequestInit) => new Response('{}', {
+    status: new Headers(init?.headers).get('Authorization') === 'Bearer working' ? 200 : 401,
+  })) as typeof fetch;
+  const signIns = new SignIns(join(root, 'shared'), () => undefined, fetcher, false, root);
+  assert.equal(await signIns.reuse('files', { type: 'http', url: MCP }), 'Claude Code');
+  assert.equal(await signIns.header('files', { type: 'http', url: MCP }), 'Bearer working');
+  assert.equal(await readFile(join(root, '.claude/.credentials.json'), 'utf8'), claude);
+});
+
+test('the sign-in RPC reuses a native authorization; browser sign-in can explicitly bypass discovery', async () => {
+  await codexCredentials('native');
+  const fake = fakeServers();
+  const fetcher = (async (input: string | URL, init?: RequestInit) => {
+    if (String(input) === MCP && new Headers(init?.headers).has('Authorization')) return new Response('{}');
+    return fake.fetcher(input, init);
+  }) as typeof fetch;
+  const shared = join(root, 'shared');
+  const tools = new SharedTools(shared, root, () => undefined, new SignIns(shared, () => undefined, fetcher, false, root));
+  await tools.saveServer({ previousName: null, name: 'files', enabled: true, providers: null, config: { type: 'http', url: MCP } });
+  const started = await tools.startSignIn('files');
+  assert.equal(started.reused, true);
+  assert.equal(started.source, 'Codex');
+  assert.equal(started.authorizationUrl, '');
+  const browser = await tools.startSignIn('files', false);
+  assert.equal(new URL(browser.authorizationUrl).searchParams.get('client_id'), 'client-1');
+  assert.equal(fake.calls.filter(call => call.url.endsWith('/register')).length, 1);
+  tools.stop();
+});
+
+test('keeps the verified cache entry when one client has multiple authorizations for the same URL', async () => {
+  await mkdir(join(root, '.codex'), { recursive: true });
+  await writeFile(join(root, '.codex/.credentials.json'), JSON.stringify({
+    revoked: { server_url: MCP, access_token: 'revoked', expires_at: Date.now() + 7200_000 },
+    valid: { server_url: MCP, access_token: 'valid', expires_at: Date.now() + 3600_000 },
+  }));
+  const fetcher = (async (_input: string | URL, init?: RequestInit) => new Response('{}', {
+    status: new Headers(init?.headers).get('Authorization') === 'Bearer valid' ? 200 : 401,
+  })) as typeof fetch;
+  const shared = join(root, 'shared');
+  const signIns = new SignIns(shared, () => undefined, fetcher, false, root);
+  assert.equal(await signIns.reuse('files', { type: 'http', url: MCP }), 'Codex');
+  assert.equal(await signIns.header('files', { type: 'http', url: MCP }), 'Bearer valid');
+  const reloaded = new SignIns(shared, () => undefined, fetcher, false, root);
+  assert.equal(await reloaded.header('files', { type: 'http', url: MCP }), 'Bearer valid');
+  await writeFile(join(root, '.codex/.credentials.json'), JSON.stringify({ revoked: { server_url: MCP, access_token: 'revoked' } }));
+  assert.equal(await reloaded.header('files', { type: 'http', url: MCP }), null);
 });

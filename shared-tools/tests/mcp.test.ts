@@ -49,3 +49,17 @@ test('adds enabled servers for the provider without replacing the request\'s own
   assert.deepEqual(Object.keys(serversFor('codex', shared, undefined)).sort(), ['all', 'mine', 'onlyCodex']);
   assert.deepEqual(serversFor('codex', shared, undefined).onlyCodex, { type: 'http', url: 'https://c' });
 });
+
+
+test('denials override allowlists, empty allowlists deny all, and policy fields never reach the provider', () => {
+  const shared = {
+    denied: { type: 'stdio' as const, command: 'no', excludedProviders: ['claude'] },
+    nobody: { type: 'stdio' as const, command: 'none', providers: [] },
+    both: { type: 'http' as const, url: 'https://x', providers: ['claude', 'codex'], excludedProviders: ['claude'] },
+  };
+  assert.deepEqual(serversFor('claude', shared, undefined), {});
+  assert.deepEqual(serversFor('codex', shared, undefined), {
+    denied: { type: 'stdio', command: 'no' }, both: { type: 'http', url: 'https://x' },
+  });
+  assert.deepEqual(serversFor('future-provider', shared, undefined), { denied: { type: 'stdio', command: 'no' } });
+});

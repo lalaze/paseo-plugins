@@ -3,9 +3,11 @@ import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { PaseoApi } from '@getpaseo/client';
-import { nameSchema, type FoundSkill, type McpConfig, type McpServer, type ProviderRow, type SharedState, type SkillRow } from '../shared/rpc';
+import { nameSchema, providerAccessSchema, type FoundSkill, type McpConfig, type McpServer, type ProviderAccess, type ProviderRow, type SharedState, type SkillRow } from '../shared/rpc';
+import { allowsProvider } from '../shared/access';
 import { normalizeServer, parseServerJson, readClaudeServers, readCodexServers, RESERVED_SERVERS, serversFor, stripStored, type Parsed, type StoredServer } from './mcp';
-import { SignIns, type FlowStatus } from './oauth';
+import { REDIRECT_URI, SignIns, type FlowStatus } from './oauth';
+import { CodexSignIns, type StartedSignIn } from './codex-sign-in';
 import { expandHome, knownSkillsDir, mcpDefault } from './providers';
 import { importSkillDir, readLibrary, removeFromLibrary, syncTarget, type LibrarySkill, type Placement } from './skills';
 
@@ -24,6 +26,7 @@ interface Stored {
   version: 1;
   mcpServers: Record<string, unknown>;
   providers: Record<string, ProviderPrefs>;
+  skillAccess: Record<string, unknown>;
 }
 
 interface Report { skills: SkillRow[]; found: FoundSkill[]; notes: string[]; syncedAt: string }
@@ -52,9 +55,13 @@ export class SharedTools {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   readonly signIns: SignIns;
+  private readonly codexSignIns: CodexSignIns;
 
-  constructor(readonly root: string, private readonly home = homedir(), private readonly log: (error: unknown) => void = () => undefined, signIns?: SignIns) {
-    this.signIns = signIns ?? new SignIns(root, log);
+  constructor(readonly root: string, private readonly home = homedir(), private readonly log: (error: unknown) => void = () => undefined, signIns?: SignIns, codexSignIns?: CodexSignIns) {
+    this.signIns = signIns ?? new SignIns(root, log, fetch, true, home);
+    this.codexSignIns = codexSignIns ?? new CodexSignIns(home, async (name, config) => {
+      if (await this.signIns.reuse(name, config, 'codex') !== 'Codex') throw new Error('No reusable Codex MCP credential.');
+    });
     this.libraryDir = join(root, 'skills');
     this.backupDir = join(root, 'backups');
     this.configPath = join(root, 'config.json');
@@ -72,7 +79,7 @@ export class SharedTools {
       if (error.code === 'ENOENT') return null;
       throw error;
     });
-    if (text === null) return { version: 1, mcpServers: {}, providers: {} };
+    if (text === null) return { version: 1, mcpServers: {}, providers: {}, skillAccess: {} };
     let parsed: Record<string, unknown> | null;
     try { parsed = record(JSON.parse(text)); }
     catch { throw new Error(`${this.configPath} is not valid JSON; fix or remove it.`); }
@@ -80,6 +87,7 @@ export class SharedTools {
       version: 1,
       mcpServers: record(parsed?.mcpServers) ?? {},
       providers: (record(parsed?.providers) ?? {}) as Record<string, ProviderPrefs>,
+      skillAccess: record(parsed?.skillAccess) ?? {},
     };
   }
 
@@ -98,8 +106,8 @@ export class SharedTools {
       if (!nameSchema.safeParse(name).success || RESERVED_SERVERS.has(name)) { notes.push(`MCP server "${name}" is skipped: ${RESERVED_SERVERS.has(name) ? 'Paseo reserves that name' : 'invalid name'}.`); continue; }
       try {
         const entry = record(raw) ?? {};
-        const providers = Array.isArray(entry.providers) ? entry.providers.filter((id): id is string => typeof id === 'string') : undefined;
-        valid[name] = { ...normalizeServer(entry), ...(entry.enabled === false ? { enabled: false } : {}), ...(providers ? { providers } : {}) };
+        const access = providerAccessSchema.parse({ ...entry, providers: entry.providers ?? null });
+        valid[name] = { ...normalizeServer(entry), ...(entry.enabled === false ? { enabled: false } : {}), ...(access.providers !== null ? { providers: access.providers } : {}), ...(access.excludedProviders ? { excludedProviders: access.excludedProviders } : {}) };
       } catch (error) {
         notes.push(`MCP server "${name}" is skipped: ${message(error)}`);
       }
@@ -157,37 +165,56 @@ export class SharedTools {
 
   private async sync(stored: Stored, force?: { name: string; provider: string }): Promise<Report> {
     const library = await readLibrary(this.libraryDir);
+    const policyNotes: string[] = [];
+    const access = new Map(library.skills.map(skill => {
+      const parsed = providerAccessSchema.safeParse(stored.skillAccess[skill.name] ?? { providers: null });
+      if (!parsed.success) policyNotes.push(`Skill "${skill.name}" was not shared: invalid provider permissions in config.json.`);
+      return [skill.name, parsed.success ? parsed.data : { providers: [] }] as const;
+    }));
     const names = new Set(library.skills.map(skill => skill.name));
     const rows = this.rows(stored).filter(row => row.present && row.skillsDir);
     // Providers can share a folder; each folder is synced once, with every provider that uses it.
-    const targets = new Map<string, { dir: string; providers: string[]; on: boolean }>();
+    const targets = new Map<string, { dir: string; providers: string[] }>();
     for (const row of rows) {
       const dir = await realpath(row.skillsDir!).catch(() => resolve(row.skillsDir!));
-      const target = targets.get(dir) ?? { dir, providers: [], on: false };
+      const target = targets.get(dir) ?? { dir, providers: [] };
       target.providers.push(row.id);
-      target.on ||= row.skills;
       targets.set(dir, target);
     }
     const placements = new Map<string, Map<string, Placement>>();
     const found: FoundSkill[] = [];
-    const notes = [...library.notes];
+    const notes = [...library.notes, ...policyNotes];
     for (const target of targets.values()) {
-      const skills: readonly LibrarySkill[] = target.on ? library.skills : [];
+      const blocked = new Map<string, Placement>();
+      const skills: readonly LibrarySkill[] = library.skills.filter(skill => {
+        const allowed = target.providers.filter(id => rows.find(row => row.id === id)!.skills && allowsProvider(access.get(skill.name)!, id));
+        if (allowed.length && allowed.length !== target.providers.length) {
+          const message = `Skill "${skill.name}" was not shared: ${target.providers.join(', ')} use the same skills folder (${target.dir}) but have different permissions. Set separate skills folders in Providers.`;
+          notes.push(message);
+          blocked.set(skill.name, { status: 'error', message });
+          return false;
+        }
+        return allowed.length > 0;
+      });
       const forced = force && target.providers.includes(force.provider) ? new Set([force.name]) : undefined;
       try {
         const result = await syncTarget({ ...target, skills }, names, this.backupDir, forced);
+        for (const [name, placement] of blocked) result.placements.set(name, placement);
         for (const provider of target.providers) placements.set(provider, result.placements);
         found.push(...result.found);
         notes.push(...result.notes);
       } catch (error) {
-        const failed = new Map(skills.map(skill => [skill.name, { status: 'error' as const, message: message(error) }]));
+        notes.push(`${target.dir} could not be synced: ${message(error)}`);
+        const failed = new Map<string, Placement>(skills.map(skill => [skill.name, { status: 'error' as const, message: message(error) }]));
+        for (const [name, placement] of blocked) failed.set(name, placement);
         for (const provider of target.providers) placements.set(provider, failed);
       }
     }
     const skills: SkillRow[] = library.skills.map(skill => ({
       name: skill.name,
       description: skill.description,
-      targets: rows.filter(row => row.skills).map(row => {
+      ...access.get(skill.name)!,
+      targets: rows.filter(row => row.skills && allowsProvider(access.get(skill.name)!, row.id)).map(row => {
         const placement = placements.get(row.id)?.get(skill.name);
         return { provider: row.id, status: placement?.status ?? 'error', message: placement?.message ?? (placement ? null : 'Not synced.') };
       }),
@@ -198,8 +225,8 @@ export class SharedTools {
 
   private snapshot(stored: Stored, report: Report): SharedState {
     const servers = this.servers(stored);
-    const mcpServers: McpServer[] = Object.entries(servers.valid).map(([name, { enabled, providers, ...config }]) => ({
-      name, enabled: enabled !== false, providers: providers ?? null, config: config as McpConfig,
+    const mcpServers: McpServer[] = Object.entries(servers.valid).map(([name, server]) => ({
+      name, enabled: server.enabled !== false, providers: server.providers ?? null, excludedProviders: server.excludedProviders ?? [], config: stripStored(server),
     }));
     return {
       dataDir: this.root,
@@ -225,6 +252,7 @@ export class SharedTools {
       }
       if (save) await this.save(stored);
       await this.signIns.load().catch(this.log);
+      await this.signIns.readSources().catch(this.log);
       const report = resync || !this.report ? await this.sync(stored, force) : this.report;
       return this.snapshot(stored, report);
     });
@@ -247,13 +275,15 @@ export class SharedTools {
         delete stored.mcpServers[input.previousName];
         await this.signIns.rename(input.previousName, input.name);
       }
-      stored.mcpServers[input.name] = { ...input.config, ...(input.enabled ? {} : { enabled: false }), ...(input.providers ? { providers: input.providers } : {}) };
+      const access = providerAccessSchema.parse(input);
+      stored.mcpServers[input.name] = { ...input.config, ...(input.enabled ? {} : { enabled: false }), ...(access.providers !== null ? { providers: access.providers } : {}), ...(access.excludedProviders?.length ? { excludedProviders: access.excludedProviders } : {}) };
       return { save: true, resync: false };
     });
   }
 
   deleteServer(name: string): Promise<SharedState> {
     return this.mutate(async stored => {
+      this.codexSignIns.cancel(name);
       delete stored.mcpServers[name];
       await this.signIns.signOut(name);
       return { save: true, resync: false };
@@ -261,29 +291,37 @@ export class SharedTools {
   }
 
   /** Signs in to a shared http or sse server; the app opens the returned URL in its own browser. */
-  async startSignIn(name: string): Promise<{ authorizationUrl: string; redirectUri: string; listening: boolean }> {
+  async startSignIn(name: string, reuseExisting = true, via?: 'codex'): Promise<StartedSignIn> {
     const server = this.servers(await this.load()).valid[name];
     if (!server) throw new Error(`No shared server is named "${name}".`);
+    const config = stripStored(server);
+    this.cancelSignIn(name);
+    if (via === 'codex') return this.codexSignIns.start(name, config);
+    const source = reuseExisting ? await this.signIns.reuse(name, config) : null;
+    if (source) return { authorizationUrl: '', redirectUri: REDIRECT_URI, listening: false, reused: true, source };
     return this.signIns.start(name, stripStored(server));
   }
 
   finishSignIn(name: string, callback: string): Promise<SharedState> {
     return this.mutate(async () => {
-      await this.signIns.finish(name, callback);
+      if (this.codexSignIns.status(name)) await this.codexSignIns.finish(name, callback);
+      else await this.signIns.finish(name, callback);
       return { save: false, resync: false };
     });
   }
 
   signInStatus(name: string): FlowStatus {
-    return this.signIns.status(name);
+    return this.codexSignIns.status(name) ?? this.signIns.status(name);
   }
 
   cancelSignIn(name: string): void {
     this.signIns.cancel(name);
+    this.codexSignIns.cancel(name);
   }
 
   signOut(name: string): Promise<SharedState> {
     return this.mutate(async () => {
+      this.codexSignIns.cancel(name);
       await this.signIns.signOut(name);
       return { save: false, resync: false };
     });
@@ -329,9 +367,19 @@ export class SharedTools {
   }
 
   deleteSkill(name: string): Promise<SharedState> {
-    return this.mutate(async () => {
+    return this.mutate(async stored => {
       await removeFromLibrary(this.libraryDir, name, this.backupDir);
-      return { save: false, resync: true };
+      delete stored.skillAccess[name];
+      return { save: true, resync: true };
+    });
+  }
+
+  updateSkillAccess(input: ProviderAccess & { name: string }): Promise<SharedState> {
+    return this.mutate(async stored => {
+      const library = await readLibrary(this.libraryDir);
+      if (!library.skills.some(skill => skill.name === input.name)) throw new Error(`No library skill is named "${input.name}".`);
+      stored.skillAccess[input.name] = providerAccessSchema.parse(input);
+      return { save: true, resync: true };
     });
   }
 
@@ -394,6 +442,7 @@ export class SharedTools {
   stop(): void {
     this.stopped = true;
     this.signIns.stop();
+    this.codexSignIns.stop();
     this.watcher?.close();
     this.watcher = null;
     if (this.timer) clearTimeout(this.timer);
