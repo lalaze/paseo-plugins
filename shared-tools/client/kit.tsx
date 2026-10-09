@@ -1,7 +1,7 @@
-import { Children, isValidElement, type ReactNode } from 'react';
+import { Children, isValidElement, useEffect, useRef, type ReactNode } from 'react';
 import type { PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { Icon } from '@getpaseo/plugin/client/react-native';
-import { Platform, Pressable, Text, TextInput, View } from 'react-native';
+import { Animated, Easing, Platform, Pressable, Text, TextInput, View } from 'react-native';
 
 export type Colors = PluginSurfaceProps['theme']['colors'];
 
@@ -64,9 +64,24 @@ export function Button(props: {
   </Pressable>;
 }
 
+/** Track 34 wide with a 2px inset, thumb 16: the thumb slides 14 across. */
+const TRACK_W = 34;
+const TRACK_H = 20;
+const INSET = 2;
+const THUMB = 16;
+const TRAVEL = TRACK_W - THUMB - INSET * 2;
+
 /** `blocked` swallows the press without dimming, so a page-wide busy flag never flashes every switch. */
 export function Switch(props: { label: string; value: boolean; onChange(value: boolean): void; colors: Colors; disabled?: boolean; blocked?: boolean }) {
   const { colors, value } = props;
+  // Off and on tracks are stacked and crossfaded, and the thumb slides: only opacity and transform
+  // animate, which behaves the same on the app and on the web.
+  const progress = useRef(new Animated.Value(value ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.timing(progress, { toValue: value ? 1 : 0, duration: 170, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+  }, [progress, value]);
+  const travel = progress.interpolate({ inputRange: [0, 1], outputRange: [0, TRAVEL] });
+  const fill = { position: 'absolute' as const, top: 0, left: 0, right: 0, bottom: 0, borderRadius: 999 };
   return <Pressable
     accessibilityRole="switch"
     accessibilityLabel={props.label}
@@ -74,12 +89,11 @@ export function Switch(props: { label: string; value: boolean; onChange(value: b
     disabled={props.disabled || props.blocked}
     onPress={() => props.onChange(!value)}
     hitSlop={6}
-    style={{
-      width: 34, height: 20, borderRadius: 999, padding: 2, flexShrink: 0, alignItems: value ? 'flex-end' : 'flex-start', justifyContent: 'center',
-      backgroundColor: value ? colors.statusSuccess : tint(colors.foreground, 0.16), opacity: props.disabled ? 0.35 : 1,
-    }}
+    style={{ width: TRACK_W, height: TRACK_H, borderRadius: 999, flexShrink: 0, overflow: 'hidden', opacity: props.disabled ? 0.35 : 1 }}
   >
-    <View style={{ width: 16, height: 16, borderRadius: 999, backgroundColor: '#ffffff' }} />
+    <Animated.View style={{ ...fill, backgroundColor: tint(colors.foreground, 0.16), opacity: progress.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) }} />
+    <Animated.View style={{ ...fill, backgroundColor: colors.statusSuccess, opacity: progress }} />
+    <Animated.View style={{ position: 'absolute', top: INSET, left: INSET, width: THUMB, height: THUMB, borderRadius: 999, backgroundColor: '#ffffff', transform: [{ translateX: travel }] }} />
   </Pressable>;
 }
 
