@@ -16,7 +16,16 @@ type Runtime = {
 };
 type SelectionSnapshot = { text: string; rect: DOMRect; route: { serverId: string }; message?: Element; anchor?: Element; range?: Range; selectionKey?: string };
 type OverlayController = { refresh(): void; updateAgentModel(serverId: string, agentId: string, model: string | null): void; dispose(): void };
-type Registry = { readonly closed: boolean; register(serverId: string, runtime: Runtime): () => void };
+type Registry = {
+  readonly closed: boolean;
+  /** True when this host's translation client is connected. */
+  available(serverId: string): boolean;
+  /** Starts a translation on that host, or null when its client is not connected. */
+  translate(serverId: string, text: string, target?: TargetLanguage): Promise<TranslationResult> | null;
+  /** Fires when a host's client connects or disconnects. */
+  subscribe(listener: () => void): () => void;
+  register(serverId: string, runtime: Runtime): () => void;
+};
 type HighlightRegistry = { set(name: string, highlight: unknown): void; delete(name: string): boolean };
 type HighlightConstructor = new (...ranges: Range[]) => unknown;
 type DraftUndo = { editor: HTMLElement; before: string; after: string };
@@ -572,21 +581,40 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
 
 function createRegistry(): Registry {
   const runtimes = new Map<string, Runtime>();
+  const listeners = new Set<() => void>();
   const overlay = typeof document === 'undefined' ? null : createOverlayController(runtimes);
   let closed = false;
+  const notify = () => { for (const listener of listeners) listener(); };
   return {
     get closed() { return closed; },
+    available: serverId => runtimes.has(serverId),
+    translate(serverId, text, target = 'auto') {
+      const runtime = runtimes.get(serverId);
+      return runtime ? runtime.translate(text, target) : null;
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
     register(serverId, runtime) {
       if (closed) throw new Error('Translation client registry is closed');
       const unsubscribeModels = runtime.subscribeAgentModels((agentId, model) => overlay?.updateAgentModel(serverId, agentId, model));
-      runtimes.set(serverId, runtime); overlay?.refresh();
+      runtimes.set(serverId, runtime); overlay?.refresh(); notify();
       return () => {
         unsubscribeModels();
         if (runtimes.get(serverId) === runtime) runtimes.delete(serverId);
+        notify();
         if (!runtimes.size && !closed) { closed = true; overlay?.dispose(); }
       };
     },
   };
+}
+
+/** The page-wide bridge paseo-translate registers. Other plugins call it instead of this plugin's RPC. */
+export function translationBridge(): Registry | null {
+  const registry = (globalThis as typeof globalThis & { [REGISTRY_KEY]?: Registry })[REGISTRY_KEY];
+  if (!registry || registry.closed) return null;
+  return registry;
 }
 
 export function registerTranslationClient(serverId: string, client: PluginClientContext) {

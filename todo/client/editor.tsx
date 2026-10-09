@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
@@ -9,7 +9,9 @@ import type { Catalog } from '../shared/schema';
 import { CollaborationForm, collaborationIssueText } from './collaboration';
 import { ui } from './i18n';
 import { Backdrop, Button, outline, tint, type Colors } from './kit';
+import { promptAfterTranslation, promptTranslateClick, type PromptUndo } from './prompt-translate';
 import { Select } from './select';
+import { translationBridge } from './translate-bridge';
 
 type Rpc = PluginClientContext['rpc'];
 
@@ -52,6 +54,12 @@ export function NewTaskDialog(props: {
   const models = catalog?.providers.flatMap(entry => entry.models.map(model => ({ value: `${entry.provider}/${model.id}`, label: model.label, group: entry.label }))) ?? [];
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [translating, setTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState<string | null>(null);
+  const [undo, setUndo] = useState<PromptUndo | null>(null);
+  const promptRef = useRef(prompt);
+  const mounted = useRef(true);
+  promptRef.current = prompt;
   const [repository, setRepository] = useState(props.scope?.repository ?? props.initialRepository ?? projects[0]?.path ?? '');
   const [branches, setBranches] = useState<string[]>([]);
   const [targetBranch, setTargetBranch] = useState('');
@@ -75,6 +83,11 @@ export function NewTaskDialog(props: {
   useEffect(() => {
     setCollaborationOverride(null);
   }, [hostId]);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   useEffect(() => {
     if (!repository) { setBranches([]); return; }
@@ -106,6 +119,26 @@ export function NewTaskDialog(props: {
           : collaborationProblem ? collaborationIssueText(collaborationProblem)
             : null;
   const ready = !missing;
+  const undoable = undo !== null && undo.after === prompt;
+  const translatePrompt = () => {
+    const action = promptTranslateClick({ prompt, undo, busy: translating || props.busy });
+    if (!action) return;
+    if (action.kind === 'reject') { setTranslateError(action.message); return; }
+    if (action.kind === 'undo') { setPrompt(action.prompt); setUndo(null); setTranslateError(null); return; }
+    const pending = translationBridge()?.translate(hostId, action.text, 'auto') ?? null;
+    if (!pending) { setTranslateError(ui('Translation is not available on this machine', '这台机器上没有可用的翻译')); return; }
+    const original = action.original;
+    setTranslating(true);
+    setTranslateError(null);
+    void pending.then(result => {
+      if (!mounted.current) return;
+      const applied = promptAfterTranslation(promptRef.current, original, result.translation);
+      if (!applied) setTranslateError(ui('The task changed during translation, so it was left as is', '翻译期间任务内容变了，没有覆盖'));
+      else { setPrompt(applied.prompt); setUndo(applied.undo); }
+    }).catch(error => {
+      if (mounted.current) setTranslateError(error instanceof Error ? error.message : String(error));
+    }).finally(() => { if (mounted.current) setTranslating(false); });
+  };
   const submit = (start: boolean) => {
     const snap = snapshotFromDraft(collaborationDraft);
     if (collaborationProblem || snap.error) return;
@@ -134,12 +167,25 @@ export function NewTaskDialog(props: {
         />
         <TextInput
           value={prompt}
-          onChangeText={setPrompt}
+          onChangeText={value => { setPrompt(value); setTranslateError(null); }}
           multiline
           placeholder={ui('Describe what needs doing. The agent gets its own worktree and branch, and nothing merges until you accept it.', '写下要做什么。Agent 会拿到独立的工作树和分支，你验收之前不会合并。')}
           placeholderTextColor={tint(colors.foregroundMuted, 0.55)}
           style={{ minHeight: 150, padding: 12, borderRadius: 12, backgroundColor: colors.surface1, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 13, lineHeight: 19, textAlignVertical: 'top', outlineStyle: 'solid', outlineWidth: 0 }}
         />
+        {/* The translate plugin can connect after this dialog opens. The click reads the live bridge, so the button stays on screen. */}
+        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
+          {translateError ? <Text accessibilityRole="alert" numberOfLines={2} style={{ flex: 1, color: colors.statusDanger, fontSize: 12, lineHeight: 18 }}>{translateError}</Text> : null}
+          <Button
+            label={translating ? ui('Translating…', '翻译中…') : undoable ? ui('Undo', '撤销') : ui('Translate', '翻译')}
+            icon="Languages"
+            onPress={translatePrompt}
+            colors={colors}
+            variant="outline"
+            size="xs"
+            disabled={translating || props.busy || (!undoable && !prompt.trim())}
+          />
+        </View>
         {!props.scope && projects.length === 0 ? <TextInput value={repository} onChangeText={setRepository} placeholder={ui('/path/to/repository', '/仓库/路径')} placeholderTextColor={tint(colors.foregroundMuted, 0.55)} autoCapitalize="none" autoCorrect={false}
           style={{ height: 34, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 12, outlineStyle: 'solid', outlineWidth: 0 }} /> : null}
         <View style={{ gap: 8 }}>
