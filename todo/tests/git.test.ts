@@ -213,6 +213,48 @@ describe('git merge and capture', () => {
     }
   });
 
+  it('keeps a task whose worktree the collaboration host switched to its own branch', async () => {
+    const root = await initRepo();
+    try {
+      const watched = spy();
+      const tool = createGit({ run: watched.run, worktreeRoot: await worktreeRoot() });
+      const ensured = await tool.ensureWorktree({
+        root, taskId: '99999999-9999-4999-8999-999999999999', branch: 'paseo-todo/nine', targetBranch: 'main', existingPath: null,
+      });
+      const hostBranch = 'director/f46fbe9c75c49dd463f55a6c';
+      await git(ensured.worktree, ['switch', '-c', hostBranch]);
+      await writeFile(join(ensured.worktree, 'note.txt'), 'collaboration\n');
+      const captured = await tool.capture({ root, worktree: ensured.worktree, branch: ensured.branch, message: 'capture' });
+      assert.equal(await git(root, ['rev-parse', `refs/heads/${ensured.branch}`]), captured.commit);
+      assert.equal(await git(root, ['rev-parse', `refs/heads/${hostBranch}`]), captured.commit);
+      assert.equal(await git(ensured.worktree, ['branch', '--show-current']), hostBranch);
+      const snap = await tool.snapshot({ root, worktree: ensured.worktree, branch: ensured.branch, targetBranch: 'main' });
+      assert.deepEqual([snap.head, snap.tree, snap.clean], [captured.commit, captured.tree, true]);
+      // A retry after the host run was canceled reuses the same directory.
+      const reused = await tool.ensureWorktree({
+        root, taskId: '99999999-9999-4999-8999-999999999999', branch: ensured.branch, targetBranch: 'main', existingPath: ensured.worktree,
+      });
+      assert.deepEqual(reused, { worktree: ensured.worktree, branch: ensured.branch, baseCommit: captured.commit });
+      // Once the host branch leaves the task branch tip, the worktree no longer holds the task.
+      await writeFile(join(ensured.worktree, 'note.txt'), 'host only\n');
+      await git(ensured.worktree, ['commit', '-am', 'host only']);
+      await assert.rejects(
+        () => tool.snapshot({ root, worktree: ensured.worktree, branch: ensured.branch, targetBranch: 'main' }),
+        (error: unknown) => error instanceof Error && (error as { code?: string }).code === 'worktree-moved',
+      );
+      await assert.rejects(
+        () => tool.ensureWorktree({
+          root, taskId: '99999999-9999-4999-8999-999999999999', branch: ensured.branch, targetBranch: 'main', existingPath: ensured.worktree,
+        }),
+        /无法安全复用/,
+      );
+      assert.equal(await git(root, ['rev-parse', `refs/heads/${ensured.branch}`]), captured.commit);
+      assertSafe(watched.log);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('reviews only the task\'s own changes when the target moved on after the task branched', async () => {
     const root = await initRepo();
     try {

@@ -9,6 +9,8 @@ import { todoDataDir } from './store';
 
 const exec = promisify(execFile);
 const PATCH_LIMIT = 48_000;
+/** The collaboration host names a run's branch after the first 24 hex digits of its id. */
+const HOST_BRANCH = /^director\/[0-9a-f]{24}$/;
 
 export interface GitResult {
   code: number;
@@ -182,7 +184,7 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
       const top = await realpath(topOut.stdout.trim());
       if (top !== await realpath(path)) return null;
       const current = await text(path, ['branch', '--show-current']);
-      if (current.code !== 0 || current.stdout.trim() !== branch) return null;
+      if (current.code !== 0 || !await holdsTaskBranch(path, current.stdout.trim(), branch)) return null;
       return { worktree: top, branch, baseCommit: await rev(path, 'HEAD') };
     } catch {
       return null;
@@ -218,6 +220,31 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
     return realpath(isAbsolute(raw) ? raw : join(cwd, raw));
   }
 
+  /**
+   * A `local` collaboration run switches the task worktree to the host's own `director/<run>` branch
+   * and asserts that branch until the user accepts. It still holds the task while both tips are equal.
+   */
+  async function holdsTaskBranch(cwd: string, current: string, branch: string): Promise<boolean> {
+    if (current === branch) return true;
+    if (!HOST_BRANCH.test(current)) return false;
+    try {
+      const [head, tip] = await revs(cwd, ['HEAD', `refs/heads/${branch}`]);
+      return head === tip;
+    } catch {
+      return false;
+    }
+  }
+
+  /** A commit on the host branch moves only that branch. Advance the task branch to it, from the tip they shared. */
+  async function followHostBranch(root: string, worktree: string, branch: string, before: string): Promise<void> {
+    const current = await text(worktree, ['branch', '--show-current']);
+    if (current.code !== 0 || current.stdout.trim() === branch) return;
+    const [head, parent] = await revs(worktree, ['HEAD', 'HEAD^']);
+    if (parent !== before) throw todoError('worktree-moved', '协作分支的提交没有接在任务分支之后');
+    const moved = await text(root, ['update-ref', `refs/heads/${branch}`, head, before]);
+    if (moved.code !== 0) throw todoError('worktree-moved', clip(moved.stderr || moved.stdout || '任务分支没有跟上协作分支'));
+  }
+
   async function assertTaskCheckout(root: string, worktree: string, branch: string): Promise<void> {
     const topOut = await text(worktree, ['rev-parse', '--show-toplevel', '--git-common-dir']);
     if (topOut.code !== 0) throw todoError('worktree-moved', '任务目录不是 git 工作树');
@@ -227,7 +254,7 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
     const common = await realpath(isAbsolute(lines[1]) ? lines[1] : join(worktree, lines[1]));
     if (common !== await commonDir(root)) throw todoError('worktree-moved', '任务目录不属于预期仓库');
     const current = await text(worktree, ['branch', '--show-current']);
-    if (current.code !== 0 || current.stdout.trim() !== branch) throw todoError('worktree-moved', '任务目录当前分支不是任务分支');
+    if (current.code !== 0 || !await holdsTaskBranch(worktree, current.stdout.trim(), branch)) throw todoError('worktree-moved', '任务目录当前分支不是任务分支');
     const busy = await operationInProgress(worktree);
     if (busy) throw todoError('worktree-moved', `任务工作树正在进行 ${busy}`);
   }
@@ -323,8 +350,10 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
         const added = await text(input.worktree, ['add', '-A', '--', '.']);
         if (added.code !== 0) throw new Error(clip(added.stderr || '无法暂存任务成果'));
         await assertTaskCheckout(input.root, input.worktree, input.branch);
+        const before = await rev(input.root, `refs/heads/${input.branch}`);
         const committed = await text(input.worktree, ['commit', '-m', input.message], identity);
         if (committed.code !== 0) throw new Error(clip(committed.stderr || committed.stdout || '无法提交任务成果'));
+        await followHostBranch(input.root, input.worktree, input.branch, before);
       }
       await assertTaskCheckout(input.root, input.worktree, input.branch);
       const [commit, tree] = await revs(input.worktree, ['HEAD', 'HEAD^{tree}']);
