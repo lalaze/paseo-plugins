@@ -24,7 +24,7 @@
 
 打开侧边栏 **「Token 消耗」** 页面。分别跟随所选各主机 **Providers** 的启用开关，统计已启用来源在各 daemon 主机上保留的用量记录，也包括在终端直接运行的 CLI 会话。
 
-- 支持 **Codex、Claude Code、Kimi、Grok、Antigravity、Pi**。只有本机 Providers 中已启用的来源才会采集、显示和计入合计。例如关闭 Claude Code 后，即使磁盘上仍有其历史记录，这些记录也不会进入 Provider 或模型厂商的合计。已启用但尚未适配的 Provider（如 Copilot）显示「暂不支持消耗统计」，不按零处理，也不计入已读取合计。
+- 支持 **Codex、Claude Code、Kimi、Grok、Antigravity、Pi、CodeBuddy**。只有本机 Providers 中已启用的来源才会采集、显示和计入合计。例如关闭 Claude Code 后，即使磁盘上仍有其历史记录，这些记录也不会进入 Provider 或模型厂商的合计。已启用但尚未适配的 Provider（如 Copilot）显示「暂不支持消耗统计」，不按零处理，也不计入已读取合计。
 - 另外计入同仓库 [`translate`](../translate/README.md) 插件的翻译 API 用量，来源名为「翻译」。它不是 Paseo Provider，没有开关：只要本机存在翻译用量账本目录就会列出并计入合计；未安装翻译插件或尚未翻译过的主机不显示该来源。翻译请求不属于任何 Agent 会话，在「按 Workspace」中归入「未归属 Workspace」。
 - 时间范围：今日、近 7 天、本月、自定义（最多 366 天），按查看页面的客户端时区归日，页面显示具体时区。
 - 默认「按 Provider」分组，可切换「按 Workspace」「按模型」「按模型厂商」或「按主机」。「按模型」按记录中的完整模型名称汇总，所选主机内的同名模型跨 Provider 合并，按消耗从高到低排列；展开可查看各主机、Provider 的精确用量。不同名称、版本或别名分别保留，缺少模型名的记录显示为「未记录模型」。手机端分类入口自动换行。
@@ -41,7 +41,7 @@
 在「消耗汇总」选择 **「按 Workspace」**，按左侧工作区名称展示所选日期内的 token、占比和输入/输出，展开查看模型与 Provider 明细。Working 和 Done 中有用量的工作区均会显示；同名工作区按主机和工作区 ID 区分，下方显示主机及实际目录。工作区改名后，下次刷新使用新名称。
 
 - 优先使用 Paseo 会话与工作区的关联；有明确原生目录时，匹配该主机实际工作区目录及其子目录，嵌套目录选最具体的一项。使用 worktree 自身目录，不把同一仓库的不同 worktree 合并。
-- Codex 使用会话元数据中的目录；Claude Code 使用项目目录标识；Kimi 使用会话 `state.json` 中的目录或 Paseo 会话关联；Grok 使用会话项目路径；Pi 使用会话头部目录；Antigravity 使用 Paseo 保存的会话 ID 与数据库名称关联。没有 Paseo 会话关联的 Antigravity 历史暂不能归属。
+- Codex 使用会话元数据中的目录；Claude Code 使用项目目录标识；Kimi 使用会话 `state.json` 中的目录或 Paseo 会话关联；Grok 使用会话项目路径；Pi 使用会话头部目录；CodeBuddy 使用会话记录中的目录或 Paseo 会话关联；Antigravity 使用 Paseo 保存的会话 ID 与数据库名称关联。没有 Paseo 会话关联的 Antigravity 历史暂不能归属。
 - 无法匹配、目录冲突、已移除工作区的记录进入 **「未归属 Workspace」**，仍计入总量。终端直接运行的 CLI 记录在目录能够匹配时也会归属；没有保留下来的元数据不会猜测分配。
 - 会话分类逐模型核对输入、输出、缓存和推理是否与每日合计一致；发生差异时会重新读取每日统计，若用量发生变化且仍未对齐，再重读一次明细。每次扫描最多读取两次每日统计和两次明细，避免持续运行的会话导致无限重试。
 - 对 Codex 同一会话的完整文件副本，在确认会话 ID、模型用量、文件内容一致且采集期间未变化后去重。仅有部分重叠、内容不同或仍在写入的文件不会按相同 token 数盲目合并；仍以每日统计核对最终总量。
@@ -69,6 +69,7 @@
 | Kimi | `~/.kimi-code/sessions`、`~/.kimi/sessions` | ccusage，支持当前 `usage.record` 和旧版 wire 记录，区分 turn/session 范围 |
 | Grok | `~/.grok/sessions` | ccusage，读取 `updates.jsonl` 中已完成轮次的 usage；不再叠加 `usage.json` 会话总量 |
 | Pi | `~/.pi/agent/sessions` | 插件只读解析 v1–v3 JSONL 会话中的 assistant usage 和已记录的压缩/分支摘要用量，去重分支及副本历史 |
+| CodeBuddy | `~/.codebuddy/projects`（跟随 `CODEBUDDY_CONFIG_DIR`） | 插件只读解析项目 JSONL 会话，按 `providerData.usage` 累计每个模型请求（每个 step 恰好一条记录携带 usage），去重文件副本 |
 | Antigravity | `~/.gemini/antigravity*/conversations` 中支持的目录 | 插件只读解析 SQLite 的生成/步骤用量元数据，按响应标识去重 |
 | 翻译 | `~/.paseo/translate/usage/YYYY-MM.jsonl` | 插件只读解析 translate 插件追加的 JSONL 账本：每次 API 调用的时间、模型和返回的 token 用量；缺少 `usage` 的调用不计入并提示次数 |
 

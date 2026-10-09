@@ -79,6 +79,8 @@ test('consumption follows Provider enabled switches, independent of readiness, a
     { provider: 'pi', enabled: true, status: 'ready' },
   ]), ['codex', 'grok', 'antigravity', 'pi']);
   assert.deepEqual(enabledConsumptionSources([{ provider: 'antigravity-acp', enabled: true }, { provider: 'antigravity-hub', enabled: true }]), ['antigravity']);
+  assert.deepEqual(enabledConsumptionSources([{ provider: 'codebuddy-code', enabled: true }]), ['codebuddy']);
+  assert.deepEqual(unsupportedConsumptionProviders([{ provider: 'codebuddy-code', label: 'Codebuddy Code', enabled: true }]), []);
   assert.deepEqual(enabledConsumptionSources([{ provider: 'claude', enabled: false }]), []);
   assert.deepEqual(unsupportedConsumptionProviders([{ provider: 'pi', label: 'Pi', enabled: true }, { provider: 'copilot', label: 'Copilot', enabled: true }, { provider: 'claude', enabled: false }]), [{ id: 'copilot', label: 'Copilot' }]);
 });

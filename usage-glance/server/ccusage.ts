@@ -48,7 +48,7 @@ export function parseCcusage(raw: unknown, range: ConsumptionRange): Consumption
   return rows;
 }
 
-export type CcusageSource = Exclude<SourceId, 'antigravity' | 'pi' | 'translate'>;
+export type CcusageSource = Exclude<SourceId, 'antigravity' | 'pi' | 'codebuddy' | 'translate'>;
 
 export async function runCcusageCommand(source: CcusageSource, command: 'daily' | 'session' | 'projects', range: ConsumptionRange, signal: AbortSignal, env: NodeJS.ProcessEnv = process.env) {
   const args = [source, command === 'projects' ? 'daily' : command, ...(command === 'projects' ? ['--instances'] : []), '--json', '--offline', '--no-cost', '--no-color', '--config', backend.config, '--since', range.since, '--until', range.until, '--timezone', range.timezone];

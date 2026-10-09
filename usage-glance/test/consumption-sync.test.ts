@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { after, before } from 'node:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { backgroundConsumptionRange, projectConsumptionReport } from '../shared/consumption-cache.ts';
@@ -13,6 +16,15 @@ import { createHostRegistry } from '../client/hosts.ts';
 import { combineHostConsumption, createMultiHostConsumption } from '../client/multi-host-consumption.ts';
 
 const settle = async () => { for (let i = 0; i < 15; i++) await setImmediate(); };
+
+// The daemon tick detects a translate ledger on this machine; isolate PASEO_HOME so scans stay deterministic.
+const previousPaseoHome = process.env.PASEO_HOME;
+let isolatedHome: string;
+before(async () => { isolatedHome = await mkdtemp(join(tmpdir(), 'paseo-sync-home-')); process.env.PASEO_HOME = isolatedHome; });
+after(async () => {
+  if (previousPaseoHome === undefined) delete process.env.PASEO_HOME; else process.env.PASEO_HOME = previousPaseoHome;
+  await rm(isolatedHome, { recursive: true, force: true });
+});
 const now = new Date('2026-09-15T12:00:00Z');
 const coverage = backgroundConsumptionRange('UTC', now);
 const sample = (range = coverage): ConsumptionReport => ({ range, scanning: false, sources: [{ source: 'codex', status: 'ready', updatedAt: now.toISOString(), message: null, rows: [1, 10, 15].map(day => ({ ...emptyTokens(), date: `2026-09-${String(day).padStart(2, '0')}`, model: 'gpt-6-astra', inferredModel: false, input: day * 100 })) }] });
