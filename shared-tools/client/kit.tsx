@@ -25,7 +25,10 @@ function toneColor(colors: Colors, tone: Tone): string {
   return tone === 'success' ? colors.statusSuccess : tone === 'warning' ? colors.statusWarning : tone === 'danger' ? colors.statusDanger : colors.foregroundMuted;
 }
 
-/** Primary is filled, outline is a border, ghost is text. `iconOnly` keeps the label for accessibility. */
+/**
+ * Primary is filled, outline is a border, ghost is text. `iconOnly` keeps the label for accessibility.
+ * `blocked` swallows the press without dimming: a page-wide busy flag must not fade every control, which reads as a flash.
+ */
 export function Button(props: {
   label: string;
   icon?: string;
@@ -33,6 +36,7 @@ export function Button(props: {
   colors: Colors;
   variant?: 'primary' | 'outline' | 'ghost' | 'danger';
   disabled?: boolean;
+  blocked?: boolean;
   iconOnly?: boolean;
   active?: boolean;
 }) {
@@ -42,7 +46,7 @@ export function Button(props: {
   return <Pressable
     accessibilityRole="button"
     accessibilityLabel={props.label}
-    disabled={props.disabled}
+    disabled={props.disabled || props.blocked}
     onPress={props.onPress}
     hitSlop={4}
     style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => ({
@@ -60,13 +64,14 @@ export function Button(props: {
   </Pressable>;
 }
 
-export function Switch(props: { label: string; value: boolean; onChange(value: boolean): void; colors: Colors; disabled?: boolean }) {
+/** `blocked` swallows the press without dimming, so a page-wide busy flag never flashes every switch. */
+export function Switch(props: { label: string; value: boolean; onChange(value: boolean): void; colors: Colors; disabled?: boolean; blocked?: boolean }) {
   const { colors, value } = props;
   return <Pressable
     accessibilityRole="switch"
     accessibilityLabel={props.label}
-    accessibilityState={{ checked: value, disabled: props.disabled }}
-    disabled={props.disabled}
+    accessibilityState={{ checked: value, disabled: props.disabled || props.blocked }}
+    disabled={props.disabled || props.blocked}
     onPress={() => props.onChange(!value)}
     hitSlop={6}
     style={{

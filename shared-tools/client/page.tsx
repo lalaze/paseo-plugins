@@ -73,7 +73,7 @@ export function SharedToolsPage(props: PluginSurfaceProps & { rpc: Rpc }) {
             `在 ${props.host.label} 上按 Provider 共享 MCP 服务器和技能。`,
           )}</Muted>
         </View>
-        <Button colors={colors} icon="RefreshCw" label={ui('Sync now', '立即同步')} iconOnly={compact} disabled={busy} onPress={() => void run(() => props.rpc(syncSkills, {}))} />
+        <Button colors={colors} icon="RefreshCw" label={ui('Sync now', '立即同步')} iconOnly={compact} blocked={busy} onPress={() => void run(() => props.rpc(syncSkills, {}))} />
       </View>
       {state ? <Tabs<Tab> colors={colors} value={tab} onChange={setTab} items={[
         { id: 'mcp', label: ui('MCP servers', 'MCP 服务器'), count: state.mcpServers.length },
@@ -154,7 +154,7 @@ function AccessPanel(props: TabProps & { access: ProviderAccess; kind?: 'mcp' | 
     <AccessFields {...props} access={access} onChange={setAccess} />
     <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
       <Button colors={props.colors} variant="ghost" label={ui('Cancel', '取消')} onPress={props.onClose} />
-      <Button colors={props.colors} variant="primary" label={ui('Save', '保存')} disabled={props.busy}
+      <Button colors={props.colors} variant="primary" label={ui('Save', '保存')} blocked={props.busy}
         onPress={() => void props.onSave(access).then(ok => ok && props.onClose())} />
     </View>
   </View>;
@@ -187,15 +187,15 @@ function McpTab(props: TabProps) {
       <View style={{ flex: 1, minWidth: 200 }}>
         <Muted colors={colors}>{ui('Added to new agents of providers with MCP on. Running agents keep theirs.', '开启 MCP 的 Provider 新建 Agent 时自动加入，已运行的 Agent 不受影响。')}</Muted>
       </View>
-      <Button colors={colors} icon="Download" label={ui('Import', '导入')} active={importing} disabled={props.busy} onPress={() => setImporting(value => !value)} />
-      <Button colors={colors} icon="Plus" variant="primary" label={ui('Add server', '添加服务器')} disabled={props.busy} onPress={() => setEditing('')} />
+      <Button colors={colors} icon="Download" label={ui('Import', '导入')} active={importing} blocked={props.busy} onPress={() => setImporting(value => !value)} />
+      <Button colors={colors} icon="Plus" variant="primary" label={ui('Add server', '添加服务器')} blocked={props.busy} onPress={() => setEditing('')} />
     </View>
 
     {importing ? <Card colors={colors}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: '600', marginRight: 4 }}>{ui('Import from', '导入自')}</Text>
-        <Button colors={colors} label="Claude Code" disabled={props.busy} onPress={() => void doImport('claude')} />
-        <Button colors={colors} label="Codex" disabled={props.busy} onPress={() => void doImport('codex')} />
+        <Button colors={colors} label="Claude Code" blocked={props.busy} onPress={() => void doImport('claude')} />
+        <Button colors={colors} label="Codex" blocked={props.busy} onPress={() => void doImport('codex')} />
         <Button colors={colors} icon="ClipboardPaste" label={ui('Paste JSON', '粘贴 JSON')} active={pasting} onPress={() => setPasting(value => !value)} />
         <View style={{ flex: 1 }} />
         <Button colors={colors} variant="ghost" iconOnly icon="X" label={ui('Close', '关闭')} onPress={() => { setImporting(false); setPasting(false); }} />
@@ -204,7 +204,7 @@ function McpTab(props: TabProps) {
         <Field colors={colors} label={ui('An "mcpServers" object, as in Claude Code, Cursor or Gemini settings', '“mcpServers” 对象，格式同 Claude Code、Cursor 或 Gemini 的配置')} value={json} onChange={setJson} multiline mono
           placeholder={'{ "mcpServers": { "context7": { "command": "npx", "args": ["-y", "@upstash/context7-mcp"] } } }'} />
         <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
-          <Button colors={colors} variant="primary" label={ui('Import', '导入')} disabled={props.busy || !json.trim()} onPress={() => void doImport('json')} />
+          <Button colors={colors} variant="primary" label={ui('Import', '导入')} disabled={!json.trim()} blocked={props.busy} onPress={() => void doImport('json')} />
         </View>
       </> : <Muted colors={colors} small>{ui('Servers whose names are already shared are skipped.', '已共享的同名服务器会被跳过。')}</Muted>}
     </Card> : null}
@@ -227,12 +227,16 @@ function ServerRow(props: TabProps & { server: McpServer; onEdit(): void }) {
   const [confirming, setConfirming] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const [accessOpen, setAccessOpen] = useState(false);
+  /** The switch answers on the press itself; the round trip then brings the same value back. */
+  const [enabled, setEnabled] = useState<boolean | null>(null);
   const auth = props.state.auth[server.name];
   const canSignIn = server.config.type !== 'stdio' && !hasAuthHeader(server.config);
+  const on = enabled ?? server.enabled;
   const save = (patch: Partial<McpServer>) => props.run(() => props.rpc(saveMcpServer, { ...server, ...patch, previousName: server.name }));
+  const toggle = (value: boolean) => { setEnabled(value); void save({ enabled: value }).then(() => setEnabled(null)); };
   return <View>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 11 }}>
-      <View style={{ flex: 1, minWidth: 0, gap: 3, opacity: server.enabled ? 1 : 0.55 }}>
+      <View style={{ flex: 1, minWidth: 0, gap: 3, opacity: on ? 1 : 0.55 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 13, fontWeight: '600', flexShrink: 1 }}>{server.name}</Text>
           <Chip colors={colors} label={server.config.type} />
@@ -245,20 +249,20 @@ function ServerRow(props: TabProps & { server: McpServer; onEdit(): void }) {
       </View>
       {confirming
         ? <>
-          <Button colors={colors} variant="danger" label={ui('Delete', '删除')} disabled={props.busy} onPress={() => void props.run(() => props.rpc(deleteMcpServer, { name: server.name }))} />
+          <Button colors={colors} variant="danger" label={ui('Delete', '删除')} blocked={props.busy} onPress={() => void props.run(() => props.rpc(deleteMcpServer, { name: server.name }))} />
           <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={() => setConfirming(false)} />
         </>
         : <>
           {canSignIn && !signingIn
             ? auth?.status === 'signed-in'
-              ? <Button colors={colors} variant="ghost" iconOnly icon="LogOut" label={ui('Sign out', '退出登录')} disabled={props.busy} onPress={() => void props.run(() => props.rpc(signOut, { name: server.name }))} />
-              : <Button colors={colors} variant="ghost" icon="LogIn" label={auth ? ui('Sign in again', '重新登录') : ui('Find authorization / sign in', '查找授权 / 登录')} disabled={props.busy} onPress={() => setSigningIn(true)} />
+              ? <Button colors={colors} variant="ghost" iconOnly icon="LogOut" label={ui('Sign out', '退出登录')} blocked={props.busy} onPress={() => void props.run(() => props.rpc(signOut, { name: server.name }))} />
+              : <Button colors={colors} variant="ghost" icon="LogIn" label={auth ? ui('Sign in again', '重新登录') : ui('Find authorization / sign in', '查找授权 / 登录')} blocked={props.busy} onPress={() => setSigningIn(true)} />
             : null}
-          <Button colors={colors} variant="ghost" iconOnly icon="Users" label={ui('Provider permissions', 'Provider 权限')} disabled={props.busy} onPress={() => setAccessOpen(value => !value)} />
-          <Button colors={colors} variant="ghost" iconOnly icon="Pencil" label={ui('Edit', '编辑')} disabled={props.busy} onPress={props.onEdit} />
-          <Button colors={colors} variant="ghost" iconOnly icon="Trash2" label={ui('Delete', '删除')} disabled={props.busy} onPress={() => setConfirming(true)} />
+          <Button colors={colors} variant="ghost" iconOnly icon="Users" label={ui('Provider permissions', 'Provider 权限')} blocked={props.busy} onPress={() => setAccessOpen(value => !value)} />
+          <Button colors={colors} variant="ghost" iconOnly icon="Pencil" label={ui('Edit', '编辑')} blocked={props.busy} onPress={props.onEdit} />
+          <Button colors={colors} variant="ghost" iconOnly icon="Trash2" label={ui('Delete', '删除')} blocked={props.busy} onPress={() => setConfirming(true)} />
         </>}
-      <Switch colors={colors} label={`${server.name} ${ui('on', '开启')}`} value={server.enabled} disabled={props.busy} onChange={enabled => void save({ enabled })} />
+      <Switch colors={colors} label={`${server.name} ${ui('on', '开启')}`} value={on} blocked={props.busy} onChange={toggle} />
     </View>
     {accessOpen ? <AccessPanel {...props} access={server} onClose={() => setAccessOpen(false)} onSave={access => save(access)} /> : null}
     {signingIn ? <SignInPanel {...props} name={server.name} canUseCodex={server.config.type === 'http'} onClose={() => setSigningIn(false)} /> : null}
@@ -374,7 +378,7 @@ function SignInPanel(props: TabProps & { name: string; canUseCodex: boolean; onC
           <View style={{ flex: 1, minWidth: 0 }}>
             <Field colors={colors} value={callback} onChange={setCallback} onSubmit={() => { if (callback.trim()) void finish(); }} placeholder={`${flow.redirectUri}?code=…&state=…`} mono />
           </View>
-          <Button colors={colors} variant="primary" label={ui('Finish', '完成')} disabled={props.busy || !callback.trim()} onPress={() => void finish()} />
+          <Button colors={colors} variant="primary" label={ui('Finish', '完成')} disabled={!callback.trim()} blocked={props.busy} onPress={() => void finish()} />
         </View>
         <Muted colors={colors} small>{flow.via === 'codex'
           ? ui('Paste the full callback address even if the browser says the page cannot load.', '即使浏览器提示页面无法打开，也请复制完整回调地址粘贴到这里。')
@@ -435,7 +439,7 @@ function ServerForm(props: TabProps & { draft: ServerDraft; previousName: string
     {problem ? <Muted colors={colors} danger>{problem}</Muted> : null}
     <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
       <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={props.onClose} />
-      <Button colors={colors} variant="primary" label={ui('Save', '保存')} disabled={props.busy} onPress={submit} />
+      <Button colors={colors} variant="primary" label={ui('Save', '保存')} blocked={props.busy} onPress={submit} />
     </View>
   </View>;
 }
@@ -464,14 +468,14 @@ function SkillsTab(props: TabProps) {
           <Field colors={colors} icon="Search" value={query} onChange={setQuery} placeholder={ui('Search by name, description or provider', '按名称、描述或 Provider 搜索')} />
         </View>
         : <View style={{ flex: 1 }} />}
-      <Button colors={colors} icon="FolderPlus" label={ui('Add folder', '添加文件夹')} active={adding} disabled={props.busy} onPress={() => setAdding(value => !value)} />
+      <Button colors={colors} icon="FolderPlus" label={ui('Add folder', '添加文件夹')} active={adding} blocked={props.busy} onPress={() => setAdding(value => !value)} />
     </View>
 
     {adding ? <Card colors={colors}>
       <Field colors={colors} label={ui('A skill folder with a SKILL.md, from anywhere', '含 SKILL.md 的技能文件夹，可在任意位置')} value={path} onChange={setPath} onSubmit={addPath} placeholder="~/Downloads/my-skill" mono />
       <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
         <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={() => setAdding(false)} />
-        <Button colors={colors} variant="primary" label={ui('Add to library', '加入技能库')} disabled={props.busy || !path.trim()} onPress={addPath} />
+        <Button colors={colors} variant="primary" label={ui('Add to library', '加入技能库')} disabled={!path.trim()} blocked={props.busy} onPress={addPath} />
       </View>
     </Card> : null}
 
@@ -514,13 +518,13 @@ function SkillItem(props: TabProps & { skill: SkillRow }) {
         </View>
         {skill.description ? <Muted colors={colors} small lines={2}>{skill.description}</Muted> : null}
       </View>
-      <Button colors={colors} variant="ghost" iconOnly icon="Users" label={ui('Provider permissions', 'Provider 权限')} disabled={props.busy} onPress={() => setAccessOpen(value => !value)} />
+      <Button colors={colors} variant="ghost" iconOnly icon="Users" label={ui('Provider permissions', 'Provider 权限')} blocked={props.busy} onPress={() => setAccessOpen(value => !value)} />
       {confirming
         ? <>
-          <Button colors={colors} variant="danger" label={ui('Remove everywhere', '从所有位置移除')} disabled={props.busy} onPress={() => void props.run(() => props.rpc(deleteSkill, { name: skill.name }))} />
+          <Button colors={colors} variant="danger" label={ui('Remove everywhere', '从所有位置移除')} blocked={props.busy} onPress={() => void props.run(() => props.rpc(deleteSkill, { name: skill.name }))} />
           <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={() => setConfirming(false)} />
         </>
-        : <Button colors={colors} variant="ghost" iconOnly icon="Trash2" label={ui('Remove', '移除')} disabled={props.busy} onPress={() => setConfirming(true)} />}
+        : <Button colors={colors} variant="ghost" iconOnly icon="Trash2" label={ui('Remove', '移除')} blocked={props.busy} onPress={() => setConfirming(true)} />}
     </View>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
       {synced.length
@@ -541,7 +545,7 @@ function SkillItem(props: TabProps & { skill: SkillRow }) {
       {opened.message ? <Muted colors={colors} selectable danger={opened.status === 'error'}>{opened.message}</Muted> : null}
       {opened.status === 'modified' || opened.status === 'conflict'
         ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <Button colors={colors} icon="Replace" label={ui(`Replace ${props.providerLabel(opened.provider)}'s copy`, `替换 ${props.providerLabel(opened.provider)} 的副本`)} disabled={props.busy}
+          <Button colors={colors} icon="Replace" label={ui(`Replace ${props.providerLabel(opened.provider)}'s copy`, `替换 ${props.providerLabel(opened.provider)} 的副本`)} blocked={props.busy}
             onPress={() => void props.run(() => props.rpc(overwriteSkill, { name: skill.name, provider: opened.provider })).then(ok => ok && setOpen(null))} />
           <Muted colors={colors} small>{ui('The copy there is moved to the backups first.', '原有副本会先移到备份目录。')}</Muted>
         </View>
@@ -560,7 +564,7 @@ function FoundItem(props: TabProps & { found: FoundSkill }) {
       </View>
       {found.description ? <Muted colors={colors} small lines={1}>{found.description}</Muted> : null}
     </View>
-    <Button colors={colors} icon="Plus" label={ui('Add', '加入')} disabled={props.busy} onPress={() => void props.run(() => props.rpc(importSkill, { path: found.path, replace: false }))} />
+    <Button colors={colors} icon="Plus" label={ui('Add', '加入')} blocked={props.busy} onPress={() => void props.run(() => props.rpc(importSkill, { path: found.path, replace: false }))} />
   </View>;
 }
 
@@ -593,7 +597,16 @@ function ProviderItem(props: TabProps & { row: ProviderRow }) {
   const { row, colors } = props;
   const [editing, setEditing] = useState(false);
   const [dir, setDir] = useState(row.skillsDir ?? '');
+  /** The switch answers on the press itself; the round trip then brings the same value back. */
+  const [flipped, setFlipped] = useState<{ mcp?: boolean; skills?: boolean }>({});
+  const mcp = flipped.mcp ?? row.mcp;
+  const skills = flipped.skills ?? row.skills;
   const update = (patch: { mcp?: boolean; skills?: boolean; skillsDir?: string }) => props.run(() => props.rpc(updateProvider, { provider: row.id, ...patch }));
+  const flip = (key: 'mcp' | 'skills', value: boolean) => {
+    const clear = () => setFlipped(current => key === 'mcp' ? { ...current, mcp: undefined } : { ...current, skills: undefined });
+    setFlipped(current => key === 'mcp' ? { ...current, mcp: value } : { ...current, skills: value });
+    void update(key === 'mcp' ? { mcp: value } : { skills: value }).then(clear);
+  };
   const startEditing = () => { setDir(row.skillsDir ?? ''); setEditing(true); };
   return <View style={{ paddingHorizontal: 14, paddingVertical: 10, gap: 8, opacity: row.present ? 1 : 0.7 }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -612,20 +625,20 @@ function ProviderItem(props: TabProps & { row: ProviderRow }) {
         </Pressable>}
       </View>
       <View style={{ width: COLUMN, alignItems: 'center' }}>
-        <Switch colors={colors} label={`${row.label} MCP`} value={row.mcp} disabled={props.busy} onChange={mcp => void update({ mcp })} />
+        <Switch colors={colors} label={`${row.label} MCP`} value={mcp} blocked={props.busy} onChange={value => flip('mcp', value)} />
       </View>
       <View style={{ width: COLUMN, alignItems: 'center' }}>
-        <Switch colors={colors} label={`${row.label} ${ui('skills', '技能')}`} value={row.skills} disabled={props.busy || !row.skillsDir} onChange={skills => void update({ skills })} />
+        <Switch colors={colors} label={`${row.label} ${ui('skills', '技能')}`} value={skills} disabled={!row.skillsDir} blocked={props.busy} onChange={value => flip('skills', value)} />
       </View>
     </View>
-    {row.mcpNote && !row.mcp ? <Muted colors={colors} small>{row.mcpNote}</Muted> : null}
+    {row.mcpNote && !mcp ? <Muted colors={colors} small>{row.mcpNote}</Muted> : null}
     {editing ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
       <View style={{ flex: 1, minWidth: 200 }}>
         <Field colors={colors} value={dir} onChange={setDir} onSubmit={() => { if (dir.trim()) void update({ skillsDir: dir }).then(ok => ok && setEditing(false)); }} placeholder="~/.my-cli/skills" mono />
       </View>
-      {row.skillsDirCustom ? <Button colors={colors} variant="ghost" label={ui('Use default', '恢复默认')} disabled={props.busy} onPress={() => void update({ skillsDir: '' }).then(ok => ok && setEditing(false))} /> : null}
+      {row.skillsDirCustom ? <Button colors={colors} variant="ghost" label={ui('Use default', '恢复默认')} blocked={props.busy} onPress={() => void update({ skillsDir: '' }).then(ok => ok && setEditing(false))} /> : null}
       <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={() => setEditing(false)} />
-      <Button colors={colors} variant="primary" label={ui('Save', '保存')} disabled={props.busy || !dir.trim()} onPress={() => void update({ skillsDir: dir }).then(ok => ok && setEditing(false))} />
+      <Button colors={colors} variant="primary" label={ui('Save', '保存')} disabled={!dir.trim()} blocked={props.busy} onPress={() => void update({ skillsDir: dir }).then(ok => ok && setEditing(false))} />
     </View> : null}
   </View>;
 }
