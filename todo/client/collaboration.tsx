@@ -195,6 +195,10 @@ export function CollaborationForm(props: {
     || draft.preserved.verificationCommands.length > 0;
   const [advanced, setAdvanced] = useState(customAdvanced);
   const [editPrompts, setEditPrompts] = useState(customPrompts);
+  // React Native Web gives every View z-index 0, so a menu's own z-index stays inside its section.
+  // The open section has to be the dismiss layer's sibling and sit above it, or a provider click hits the layer and closes the list.
+  const modelsOpen = picker === 'director' || picker === 'worker' || picker === 'reviewer' || picker?.endsWith('-mode') === true;
+  const limitsOpen = picker === 'rework' || picker === 'run' || picker === 'turn';
   const modes: Array<'off' | CollaborationMode> = ['off', 'full', 'execute_review'];
   const selectedMode = draft.enabled ? draft.mode : 'off';
   const setMode = (mode: 'off' | CollaborationMode) => {
@@ -278,7 +282,7 @@ export function CollaborationForm(props: {
     </Text>
     {warning ? <Text style={{ color: colors.statusWarning, fontSize: 12, lineHeight: 18 }}>{warning}</Text> : null}
     {draft.enabled ? <>
-      <View style={{ gap: 10 }}>
+      <View style={{ gap: 10, zIndex: modelsOpen ? 5 : 0 }}>
         <SectionTitle colors={colors}>{ui('Agents', '协作 Agent')}</SectionTitle>
         {roleRow('director', draft.mode === 'execute_review')}
         {roleRow('worker', false)}
@@ -305,7 +309,7 @@ export function CollaborationForm(props: {
         </View>)}
         </> : null}
       </View>
-      <View style={{ gap: 8 }}>
+      <View style={{ gap: 8, zIndex: limitsOpen ? 5 : 0 }}>
         <SectionTitle colors={colors}>{ui('Limits', '限制')}</SectionTitle>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, zIndex: picker === 'rework' || picker === 'run' || picker === 'turn' ? 20 : 1 }}>
           <Select label={ui('Reworks', '返工')} icon="RotateCcw" colors={colors} value={String(draft.maxReworks)} options={Array.from({ length: 11 }, (_, count) => ({ value: String(count), label: String(count) }))} placeholder="2" disabled={disabled} open={picker === 'rework'} onOpenChange={open => setPicker(open ? 'rework' : null)} onChange={value => props.onChange({ ...draft, maxReworks: Number(value) })} />
