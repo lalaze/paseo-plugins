@@ -158,8 +158,8 @@ export async function readOfficialQuota(options: OfficialQuotaReader = {}): Prom
   if (!bin) return null;
   const version = await current.run(bin, ['--version'], 3000);
   if (!version || !supportsUsagePrint(version)) return null;
-  // CLI startup can take over 15s; stay below Paseo's 30s plugin RPC deadline.
-  const stdout = await current.run(bin, ['-p', '/usage', '--output-format', 'json', '--print-timeout', '12s'], 25000);
+  // Runs in the background; slow startup no longer exceeds the plugin RPC deadline.
+  const stdout = await current.run(bin, ['-p', '/usage', '--output-format', 'json', '--print-timeout', '12s'], 60000);
   if (!stdout) return null;
   try {
     const windows = quotaWindows(JSON.parse(stdout));

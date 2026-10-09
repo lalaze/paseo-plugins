@@ -34,6 +34,59 @@ test('valid native quota is preferred and fallback failure preserves other quota
   query.client.clear();
   const missing = native();
   const fallback = createUsageQuery(api(missing), async () => { throw new Error('CLI unavailable'); });
-  assert.equal(await fallback.client.fetchQuery(fallback.options), missing);
+  const failed = await fallback.client.fetchQuery(fallback.options);
+  assert.equal(failed.providers[0], missing.providers[0]);
+  assert.equal(failed.providers[1]?.status, 'unavailable');
+  assert.equal(failed.providers[1]?.quotaStale, true);
   fallback.client.clear();
+});
+
+test('an initial background read polls quickly and a stale snapshot is marked as previous data', async () => {
+  let response = { ...snapshot, windows: [], stale: true, refreshing: true };
+  const query = createUsageQuery(api(native()), async () => response);
+  const pending = await query.client.fetchQuery(query.options);
+  assert.equal(pending.providers[1]?.quotaRefreshing, true);
+  assert.equal(pending.providers[1]?.quotaStale, true);
+  assert.equal(typeof query.options.refetchInterval === 'function'
+    ? query.options.refetchInterval(query.client.getQueryCache().find({ queryKey: query.options.queryKey })!) : 0, 1500);
+  response = { ...snapshot, stale: false, refreshing: false };
+  const ready = await query.client.fetchQuery({ ...query.options, staleTime: 0 });
+  assert.equal(ready.providers[1]?.windows[0]?.remainingPct, 99.96);
+  assert.equal(ready.providers[1]?.quotaStale, false);
+  response = { ...snapshot, stale: true, refreshing: false };
+  const stale = await query.client.fetchQuery({ ...query.options, staleTime: 0 });
+  assert.equal(stale.providers[1]?.quotaStale, true);
+  assert.equal(stale.fetchedAt, snapshot.fetchedAt);
+  query.client.clear();
+});
+
+test('an unsuccessful refresh retains the last native quota with its original timestamp', async () => {
+  let result = native(true);
+  const query = createUsageQuery({ providers: { listUsage: async () => result } } as unknown as PaseoApi,
+    async () => ({ ...snapshot, windows: [] }));
+  const first = await query.client.fetchQuery(query.options);
+  result = { ...native(), fetchedAt: '2026-10-08T16:10:00.000Z' };
+  const failed = await query.client.fetchQuery({ ...query.options, staleTime: 0 });
+  assert.equal(failed.providers[1]?.windows[0]?.remainingPct, 80);
+  assert.equal(failed.fetchedAt, first.fetchedAt);
+  assert.ok(failed.providers[1]?.details?.some(detail => /previous|cached/i.test(detail.value)));
+  assert.equal(failed.providers[0], result.providers[0]);
+  query.client.clear();
+});
+
+test('RPC failure after a successful fallback keeps quota until a fresh reading recovers', async () => {
+  let fail = false;
+  const query = createUsageQuery(api(native()), async () => {
+    if (fail) throw new Error('RPC timeout');
+    return snapshot;
+  });
+  await query.client.fetchQuery(query.options);
+  fail = true;
+  const failed = await query.client.fetchQuery({ ...query.options, staleTime: 0 });
+  assert.equal(failed.providers[1]?.windows[0]?.remainingPct, 99.96);
+  assert.equal(failed.fetchedAt, snapshot.fetchedAt);
+  fail = false;
+  const recovered = await query.client.fetchQuery({ ...query.options, staleTime: 0 });
+  assert.equal(recovered.providers[1]?.details?.length, 0);
+  query.client.clear();
 });

@@ -6,17 +6,23 @@ import { readOfficialQuota, type OfficialQuotaReader } from './antigravity-quota
 export function registerAntigravityQuota(server: PluginServerContext, reader: OfficialQuotaReader = {}, now = Date.now): void {
   let cached: AntigravityQuotaSnapshot | null = null;
   let expiresAt = 0;
-  let pending: Promise<AntigravityQuotaSnapshot> | null = null;
+  let stale = false;
+  let pending: Promise<void> | null = null;
   server.handle(readAntigravityQuota, async () => {
-    if (cached && now() < expiresAt) return cached;
-    if (pending) return pending;
-    pending = (async () => {
-      const windows = await readOfficialQuota(reader);
-      cached = { fetchedAt: new Date(now()).toISOString(), windows: windows ?? [] };
-      expiresAt = now() + (cached.windows.length ? 300000 : 60000);
-      return cached;
-    })();
-    try { return await pending; }
-    finally { pending = null; }
+    if (!pending && now() >= expiresAt) {
+      stale = true;
+      // Return immediately: CLI startup must not hold a 30s plugin RPC open.
+      pending = (async () => {
+        try {
+          const windows = await readOfficialQuota(reader);
+          if (windows?.length) {
+            cached = { fetchedAt: new Date(now()).toISOString(), windows };
+            stale = false;
+          }
+        } catch { /* Keep the last successful quota; never expose CLI output. */ }
+        expiresAt = now() + (stale ? 60000 : 300000);
+      })().finally(() => { pending = null; });
+    }
+    return { ...(cached ?? { fetchedAt: new Date(now()).toISOString(), windows: [] }), stale, refreshing: pending !== null };
   });
 }

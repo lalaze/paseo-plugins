@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 import { agyCandidates, quotaWindows, readOfficialQuota, supportsUsagePrint } from '../server/antigravity-quota.ts';
 import { registerAntigravityQuota } from '../server/antigravity-usage.ts';
 import { readAntigravityQuota, type AntigravityQuotaSnapshot } from '../shared/antigravity-quota.ts';
@@ -70,7 +71,7 @@ test('quota RPC works alongside the built-in source, shares reads and caches rea
   const run = async (_file: string, args: string[], timeoutMs: number) => {
     calls.push(args);
     if (args[0] === '--version') return '1.3.1';
-    assert.equal(timeoutMs, 25000);
+    assert.equal(timeoutMs, 60000);
     return JSON.stringify(envelope);
   };
   let fetch!: () => Promise<AntigravityQuotaSnapshot>;
@@ -81,15 +82,20 @@ test('quota RPC works alongside the built-in source, shares reads and caches rea
       fetch = () => handler({}, {}) as Promise<AntigravityQuotaSnapshot>;
     },
   }, { resolve: async () => '/official/agy', run }, () => now);
-  const [report, concurrent] = await Promise.all([fetch(), fetch()]);
-  assert.equal(concurrent, report);
+  const [initial, concurrent] = await Promise.all([fetch(), fetch()]);
+  assert.equal(initial.refreshing, true);
+  assert.deepEqual(concurrent, initial);
+  await setImmediate();
+  const report = await fetch();
   assert.equal(calls.length, 2);
   assert.equal(report.windows[0]?.remainingPct, 80);
   assert.equal(report.windows[0]?.resetsAt, '2026-10-15T07:43:08.000Z');
   now += 60000;
-  assert.equal(await fetch(), report);
+  assert.deepEqual(await fetch(), report);
   assert.equal(calls.length, 2);
   now += 240000;
+  assert.equal((await fetch()).refreshing, true);
+  await setImmediate();
   assert.notEqual((await fetch()).fetchedAt, report.fetchedAt);
   assert.equal(calls.length, 4);
   const old = await readOfficialQuota({
@@ -110,10 +116,57 @@ test('failed quota reads are empty and retry after one minute', async () => {
     resolve: async () => { calls++; return null; },
   }, () => now);
   assert.deepEqual((await fetch()).windows, []);
+  await setImmediate();
   now = 59999;
   await fetch();
   assert.equal(calls, 1);
   now = 60000;
   await fetch();
+  await setImmediate();
   assert.equal(calls, 2);
+});
+
+test('cache expiry followed by a failed CLI read retains the last successful quota', async () => {
+  let now = 0, fail = false;
+  let fetch!: () => Promise<AntigravityQuotaSnapshot>;
+  registerAntigravityQuota({ handle(_contract, handler) { fetch = () => handler({}, {}) as Promise<AntigravityQuotaSnapshot>; } }, {
+    resolve: async () => '/official/agy',
+    run: async (_file, args) => args[0] === '--version' ? '1.3.1' : fail ? null : JSON.stringify(envelope),
+  }, () => now);
+  await fetch(); await setImmediate();
+  const first = await fetch();
+  now = 300000; fail = true;
+  const updating = await fetch();
+  assert.equal(updating.refreshing, true);
+  assert.deepEqual(updating.windows, first.windows);
+  await setImmediate();
+  const failed = await fetch();
+  assert.deepEqual(failed.windows, first.windows);
+  assert.equal(failed.fetchedAt, first.fetchedAt);
+  assert.equal(failed.stale, true);
+  now += 60000; fail = false;
+  await fetch(); await setImmediate();
+  const recovered = await fetch();
+  assert.equal(recovered.stale, false);
+  assert.notEqual(recovered.fetchedAt, first.fetchedAt);
+});
+
+test('a slow CLI cannot block quota RPCs or start overlapping reads', async () => {
+  let release!: (value: string | null) => void, reads = 0;
+  let fetch!: () => Promise<AntigravityQuotaSnapshot>;
+  registerAntigravityQuota({ handle(_contract, handler) { fetch = () => handler({}, {}) as Promise<AntigravityQuotaSnapshot>; } }, {
+    resolve: async () => '/official/agy',
+    run: async (_file, args) => {
+      if (args[0] === '--version') return '1.3.1';
+      reads++;
+      return new Promise(resolve => { release = resolve; });
+    },
+  });
+  assert.equal((await fetch()).refreshing, true);
+  await setImmediate();
+  assert.equal((await fetch()).refreshing, true);
+  assert.equal(reads, 1);
+  release(JSON.stringify(envelope)); await setImmediate();
+  assert.equal((await fetch()).refreshing, false);
+  assert.equal((await fetch()).windows.length, 4);
 });

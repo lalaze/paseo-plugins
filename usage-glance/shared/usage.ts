@@ -1,8 +1,8 @@
 import type { PaseoProviderUsageResult } from '@getpaseo/client';
 import { ui, uiNumberLocale } from './i18n';
 
-export type UsageResult = PaseoProviderUsageResult;
-export type Usage = UsageResult['providers'][number];
+export type UsageResult = Omit<PaseoProviderUsageResult, 'providers'> & { providers: Usage[] };
+export type Usage = PaseoProviderUsageResult['providers'][number] & { quotaStale?: boolean; quotaRefreshing?: boolean };
 export type UsageWindow = Usage['windows'][number];
 export type UsageBalance = NonNullable<Usage['balances']>[number];
 export type Tone = 'ok' | 'warning' | 'danger' | 'unknown';
@@ -149,5 +149,6 @@ export function dataAge(value?: string | null, now = Date.now()): string {
 }
 
 export function isStale(result?: UsageResult, now = Date.now()): boolean {
-  return !!result && (!Number.isFinite(Date.parse(result.fetchedAt)) || now - Date.parse(result.fetchedAt) > 6 * 60000);
+  return !!result && (result.providers.some(provider => provider.quotaStale)
+    || !Number.isFinite(Date.parse(result.fetchedAt)) || now - Date.parse(result.fetchedAt) > 6 * 60000);
 }

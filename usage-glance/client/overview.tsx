@@ -81,7 +81,8 @@ function ProviderCard({ usage, theme, current, pinned, mobile = false }: { usage
       </View>
       {usage.planLabel ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: mobile ? 10 : 12, paddingLeft: mobile ? 15 : 0 }}>{usage.planLabel}</Text> : null}
     </View>
-    {usage.status !== 'available' ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>{ui('Unavailable · Check this provider’s sign-in status', '暂不可用 · 请检查该供应商的登录状态')}</Text> : <>
+    {usage.quotaStale ? <Text accessibilityRole="alert" style={{ color: theme.colors.statusWarning, fontSize: 12 }}>{usage.quotaRefreshing ? ui('Updating quota…', '正在更新额度…') : ui('Quota read failed; retrying shortly', '额度读取失败，稍后自动重试')}</Text> : null}
+    {usage.status !== 'available' ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>{usage.quotaRefreshing ? ui('Reading official Antigravity quota…', '正在读取官方 Antigravity 额度…') : ui('Unavailable · Check this provider’s sign-in status', '暂不可用 · 请检查该供应商的登录状态')}</Text> : <>
       {usage.windows.filter(window => remaining(window) !== null).map(window => <Meter key={window.id} label={window.label} value={remaining(window)} resetsAt={window.resetsAt} theme={theme} mobile={mobile} />)}
       {usage.balances?.filter(balance => balanceRemaining(balance) !== null).map(balance => <Meter key={balance.id} label={balance.label} value={balancePercent(balance)} text={mobile ? formatBalance(balance) : ui(`${formatBalance(balance)} remaining`, `剩余 ${formatBalance(balance)}`)} resetsAt={balance.resetsAt} theme={theme} mobile={mobile} />)}
       {usage.details?.map(detail => <Text key={detail.id} style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{detail.label} · {detail.value}</Text>)}
@@ -94,7 +95,7 @@ export function Overview({ theme, host, layout, query, preference, currentProvid
   const [settingsOpen, setSettingsOpen] = useState(false);
   const selected = useSyncExternalStore(preference.subscribe, preference.get, preference.get);
   useEffect(() => { void preference.load(); }, [preference]);
-  const providers = (result.data?.providers ?? []).filter(hasQuota);
+  const providers = (result.data?.providers ?? []).filter(usage => hasQuota(usage) || usage.quotaStale);
   const current = currentProvider ? findUsage(providers, currentProvider) : undefined;
   const pinnedId = selected ? findUsage(providers, selected)?.providerId ?? null : null;
   const visible = [...providers].sort((a, b) => Number(b === current) - Number(a === current));

@@ -66,6 +66,7 @@ test('reset and freshness never imply an elapsed quota has already replenished',
   assert.equal(resetLabel('2026-09-12T11:20:00Z', now), 'Resets in 1 hr 20 min');
   assert.equal(isStale({ requestId: 'test', providers: [], fetchedAt: '2026-09-12T09:53:00Z' }, now), true);
   assert.equal(isStale({ requestId: 'test', providers: [], fetchedAt: '2026-09-12T09:56:00Z' }, now), false);
+  assert.equal(isStale({ requestId: 'test', providers: [usage({ quotaStale: true })], fetchedAt: new Date(now).toISOString() }, now), true);
 });
 
 test('header identifies the lowest available quota and does not rank missing data as zero', () => {

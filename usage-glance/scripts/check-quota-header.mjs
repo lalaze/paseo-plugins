@@ -30,7 +30,7 @@ for (const platform of ['android', 'ios', 'web']) {
   const contribute = (0, eval)(source)(runtimeRequire).default;
   const buttons = new Map();
   const workspaceIds = ['workspace-first', 'workspace-middle', 'workspace-last'];
-  let tree, removed = 0;
+  let tree, removed = 0, quotaFails = false;
   const client = {
     paseo: {
       providers: { listUsage: async () => ({
@@ -41,7 +41,9 @@ for (const platform of ['android', 'ios', 'web']) {
       }), subscribe: () => noop },
       workspaces: { subscribe: () => noop, list: async () => ({ entries: workspaceIds.map(id => ({ id })), pageInfo: { hasMore: false } }) },
     },
-    rpc: async (_contract, input) => input.range ? { range: input.range, sources: [], scanning: false } : {},
+    rpc: async (contract, input) => contract.name === 'read-antigravity-quota'
+      ? { fetchedAt: new Date().toISOString(), windows: quotaFails ? [] : [{ id: 'agy-weekly', label: 'Gemini Models · Weekly limit', remainingPct: 80, usedPct: 20, resetsAt: null, tone: 'ok' }], stale: quotaFails, refreshing: false }
+      : input.range ? { range: input.range, sources: [], scanning: false } : {},
     addHeaderButton: contribution => {
       const button = contribution.button;
       buttons.set(contribution.workspaceId, button);
@@ -67,6 +69,18 @@ for (const platform of ['android', 'ios', 'web']) {
         // The host temporarily replaces action icons with a pending spinner.
         await act(async () => { tree.update(null); button.behavior.onPress(); });
         await act(async () => { tree.update(React.createElement(button.icon, props)); });
+        if (workspaceId === workspaceIds[0] && attempt === 0) {
+          const text = () => tree.root.findAllByType('text').map(node => node.props.children).flat().join(' ');
+          assert.match(text(), /Antigravity/, 'official quota card renders in the real client bundle');
+          const refresh = () => tree.root.findAllByType('pressable').find(node => /Refresh quota|刷新额度/.test(node.props.accessibilityLabel));
+          quotaFails = true;
+          await act(async () => { refresh().props.onPress(); await new Promise(resolve => setTimeout(resolve, 20)); });
+          assert.match(text(), /Antigravity/);
+          assert.match(text(), /Showing previous quota|保留上次额度/, 'failed refresh keeps and marks the previous quota');
+          quotaFails = false;
+          await act(async () => { refresh().props.onPress(); await new Promise(resolve => setTimeout(resolve, 20)); });
+          assert.doesNotMatch(text(), /Showing previous quota|保留上次额度/, 'fresh quota clears the stale state');
+        }
         if (platform === 'web') {
           assert.equal(tree.root.findAllByType('modal').length, 1);
           await act(async () => { tree.root.findByType('modal').props.onOpenChange(false); });
