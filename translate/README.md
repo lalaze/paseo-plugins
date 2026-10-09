@@ -28,7 +28,7 @@
 先在 Paseo 的 **Settings → Plugins** 开启插件，然后运行：
 
 ```bash
-paseo plugin add lalaze/paseo-plugins --path translate
+paseo plugin add git:lalaze/paseo-plugins --path translate
 paseo reload
 ```
 

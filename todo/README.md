@@ -23,7 +23,7 @@ Collaboration status is checked in the background while the plugin runs, includi
 `install-all.sh` does not install this plugin. Add it on its own:
 
 ```bash
-paseo plugin add lalaze/paseo-plugins --path todo
+paseo plugin add git:lalaze/paseo-plugins --path todo
 ```
 
 From a local checkout, `cd todo && npm ci && npm run build` typechecks and writes `dist/`. The daemon loads the built plugin; this package does not restart it.

@@ -52,7 +52,7 @@
 在目标主机的 Paseo **Settings → Plugins** 开启插件，并确保运行 daemon 的用户有本仓库的 GitHub SSH 读取权限，然后执行：
 
 ```bash
-paseo plugin add lalaze/paseo-plugins --path director
+paseo plugin add git:lalaze/paseo-plugins --path director
 paseo plugin ls paseo-director --json
 ```
 
@@ -88,7 +88,7 @@ paseo plugin ls paseo-director --json
 
 ```bash
 paseo plugin remove paseo-director
-paseo plugin add lalaze/paseo-plugins --path director
+paseo plugin add git:lalaze/paseo-plugins --path director
 ```
 
 完整切换步骤见 [INSTALL.md](./INSTALL.md#从目录安装切换到-github)。

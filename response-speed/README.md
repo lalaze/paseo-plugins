@@ -16,7 +16,7 @@ Plugin ID: `paseo-response-speed`.
 Enable plugins under **Settings → Plugins** in Paseo, then run:
 
 ```bash
-paseo plugin add lalaze/paseo-plugins --path response-speed
+paseo plugin add git:lalaze/paseo-plugins --path response-speed
 ```
 
 Local development install:

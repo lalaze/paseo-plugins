@@ -1,8 +1,8 @@
 # paseo-plugins
 
-Multi-package repository of Paseo plugins and companion extensions. The two active Paseo plugins support daemon and app versions 0.8.x through 0.11.x, including prereleases. The separate quota and notification patches retain their own version restrictions. Enable plugins under **Settings → Plugins** on the target host first. Each active package can also be installed on its own as described below; see each directory's README for updating, uninstalling and limitations.
+Multi-package repository of Paseo plugins and companion extensions. The active Paseo plugins support daemon and app versions 0.8.x through 0.11.x, including prereleases, except `paseo-shared-tools`, `paseo-todo` and `paseo-provider-update`, which need 0.10.x or newer. The separate quota and notification patches retain their own version restrictions. Enable plugins under **Settings → Plugins** on the target host first. Each active package can also be installed on its own as described below; see each directory's README for updating, uninstalling and limitations.
 
-Install the active packages at once (two plugins, the quota patch and Kimi renewal):
+Install the active packages at once (three plugins, the quota patch and Kimi renewal):
 
 ```bash
 ./install-all.sh
@@ -41,7 +41,7 @@ Plugins and patches run with the daemon user's privileges; read the source in th
 Shows a quota summary and breakdown for the current host in the top-right corner of the workspace, with providers pinnable to the top bar. The "Token usage" sidebar entry opens a standalone statistics page with multi-host totals, per-host filtering and a monthly model heatmap; common ranges refresh in the background every minute and cached data is shown first when opened. Usage follows each host's own Providers toggles and supports Codex, Claude Code, Kimi, Grok, Antigravity and Pi, grouped by provider, model, model vendor or host. Install or update it on each host separately. Plugin ID: `paseo-usage-glance`. Antigravity quota falls back to the signed-in official agy CLI (1.1.11+) when Paseo returns no usable quota; the separate [`agy-quota`](agy-quota) patch is only needed for older Plan usage pages.
 
 ```bash
-paseo plugin add lalaze/paseo-plugins --path usage-glance
+paseo plugin add git:lalaze/paseo-plugins --path usage-glance
 ```
 
 Details: [usage-glance/README.md](usage-glance/README.md)
@@ -51,7 +51,7 @@ Details: [usage-glance/README.md](usage-glance/README.md)
 Queues tasks in the sidebar, with a per-project **Tasks** panel in each workspace's explorer. Each task runs in its own git worktree, and a person accepts the result before it merges into the chosen branch. Closing the sidebar does not stop the queue. Plugin ID: `paseo-todo`. It is a separate install: `install-all.sh` and `update-all.sh` do not install or update it.
 
 ```bash
-paseo plugin add lalaze/paseo-plugins --path todo
+paseo plugin add git:lalaze/paseo-plugins --path todo
 ```
 
 Details: [todo/README.md](todo/README.md)
@@ -61,17 +61,17 @@ Details: [todo/README.md](todo/README.md)
 A **Provider updates** screen in Settings lists the providers enabled on the host, with installed and newest versions, and upgrades a provider's CLI with one click. It targets the executable the daemon actually launches and uses a fixed updater per install type (Claude native, Codex, Grok and Kimi Code standalone, global npm, Homebrew); a script run through node or another interpreter is listed with its own version. Plugin ID: `paseo-provider-update`. It is a separate install: `install-all.sh` and `update-all.sh` do not install or update it.
 
 ```bash
-paseo plugin add lalaze/paseo-plugins --path provider-update
+paseo plugin add git:lalaze/paseo-plugins --path provider-update
 ```
 
 Details: [provider-update/README.md](provider-update/README.md)
 
 ## [Shared MCP & skills](shared-tools)
 
-A **Shared MCP & skills** screen in Settings gives every provider on a host one list of MCP servers and one skill library. Shared servers are added to each new agent through Paseo's own `mcpServers` path, so Claude Code, Codex, OpenCode and the ACP providers all get them without any CLI config being edited; Pi joins once its MCP adapter is installed. Skills live in one library and are copied into each CLI's own skills folder (`~/.claude/skills`, `~/.codex/skills`, `~/.grok/skills`, `~/.kimi-code/skills`, …). Copies you edited, and skills of your own with the same name, are never overwritten without asking. Servers can be imported from Claude Code, Codex or pasted JSON, and existing skills from any provider's folder. Plugin ID: `paseo-shared-tools`. It is a separate install: `install-all.sh` and `update-all.sh` do not install or update it.
+A **Shared MCP & skills** screen in Settings gives every provider on a host one list of MCP servers and one skill library. Shared servers are added to each new agent through Paseo's own `mcpServers` path, so Claude Code, Codex, OpenCode and the ACP providers all get them without any CLI config being edited; Pi joins once its MCP adapter is installed. Skills live in one library and are copied into each CLI's own skills folder (`~/.claude/skills`, `~/.codex/skills`, `~/.grok/skills`, `~/.kimi-code/skills`, …). Copies you edited, and skills of your own with the same name, are never overwritten without asking. Servers can be imported from Claude Code, Codex or pasted JSON, and existing skills from any provider's folder. Plugin ID: `paseo-shared-tools`.
 
 ```bash
-paseo plugin add lalaze/paseo-plugins --path shared-tools
+paseo plugin add git:lalaze/paseo-plugins --path shared-tools
 ```
 
 Details: [shared-tools/README.md](shared-tools/README.md)
@@ -100,7 +100,7 @@ Details: [file-upload/README.md](file-upload/README.md)
 Select text in a user message or AI reply and translate it in place through a custom OpenAI-compatible translation API; no local agent is created and the chat history is left untouched. On iOS/Android a native "Translate" pill next to the composer translates a draft for sending or copying, or translates the latest AI reply. A [companion app patch](translate/README.md#手机端每条回复下方的翻译按钮) adds a button below each completed AI reply to expand or collapse its Chinese translation. Plugin ID: `paseo-translate`.
 
 ```bash
-paseo plugin add lalaze/paseo-plugins --path translate
+paseo plugin add git:lalaze/paseo-plugins --path translate
 ```
 
 Details: [translate/README.md](translate/README.md)

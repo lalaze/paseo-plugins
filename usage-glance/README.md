@@ -98,7 +98,7 @@ Codex、Claude Code、Kimi、Grok 消耗读取使用 **ccusage 20.0.20** 的离�
 在目标主机的 Paseo **Settings → Plugins** 开启插件，并确保该主机安装了 Git、npm，且运行 daemon 的用户有本仓库的 GitHub SSH 读取权限。然后在该主机执行：
 
 ```bash
-paseo plugin add lalaze/paseo-plugins --path usage-glance
+paseo plugin add git:lalaze/paseo-plugins --path usage-glance
 paseo plugin ls paseo-usage-glance --json
 ```
 
@@ -135,7 +135,7 @@ paseo plugin reload paseo-usage-glance
 
 ```bash
 paseo plugin remove paseo-usage-glance
-paseo plugin add lalaze/paseo-plugins --path usage-glance
+paseo plugin add git:lalaze/paseo-plugins --path usage-glance
 ```
 
 ## 卸载

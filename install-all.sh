@@ -17,7 +17,7 @@ usage() {
 用法: ./install-all.sh [选项]
 
 从本仓库安装启用的包：
-  - paseo-usage-glance / paseo-translate
+  - paseo-usage-glance / paseo-translate / paseo-shared-tools
   - Antigravity 额度补丁、Kimi 按需续期
 
 Antigravity Hub ACP 入口已停用，源码保留，不参与默认安装。
@@ -27,7 +27,7 @@ Director 已归档，请使用 Paseo 内置协作；即使已安装也不会处�
 已从本仓库安装的会跳过。仍指向旧单仓库的默认只警告，加 --replace 才会卸掉再装。
 
 选项:
-  --git          插件从 GitHub 安装（paseo plugin add lalaze/paseo-plugins --path …）
+  --git          插件从 GitHub 安装（paseo plugin add git:lalaze/paseo-plugins --path …）
                  默认从本仓库本地目录安装，本目录需长期保留
   --replace      卸掉旧来源后改从本仓库安装
   --skip-quota   不装 Antigravity 额度补丁
@@ -137,11 +137,11 @@ install_plugin() {
 
   add_plugin() {
     if [ "$USE_GIT" = 1 ]; then
-      say "→ paseo plugin add lalaze/paseo-plugins --path $dir"
+      say "→ paseo plugin add git:lalaze/paseo-plugins --path $dir"
       if [ "$DRY_RUN" = 1 ]; then
         return 0
       fi
-      paseo plugin add lalaze/paseo-plugins --path "$dir"
+      paseo plugin add git:lalaze/paseo-plugins --path "$dir"
     else
       say "→ paseo plugin install $ROOT/$dir"
       if [ "$DRY_RUN" = 1 ]; then
@@ -298,6 +298,7 @@ install_hub() {
 # Director 已迁入 Paseo 内置协作；归档源码不参与安装、更新或单独 reload。
 install_plugin usage-glance paseo-usage-glance
 install_plugin translate paseo-translate
+install_plugin shared-tools paseo-shared-tools
 
 if [ "$SKIP_QUOTA" = 1 ]; then
   note "SKIP agy-quota（--skip-quota）"

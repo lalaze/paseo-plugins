@@ -3,7 +3,7 @@
 A **Provider updates** screen in Settings (also **Update providers** in the command center) that lists every provider enabled on the host, shows the installed and newest versions, and upgrades a provider's CLI with one click. Plugin ID: `paseo-provider-update`. It needs a Paseo daemon from 0.10 up to, but not including, 0.12.
 
 ```bash
-paseo plugin add lalaze/paseo-plugins --path provider-update
+paseo plugin add git:lalaze/paseo-plugins --path provider-update
 ```
 
 From a local checkout, `cd provider-update && npm ci && npm run build` typechecks and writes `dist/`. Set `PASEO_COMPILER` to a Paseo checkout's `packages/server/dist/server/server/plugins/compiler.js` to run the host's import-boundary check as well.

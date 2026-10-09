@@ -13,7 +13,7 @@ usage() {
 用法: ./update-all.sh [--skip-pull] [--dry-run]
 
 拉取本仓库最新 main，然后更新已经安装的：
-  - paseo-usage-glance / paseo-translate
+  - paseo-usage-glance / paseo-translate / paseo-shared-tools
   - Antigravity 额度补丁、可选 Kimi 续期
 
 Antigravity Hub ACP 入口已停用，源码保留，不参与自动更新或挂载。
@@ -287,6 +287,7 @@ update_hub() {
 # Director 已迁入 Paseo 内置协作；归档源码不参与安装、更新或单独 reload。
 update_plugin usage-glance paseo-usage-glance
 update_plugin translate paseo-translate
+update_plugin shared-tools paseo-shared-tools
 update_patch agy-quota patch.mjs "Antigravity 额度补丁"
 update_patch kimi-quota kimi-patch.mjs "Kimi 续期补丁"
 note "SKIP antigravity-hub（入口已停用；源码保留）"

@@ -16,7 +16,7 @@
 在目标主机执行，运行 Paseo daemon 的用户需要有多插件仓库的 GitHub SSH 读取权限：
 
 ```bash
-paseo plugin add lalaze/paseo-plugins --path director
+paseo plugin add git:lalaze/paseo-plugins --path director
 paseo plugin ls paseo-director --json
 ```
 
@@ -69,7 +69,7 @@ paseo plugin logs paseo-director
 
 ```bash
 paseo plugin remove paseo-director
-paseo plugin add lalaze/paseo-plugins --path director
+paseo plugin add git:lalaze/paseo-plugins --path director
 paseo plugin ls paseo-director --json
 ```
 
