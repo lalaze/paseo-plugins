@@ -1260,7 +1260,7 @@ export class TodoEngine {
       return;
     }
     if (!task.worktree) throw todoError('prepare-failed', '任务工作树还没有准备好');
-    const workspaceId = task.workspaceId ?? await this.options.agents.openWorkspace(task.worktree);
+    const workspaceId = task.workspaceId ?? await this.options.agents.openWorkspace(task.worktree, task.title);
     const ready = await this.lockTask(id, async () => {
       const located = this.options.store.get(id);
       if (located.operationId !== operationId || (located.status !== 'preparing' && located.status !== 'running' && located.status !== 'needs_attention')) return false;

@@ -84,9 +84,11 @@ export class PaseoTodoGateway implements AgentPort, CollaborationPort {
     return this.collaborationPort;
   }
 
-  async openWorkspace(cwd: string): Promise<string> {
+  async openWorkspace(cwd: string, title?: string): Promise<string> {
     await this.connect();
     const workspace = await this.api.workspaces.open(cwd);
+    // The worktree's workspace is otherwise named after the task branch; a title set earlier (by us or the user) is kept.
+    if (title && !workspace.current()?.title) await workspace.setTitle(title).catch(() => undefined);
     return workspace.id;
   }
 

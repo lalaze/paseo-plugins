@@ -94,6 +94,26 @@ describe('reconnecting gateway', () => {
     assert.deepEqual(opened, ['/wt/task']);
   });
 
+  it('names a task workspace after the task, unless it already has a title', async () => {
+    const titles: string[] = [];
+    let existing: string | null = null;
+    const api = {
+      workspaces: { open: async () => ({
+        id: 'ws-9',
+        current: () => (existing ? { title: existing } : {}),
+        setTitle: async (title: string) => { titles.push(title); },
+      }) },
+      dispose: async () => undefined,
+    };
+    const driver = { connect: async () => undefined, close: async () => undefined };
+    const gateway = new PaseoTodoGateway(driver as unknown as DaemonClient, api as unknown as PaseoApi, { url: 'ws://127.0.0.1/ws' });
+    assert.equal(await gateway.openWorkspace('/wt/task', 'Fix the thing'), 'ws-9');
+    existing = 'Kept';
+    assert.equal(await gateway.openWorkspace('/wt/task', 'Fix the thing'), 'ws-9');
+    assert.equal(await gateway.openWorkspace('/wt/task'), 'ws-9');
+    assert.deepEqual(titles, ['Fix the thing']);
+  });
+
   it('forwards workspace open on the shared connection', async () => {
     let attempts = 0;
     const live = fake();

@@ -22,8 +22,8 @@ export interface CreateAgentInput {
 
 export interface AgentPort {
   create(input: CreateAgentInput): Promise<{ agentId: string; workspaceId: string }>;
-  /** Opens the task worktree's workspace and does not create an agent or send a prompt. */
-  openWorkspace(cwd: string): Promise<string>;
+  /** Opens the task worktree's workspace and does not create an agent or send a prompt. `title` names it when it has none. */
+  openWorkspace(cwd: string, title?: string): Promise<string>;
   send(input: { agentId: string; operationId: string; prompt: string }): Promise<void>;
   cancel(agentId: string): Promise<void>;
   inspect(agentId: string): Promise<AgentInspection>;

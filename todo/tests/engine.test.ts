@@ -59,6 +59,7 @@ function harness(options: {
   const deleted: Array<{ branch: string; expectedHead: string; targetBranch: string }> = [];
   const created: string[] = [];
   const workspaces: string[] = [];
+  const workspaceTitles: Array<string | undefined> = [];
   const prompts: string[] = [];
   const cancels: string[] = [];
   const sent: string[] = [];
@@ -72,7 +73,7 @@ function harness(options: {
       prompts.push(input.prompt);
       return { agentId, workspaceId: 'ws-1' };
     },
-    async openWorkspace(cwd: string) { workspaces.push(cwd); return 'ws-1'; },
+    async openWorkspace(cwd: string, title?: string) { workspaces.push(cwd); workspaceTitles.push(title); return 'ws-1'; },
     async send(input) {
       sent.push(input.agentId);
     },
@@ -102,7 +103,7 @@ function harness(options: {
   };
   let now = 1;
   return {
-    created, sent, captures, prepares, prompts, cancels, archived, removed, deleted, workspaces, agents, git,
+    created, sent, captures, prepares, prompts, cancels, archived, removed, deleted, workspaces, workspaceTitles, agents, git,
     engine: null as unknown as TodoEngine,
     async open(dir: string) {
       const store = await TaskStore.open(dir);
@@ -1464,9 +1465,9 @@ describe('collaboration lifecycle', () => {
     }));
     const box = harness({ collaboration: port });
     const workspace = box.agents.openWorkspace;
-    box.agents.openWorkspace = async cwd => {
+    box.agents.openWorkspace = async (cwd, title) => {
       order.push(`workspace:${cwd}`);
-      return workspace(cwd);
+      return workspace(cwd, title);
     };
     await withEngine(box, async engine => {
       const task = await engine.createTask({
@@ -1486,6 +1487,7 @@ describe('collaboration lifecycle', () => {
       assert.equal(box.created.length, 0);
       assert.equal(box.sent.length, 0);
       assert.equal(order[0], `workspace:/wt/${task.id}`);
+      assert.equal(box.workspaceTitles[0], 'Review');
       assert.equal(order[1], 'status');
       assert.equal(order[2], 'conversation.open');
     });

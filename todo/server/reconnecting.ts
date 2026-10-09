@@ -36,8 +36,8 @@ export class ReconnectingAgents implements AgentPort {
     return (await this.get()).create(input);
   }
 
-  async openWorkspace(cwd: string): Promise<string> {
-    return (await this.get()).openWorkspace(cwd);
+  async openWorkspace(cwd: string, title?: string): Promise<string> {
+    return (await this.get()).openWorkspace(cwd, title);
   }
 
   async send(input: { agentId: string; operationId: string; prompt: string }): Promise<void> {
