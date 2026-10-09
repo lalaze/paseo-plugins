@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { agyCandidates, quotaWindows, readOfficialQuota, supportsUsagePrint } from '../server/antigravity-quota.ts';
-import { registerAntigravityUsage } from '../server/antigravity-usage.ts';
+import { registerAntigravityQuota } from '../server/antigravity-usage.ts';
+import { readAntigravityQuota, type AntigravityQuotaSnapshot } from '../shared/antigravity-quota.ts';
 
 const envelope = {
   status: 'SUCCESS',
@@ -63,25 +64,34 @@ test('official binary lookup ignores the retired hub and bridge paths', () => {
   assert.equal(candidates.includes('/retired/hub/agy'), false);
 });
 
-test('the usage source registers provider id antigravity and hides a failed read', async () => {
+test('quota RPC works alongside the built-in source, shares reads and caches real timestamps', async () => {
+  let now = Date.parse('2026-10-08T16:00:00Z');
   const calls: string[][] = [];
-  const run = async (_file: string, args: string[]) => {
+  const run = async (_file: string, args: string[], timeoutMs: number) => {
     calls.push(args);
     if (args[0] === '--version') return '1.3.1';
+    assert.equal(timeoutMs, 25000);
     return JSON.stringify(envelope);
   };
-  let registered: { id: string; label: string; discover: (scope: { kind: string }) => Promise<unknown>; fetch: () => Promise<{ status: string; windows?: { remainingPct: number; resetsAt: string | null }[] }> } | undefined;
-  registerAntigravityUsage({
-    registerUsageSource(source) { registered = source as typeof registered; },
-  }, { resolve: async () => '/official/agy', run });
-  assert.equal(registered?.id, 'antigravity');
-  assert.equal(registered?.label, 'Antigravity');
-  assert.deepEqual(await registered?.discover({ kind: 'global' }), [{ key: 'default', input: {} }]);
-  assert.deepEqual(await registered?.discover({ kind: 'session' }), []);
-  const report = await registered!.fetch();
-  assert.equal(report.status, 'available');
-  assert.equal(report.windows?.[0]?.remainingPct, 80);
-  assert.equal(report.windows?.[0]?.resetsAt, '2026-10-15T07:43:08.000Z');
+  let fetch!: () => Promise<AntigravityQuotaSnapshot>;
+  registerAntigravityQuota({
+    registerUsageSource() { throw new Error('Duplicate usage source: antigravity'); },
+    handle(contract, handler) {
+      assert.equal(contract, readAntigravityQuota);
+      fetch = () => handler({}, {}) as Promise<AntigravityQuotaSnapshot>;
+    },
+  }, { resolve: async () => '/official/agy', run }, () => now);
+  const [report, concurrent] = await Promise.all([fetch(), fetch()]);
+  assert.equal(concurrent, report);
+  assert.equal(calls.length, 2);
+  assert.equal(report.windows[0]?.remainingPct, 80);
+  assert.equal(report.windows[0]?.resetsAt, '2026-10-15T07:43:08.000Z');
+  now += 60000;
+  assert.equal(await fetch(), report);
+  assert.equal(calls.length, 2);
+  now += 240000;
+  assert.notEqual((await fetch()).fetchedAt, report.fetchedAt);
+  assert.equal(calls.length, 4);
   const old = await readOfficialQuota({
     resolve: async () => '/official/agy',
     run: async (_file, args) => {
@@ -91,4 +101,19 @@ test('the usage source registers provider id antigravity and hides a failed read
   });
   assert.equal(old, null);
   assert.ok(calls.some(args => args[0] === '-p' && args[1] === '/usage'));
+});
+
+test('failed quota reads are empty and retry after one minute', async () => {
+  let now = 0, calls = 0;
+  let fetch!: () => Promise<AntigravityQuotaSnapshot>;
+  registerAntigravityQuota({ handle(_contract, handler) { fetch = () => handler({}, {}) as Promise<AntigravityQuotaSnapshot>; } }, {
+    resolve: async () => { calls++; return null; },
+  }, () => now);
+  assert.deepEqual((await fetch()).windows, []);
+  now = 59999;
+  await fetch();
+  assert.equal(calls, 1);
+  now = 60000;
+  await fetch();
+  assert.equal(calls, 2);
 });

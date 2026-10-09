@@ -38,7 +38,7 @@ Plugins and patches run with the daemon user's privileges; read the source in th
 
 ## [Usage Glance](usage-glance)
 
-Shows a quota summary and breakdown for the current host in the top-right corner of the workspace, with providers pinnable to the top bar. The "Token usage" sidebar entry opens a standalone statistics page with multi-host totals, per-host filtering and a monthly model heatmap; common ranges refresh in the background every minute and cached data is shown first when opened. Usage follows each host's own Providers toggles and supports Codex, Claude Code, Kimi, Grok, Antigravity and Pi, grouped by provider, model, model vendor or host. Install or update it on each host separately. Plugin ID: `paseo-usage-glance`. Antigravity quota additionally requires the [`agy-quota`](agy-quota) patch below.
+Shows a quota summary and breakdown for the current host in the top-right corner of the workspace, with providers pinnable to the top bar. The "Token usage" sidebar entry opens a standalone statistics page with multi-host totals, per-host filtering and a monthly model heatmap; common ranges refresh in the background every minute and cached data is shown first when opened. Usage follows each host's own Providers toggles and supports Codex, Claude Code, Kimi, Grok, Antigravity and Pi, grouped by provider, model, model vendor or host. Install or update it on each host separately. Plugin ID: `paseo-usage-glance`. Antigravity quota falls back to the signed-in official agy CLI (1.1.11+) when Paseo returns no usable quota; the separate [`agy-quota`](agy-quota) patch is only needed for older Plan usage pages.
 
 ```bash
 paseo plugin add lalaze/paseo-plugins --path usage-glance

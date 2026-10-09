@@ -47,7 +47,7 @@ node patch.mjs apply
 paseo daemon restart
 ```
 
-在 Paseo 中打开 **Plan usage** 并点击 **Refresh**。新增 **Antigravity**（provider id `antigravity`，与官方 agy provider 相同），优先显示 Gemini 和 Claude/GPT 两组各自的周额度与 5 小时额度。进度条表示**已使用**百分比，与 Paseo 其他项目一致，例如剩余 80% 显示已用 20%。仅显示真实返回的重置时间。Paseo 0.11 起额度来自 usage source；已安装的额度速览插件会直接注册这份官方额度，本补丁仍供仍使用旧 quota-fetcher 的安装。
+在 Paseo 中打开 **Plan usage** 并点击 **Refresh**。新增 **Antigravity**（provider id `antigravity`，与官方 agy provider 相同），优先显示 Gemini 和 Claude/GPT 两组各自的周额度与 5 小时额度。进度条表示**已使用**百分比，与 Paseo 其他项目一致，例如剩余 80% 显示已用 20%。仅显示真实返回的重置时间。Paseo 0.11 起额度来自 usage source；额度速览插件优先读取内置源，缺少有效额度时通过独立 RPC 调用官方 agy，不重复注册同名源。本补丁仍供使用旧 quota-fetcher 的安装。
 
 `live` 只读取额度，不发送模型提示词，不消耗生成 token；它会打印当前账号的额度，但不输出账号标识或凭证。后台 `agy` 可能正常刷新它自己管理的登录状态。界面沿用 Paseo 原有缓存和 Refresh 行为。
 

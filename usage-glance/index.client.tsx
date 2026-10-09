@@ -12,6 +12,7 @@ import { createUsageQuery } from './client/query';
 import { followWorkspaces } from './client/workspaces';
 import { getHostRegistry } from './client/hosts';
 import { readHostIdentity } from './shared/hosts';
+import { readAntigravityQuota } from './shared/antigravity-quota';
 import { readWorkspaceConsumption } from './shared/consumption';
 import { headerSummary, isStale } from './shared/usage';
 import { ui } from './client/i18n';
@@ -21,7 +22,7 @@ import { NativeQuotaDialog } from './client/native-quota-dialog';
 
 export default function contribute(client: PluginClientContext) {
   const quotaDialog = createQuotaDialogController();
-  const query = createUsageQuery(client.paseo);
+  const query = createUsageQuery(client.paseo, () => client.rpc(readAntigravityQuota, {}));
   const consumption = createConsumptionQuery(query.client, (contract, input) => client.rpc(contract, input), client.paseo.providers);
   const workspaceClient = new QueryClient();
   workspaceClient.mount();
