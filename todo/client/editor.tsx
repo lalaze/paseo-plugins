@@ -116,7 +116,7 @@ export function NewTaskDialog(props: {
   const missing = !prompt.trim() ? ui('Write what needs doing', '先写下任务内容')
     : !repository ? ui('Choose a project', '先选项目')
       : !targetBranch ? ui('Choose a branch to merge into', '先选合并到的分支')
-        : !provider ? ui('Choose an agent', '先选 Agent')
+        : !collaborationDraft.enabled && !provider ? ui('Choose an agent', '先选 Agent')
           : collaborationProblem ? collaborationIssueText(collaborationProblem)
             : null;
   const ready = !missing;
@@ -222,14 +222,14 @@ export function NewTaskDialog(props: {
           disabled={branches.length === 0}
           open={picker === 'branch'} onOpenChange={open => setPicker(open ? 'branch' : null)} onChange={setTargetBranch}
         />
-        <Select
+        {collaborationDraft.enabled ? null : <Select
           label={ui('Agent', 'Agent')} icon="Bot" colors={colors}
           value={provider}
           options={models}
           placeholder={ui('No ready provider', '没有可用的供应商')}
           disabled={models.length === 0}
           open={picker === 'agent'} onOpenChange={open => setPicker(open ? 'agent' : null)} onChange={setProvider}
-        />
+        />}
       </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, paddingHorizontal: 20, paddingVertical: 14, borderTopWidth: 1, borderTopColor: outline(colors) }}>
         <Text numberOfLines={1} style={{ flex: 1, color: colors.foregroundMuted, fontSize: 12 }}>{missing ?? ''}</Text>
