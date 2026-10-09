@@ -22,7 +22,6 @@ function fake(): ConnectedAgents & { closed: number } {
     catalog: async () => unavailableCatalog('stub'),
     open: async () => { throw new Error('not used'); },
     control: async () => { throw new Error('not used'); },
-    resync: async () => { throw new Error('not used'); },
     status: async () => { throw new Error('not used'); },
     async close() { this.closed += 1; },
   };

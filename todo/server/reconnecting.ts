@@ -72,10 +72,6 @@ export class ReconnectingAgents implements AgentPort {
     return (await this.get()).control(input);
   }
 
-  async resync(id: string) {
-    return (await this.get()).resync(id);
-  }
-
   async status() {
     return (await this.get()).status();
   }

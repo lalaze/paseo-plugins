@@ -161,7 +161,7 @@ export const collaborationControlSchema = z.enum(['pause', 'resume', 'cancel', '
 export type CollaborationControlAction = z.infer<typeof collaborationControlSchema>;
 
 /** Commands the adapter may send. Settings and prompt saves are intentionally absent. */
-export const collaborationWireCommands = ['status', 'conversation.open', 'conversation.resync', 'run.control'] as const;
+export const collaborationWireCommands = ['status', 'conversation.open', 'run.control'] as const;
 export type CollaborationWireCommand = (typeof collaborationWireCommands)[number];
 
 /** Per-host new-task defaults. A missing key has never been saved; `null` is an explicit Off. */

@@ -71,10 +71,6 @@ export class PaseoTodoGateway implements AgentPort, CollaborationPort {
     return this.collaboration().control(input);
   }
 
-  resync(id: string) {
-    return this.collaboration().resync(id);
-  }
-
   status() {
     return this.collaboration().status();
   }

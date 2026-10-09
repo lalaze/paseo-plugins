@@ -49,7 +49,6 @@ export interface CollaborationPort {
   catalog(): Promise<CollaborationCatalog>;
   open(input: CollaborationOpenInput): Promise<OpenedCollaboration>;
   control(input: { id: string; action: CollaborationControlAction }): Promise<CollaborationState>;
-  resync(id: string): Promise<CollaborationState>;
   status(): Promise<CollaborationState>;
 }
 
@@ -309,10 +308,6 @@ export class PaseoCollaborationPort implements CollaborationPort {
 
   async control(input: { id: string; action: CollaborationControlAction }): Promise<CollaborationState> {
     return this.wire.command('run.control', input);
-  }
-
-  async resync(id: string): Promise<CollaborationState> {
-    return this.wire.command('conversation.resync', { id });
   }
 
   async status(): Promise<CollaborationState> {

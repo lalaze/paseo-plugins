@@ -784,7 +784,7 @@ function collaborationSnapshot(mode: TaskCollaboration['mode'] = 'full'): TaskCo
   });
 }
 
-/** In-memory host run. Open resets the live run; resync and control report that run, not a string the engine merely stores. */
+/** In-memory host run. Open resets the live run; status and control report that run, not a string the engine merely stores. */
 class CollaborationHost {
   phase: string | null = null;
   control = 'running';
@@ -796,7 +796,7 @@ class CollaborationHost {
   failOpen = false;
   readonly opens: Array<{ requestId: string; workspaceId: string; goal?: string; fresh?: boolean; collaboration: TaskCollaboration }> = [];
   readonly controls: Array<{ id: string; action: string }> = [];
-  readonly resyncs: string[] = [];
+  reads = 0;
   readonly events: string[] = [];
 
   readonly port: CollaborationPort = {
@@ -830,11 +830,13 @@ class CollaborationHost {
       }
       return this.state(this.conversationForRun(input.id));
     },
-    resync: async id => {
-      this.resyncs.push(id);
-      return this.state(id);
+    status: async () => {
+      this.reads += 1;
+      if (!this.opens.length) return this.state('chat-none');
+      // Like the host, every conversation is listed, newest first.
+      const all = this.opens.map(item => this.state(`chat-${item.requestId}`).conversations[0]).reverse();
+      return { ...this.state(`chat-${this.opens.at(-1)!.requestId}`), conversations: all };
     },
-    status: async () => this.state(this.opens.at(-1) ? `chat-${this.opens.at(-1)?.requestId}` : 'chat-none'),
   };
 
   private opened(requestId: string, workspaceId: string, collaboration: TaskCollaboration): OpenedCollaboration {
@@ -901,8 +903,8 @@ describe('collaboration lifecycle', () => {
       const started = new Promise<void>(resolve => { entered = resolve; });
       let release!: () => void;
       const gate = new Promise<void>(resolve => { release = resolve; });
-      const resync = host.port.resync;
-      host.port.resync = async id => { entered(); await gate; return resync(id); };
+      const status = host.port.status;
+      host.port.status = async () => { entered(); await gate; return status(); };
       const reading = engine.read(task.id);
       await started;
       let closed = false;
@@ -1158,6 +1160,7 @@ describe('collaboration lifecycle', () => {
       assert.equal(box.created.length, 0);
       await engine.dispose();
 
+      const readsBeforeRestart = host.reads;
       const restarted = await box.open(dir);
       await restarted.recover();
       const again = await settled(restarted, started.id);
@@ -1165,7 +1168,7 @@ describe('collaboration lifecycle', () => {
       assert.equal(again.operationId, started.operationId);
       assert.equal(again.collaborationConversationId, started.collaborationConversationId);
       assert.equal(host.opens.length, 1);
-      assert.ok(host.resyncs.includes(started.collaborationConversationId ?? ''));
+      assert.ok(host.reads > readsBeforeRestart);
       await restarted.dispose();
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1493,7 +1496,7 @@ describe('collaboration lifecycle', () => {
     });
   });
 
-  it('throttles background collaboration syncs while a read always resyncs', async () => {
+  it('throttles background collaboration syncs while a read always syncs', async () => {
     const host = new CollaborationHost();
     let tick = 0;
     const box = harness({ collaboration: host.port, clock: () => tick });
@@ -1505,20 +1508,20 @@ describe('collaboration lifecycle', () => {
       await engine.startTask(task.id);
       await waitFor(() => engine.list().tasks[0]?.status === 'running');
       await new Promise(resolve => setTimeout(resolve, 20));
-      const synced = host.resyncs.length;
-      // Inside the window, board polls do not resync.
+      const synced = host.reads;
+      // Inside the window, board polls do not read the host.
       engine.list();
       engine.list();
       await new Promise(resolve => setTimeout(resolve, 20));
-      assert.equal(host.resyncs.length, synced);
+      assert.equal(host.reads, synced);
       // A read's required sync always runs.
       await engine.read(task.id);
-      assert.equal(host.resyncs.length, synced + 1);
-      // Past the window, a board poll resyncs again.
+      assert.equal(host.reads, synced + 1);
+      // Past the window, a board poll reads again.
       tick += 2000;
       engine.list();
       await new Promise(resolve => setTimeout(resolve, 20));
-      assert.equal(host.resyncs.length, synced + 2);
+      assert.equal(host.reads, synced + 2);
     });
   });
 });

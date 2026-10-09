@@ -1088,9 +1088,7 @@ export class TodoEngine {
     let unlinkedAgentId: string | null = null;
     if (!runId && (task.collaborationConversationId || task.operationId)) {
       try {
-        const state = task.collaborationConversationId
-          ? await port.resync(task.collaborationConversationId)
-          : await port.status();
+        const state = await port.status();
         if (state.error) return false;
         const conversation = conversationOf(state, task);
         runId = conversation?.run?.id ?? null;
@@ -1106,7 +1104,7 @@ export class TodoEngine {
         catch {
           // A host rejects cancellation of an already finished run. Read its actual state
           // instead of treating an error containing the word "canceled" as proof.
-          state = task.collaborationConversationId ? await port.resync(task.collaborationConversationId) : await port.status();
+          state = await port.status();
         }
         if (state.error) return false;
         const run = state.conversations.find(entry => entry.run?.id === runId)?.run;
@@ -1231,12 +1229,14 @@ export class TodoEngine {
     const conversationId = task.collaborationConversationId;
     let state: CollaborationState;
     try {
-      state = await port.resync(conversationId);
+      // Read-only. The host's `conversation.resync` is the user's redelivery action: it clears the
+      // notice key, so polling with it sent the main agent the same status notice every tick.
+      state = await port.status();
     } catch (error) {
       if (options?.required) throw todoError('gateway-unavailable', errorText(error));
       return;
     }
-    // A retry or continue may have replaced this conversation while the resync was in flight.
+    // A retry or continue may have replaced this conversation while the read was in flight.
     await this.lockTask(id, () => {
       const current = this.options.store.tryGet(id);
       if (!current?.collaboration || current.collaborationConversationId !== conversationId) return;
@@ -1309,7 +1309,7 @@ export class TodoEngine {
     if (task.status === 'canceling' || task.status === 'canceled' || task.status === 'merged' || task.status === 'merging' || task.status === 'draft' || task.status === 'queued') return;
     const conversation = conversationOf(state, task);
     if (!conversation) {
-      // Launch has not stored a conversation yet. An older resync must not fail that new operation.
+      // Launch has not stored a conversation yet. An older read must not fail that new operation.
       if (task.collaborationConversationId && (isExecution(task.status) || task.status === 'awaiting_review' || task.status === 'merge_failed')) {
         await this.write({
           ...task, status: 'needs_check', errorCode: 'needs-check-missing-session', errorDetail: null,
