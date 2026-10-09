@@ -28,7 +28,7 @@ describe('task prompt translation', () => {
   });
 
   it('reads the translate plugin bridge only when it is open and complete', () => {
-    const key = Symbol.for('lalaze.paseo-translate.registry.v1');
+    const key = Symbol.for('lalaze.paseo-translate.bridge.v1');
     const holder = globalThis as { [key]?: unknown };
     const previous = holder[key];
     try {

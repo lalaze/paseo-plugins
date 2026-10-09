@@ -31,6 +31,8 @@ type HighlightConstructor = new (...ranges: Range[]) => unknown;
 type DraftUndo = { editor: HTMLElement; before: string; after: string };
 
 const REGISTRY_KEY = Symbol.for('lalaze.paseo-translate.registry.v1');
+// Separate from the overlay registry. Another host can keep an older registry open, and that object has no translate method.
+const BRIDGE_KEY = Symbol.for('lalaze.paseo-translate.bridge.v1');
 const HIGHLIGHT_NAME = 'paseo-translate-selection';
 const STRICT_ENGLISH_KEY = 'lalaze.paseo-translate.strict-english.v1';
 const DISCOVERED_MODEL_CONTROLS = new WeakSet<HTMLElement>();
@@ -610,18 +612,61 @@ function createRegistry(): Registry {
   };
 }
 
+type Bridge = {
+  readonly closed: boolean;
+  available(serverId: string): boolean;
+  translate(serverId: string, text: string, target?: TargetLanguage): Promise<TranslationResult> | null;
+  subscribe(listener: () => void): () => void;
+  set(serverId: string, runtime: Runtime): () => void;
+};
+
+function createBridge(): Bridge {
+  const runtimes = new Map<string, Runtime>();
+  const listeners = new Set<() => void>();
+  let closed = false;
+  const notify = () => { for (const listener of listeners) listener(); };
+  return {
+    get closed() { return closed; },
+    available: serverId => runtimes.has(serverId),
+    translate(serverId, text, target = 'auto') {
+      const runtime = runtimes.get(serverId);
+      return runtime ? runtime.translate(text, target) : null;
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+    set(serverId, runtime) {
+      if (closed) throw new Error('Translation client registry is closed');
+      runtimes.set(serverId, runtime);
+      notify();
+      return () => {
+        if (runtimes.get(serverId) === runtime) runtimes.delete(serverId);
+        notify();
+        if (!runtimes.size && !closed) closed = true;
+      };
+    },
+  };
+}
+
+function openBridge(): Bridge {
+  const shared = globalThis as typeof globalThis & { [BRIDGE_KEY]?: Bridge };
+  if (!shared[BRIDGE_KEY] || shared[BRIDGE_KEY].closed) shared[BRIDGE_KEY] = createBridge();
+  return shared[BRIDGE_KEY];
+}
+
 /** The page-wide bridge paseo-translate registers. Other plugins call it instead of this plugin's RPC. */
-export function translationBridge(): Registry | null {
-  const registry = (globalThis as typeof globalThis & { [REGISTRY_KEY]?: Registry })[REGISTRY_KEY];
-  if (!registry || registry.closed) return null;
-  return registry;
+export function translationBridge(): Bridge | null {
+  const bridge = (globalThis as typeof globalThis & { [BRIDGE_KEY]?: Bridge })[BRIDGE_KEY];
+  if (!bridge || bridge.closed) return null;
+  return bridge;
 }
 
 export function registerTranslationClient(serverId: string, client: PluginClientContext) {
   const shared = globalThis as typeof globalThis & { [REGISTRY_KEY]?: Registry };
   const registry = !shared[REGISTRY_KEY] || shared[REGISTRY_KEY].closed ? shared[REGISTRY_KEY] = createRegistry() : shared[REGISTRY_KEY];
   const contracts = settingsRpc(translationSettings.id);
-  return registry.register(serverId, {
+  const runtime: Runtime = {
     translate: async (text, target) => {
       const saved = await client.rpc(contracts.read, {});
       if (saved.status !== 'ready') throw new Error(ui(`Unable to read Translation API settings: ${saved.error}`, `翻译 API 设置无法读取：${saved.error}`));
@@ -644,5 +689,13 @@ export function registerTranslationClient(serverId: string, client: PluginClient
       if (update.kind === 'upsert') handler(update.agent.id, `${update.agent.provider}/${update.agent.model ?? ''}`);
       else handler(update.agentId, null);
     }),
-  });
+  };
+  const removeBridge = openBridge().set(serverId, runtime);
+  try {
+    const removeOverlay = registry.register(serverId, runtime);
+    return () => { removeBridge(); removeOverlay(); };
+  } catch (error) {
+    removeBridge();
+    throw error;
+  }
 }

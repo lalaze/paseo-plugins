@@ -1,5 +1,5 @@
 /** Same symbol paseo-translate publishes on the page. This plugin only reads it. */
-const TRANSLATION_BRIDGE_KEY = Symbol.for('lalaze.paseo-translate.registry.v1');
+const TRANSLATION_BRIDGE_KEY = Symbol.for('lalaze.paseo-translate.bridge.v1');
 
 export type TaskTranslation = { translation: string };
 

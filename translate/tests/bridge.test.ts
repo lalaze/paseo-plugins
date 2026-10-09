@@ -27,12 +27,35 @@ function client(onTranslate: (text: string) => void): PluginClientContext {
   } as unknown as PluginClientContext;
 }
 
-test('another plugin can translate through the host bridge, and a missing host cannot', async () => {
-  const key = Symbol.for('lalaze.paseo-translate.registry.v1');
-  const previous = (globalThis as { [key]?: unknown })[key];
-  const seen: string[] = [];
-  const unregister = registerTranslationClient('srv_a', client(text => seen.push(text)));
+function withCleanBridge(run: () => Promise<void> | void) {
+  const registryKey = Symbol.for('lalaze.paseo-translate.registry.v1');
+  const bridgeKey = Symbol.for('lalaze.paseo-translate.bridge.v1');
+  const holder = globalThis as typeof globalThis & { [registryKey]?: unknown; [bridgeKey]?: unknown };
+  const previousRegistry = holder[registryKey];
+  const previousBridge = holder[bridgeKey];
+  delete holder[registryKey];
+  delete holder[bridgeKey];
+  const finish = () => {
+    if (previousRegistry === undefined) delete holder[registryKey];
+    else holder[registryKey] = previousRegistry;
+    if (previousBridge === undefined) delete holder[bridgeKey];
+    else holder[bridgeKey] = previousBridge;
+  };
   try {
+    const result = run();
+    if (result && typeof (result as Promise<void>).then === 'function') return (result as Promise<void>).finally(finish);
+    finish();
+  } catch (error) {
+    finish();
+    throw error;
+  }
+  return undefined;
+}
+
+test('another plugin can translate through the host bridge, and a missing host cannot', async () => {
+  await withCleanBridge(async () => {
+    const seen: string[] = [];
+    const unregister = registerTranslationClient('srv_a', client(text => seen.push(text)));
     const bridge = translationBridge();
     assert.ok(bridge);
     assert.equal(bridge.available('srv_a'), true);
@@ -47,9 +70,27 @@ test('another plugin can translate through the host bridge, and a missing host c
     stop();
     assert.equal(notices, 1);
     assert.equal(translationBridge(), null);
-  } finally {
-    const holder = globalThis as { [key]?: unknown };
-    if (previous === undefined) delete holder[key];
-    else holder[key] = previous;
-  }
+  });
+});
+
+test('an older overlay registry does not hide the host bridge', async () => {
+  await withCleanBridge(async () => {
+    const registryKey = Symbol.for('lalaze.paseo-translate.registry.v1');
+    let overlayHosts: string[] = [];
+    (globalThis as typeof globalThis & { [registryKey]?: unknown })[registryKey] = {
+      closed: false,
+      register: (serverId: string) => {
+        overlayHosts = [...overlayHosts, serverId];
+        return () => { overlayHosts = overlayHosts.filter(id => id !== serverId); };
+      },
+    };
+    const unregister = registerTranslationClient('srv_a', client(() => {}));
+    assert.deepEqual(overlayHosts, ['srv_a']);
+    assert.equal(translationBridge()?.available('srv_a'), true);
+    const translated = await translationBridge()?.translate('srv_a', '你好', 'auto');
+    assert.equal(translated?.translation, 'Fix the login');
+    unregister();
+    assert.deepEqual(overlayHosts, []);
+    assert.equal(translationBridge(), null);
+  });
 });
