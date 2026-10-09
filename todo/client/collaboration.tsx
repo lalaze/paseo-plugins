@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import {
@@ -203,6 +203,7 @@ export function CollaborationForm(props: {
   const selectedMode = draft.enabled ? draft.mode : 'off';
   const setMode = (mode: 'off' | CollaborationMode) => {
     if (disabled) return;
+    if (mode !== 'full' && picker?.startsWith('director')) setPicker(null);
     if (mode === 'off') props.onChange({ ...draft, enabled: false });
     else props.onChange({ ...draft, enabled: true, mode });
   };
@@ -242,7 +243,7 @@ export function CollaborationForm(props: {
     const fallback = role === 'director' ? ui('Use worker for the conversation', '会话使用执行配置') : ui('Reviewed by the lead agent', '由主 Agent 审核');
     if (optional) options.unshift({ value: '', label: fallback });
     return <View key={role} style={{ gap: 6 }}>
-      <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: '600' }}>{ui(...COLLABORATION_ROLE_LABELS[role])}</Text>
+      <FieldLabel colors={colors}>{ui(...COLLABORATION_ROLE_LABELS[role])}</FieldLabel>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, zIndex: picker?.startsWith(role) ? 20 : 1 }}>
         <Select
           label={ui(...COLLABORATION_ROLE_LABELS[role])} icon="Bot" colors={colors}
@@ -263,13 +264,13 @@ export function CollaborationForm(props: {
       </View>
     </View>;
   };
-  return <View style={{ gap: 14 }}>
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+  return <View style={{ gap: 16 }}>
+    <View style={{ flexDirection: 'row', alignSelf: 'flex-start', padding: 3, borderRadius: 12, backgroundColor: colors.surface2, borderWidth: 1, borderColor: outline(colors), opacity: disabled ? 0.5 : 1 }}>
       {modes.map(mode => {
         const active = selectedMode === mode;
         const label = ui(...collaborationModeLabel(mode));
-        return <Pressable key={mode} accessibilityRole="button" accessibilityState={{ selected: active }} disabled={disabled} onPress={() => setMode(mode)} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, borderWidth: 1, borderColor: active ? colors.foreground : outline(colors), backgroundColor: active ? tint(colors.foreground, 0.12) : 'transparent', opacity: disabled ? 0.5 : 1 }}>
-          <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: '600' }}>{label}</Text>
+        return <Pressable key={mode} accessibilityRole="button" accessibilityState={{ selected: active }} disabled={disabled} onPress={() => setMode(mode)} style={({ pressed }) => ({ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 9, backgroundColor: active ? colors.foreground : pressed ? tint(colors.foreground, 0.08) : 'transparent' })}>
+          <Text style={{ color: active ? colors.surface0 : colors.foregroundMuted, fontSize: 12, fontWeight: active ? '700' : '600' }}>{label}</Text>
         </Pressable>;
       })}
     </View>
@@ -282,9 +283,8 @@ export function CollaborationForm(props: {
     </Text>
     {warning ? <Text style={{ color: colors.statusWarning, fontSize: 12, lineHeight: 18 }}>{warning}</Text> : null}
     {draft.enabled ? <>
-      <View style={{ gap: 10, zIndex: modelsOpen ? 5 : 0 }}>
-        <SectionTitle colors={colors}>{ui('Agents', '协作 Agent')}</SectionTitle>
-        {roleRow('director', draft.mode === 'execute_review')}
+      <View style={{ gap: 12, zIndex: modelsOpen ? 5 : 0 }}>
+        {draft.mode === 'full' ? roleRow('director', false) : null}
         {roleRow('worker', false)}
         {roleRow('reviewer', draft.mode === 'full')}
         {draft.mode === 'execute_review' ? <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui('The reviewer can use the same model as the worker, but it is a separate agent.', '审核可以和执行用同一个模型，但必须是独立的 Agent。')}</Text> : null}
@@ -311,24 +311,35 @@ export function CollaborationForm(props: {
       </View>
       <View style={{ gap: 8, zIndex: limitsOpen ? 5 : 0 }}>
         <SectionTitle colors={colors}>{ui('Limits', '限制')}</SectionTitle>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, zIndex: picker === 'rework' || picker === 'run' || picker === 'turn' ? 20 : 1 }}>
-          <Select label={ui('Reworks', '返工')} icon="RotateCcw" colors={colors} value={String(draft.maxReworks)} options={Array.from({ length: 11 }, (_, count) => ({ value: String(count), label: String(count) }))} placeholder="2" disabled={disabled} open={picker === 'rework'} onOpenChange={open => setPicker(open ? 'rework' : null)} onChange={value => props.onChange({ ...draft, maxReworks: Number(value) })} />
-          <Select label={ui('Time budget', '时间预算')} icon="Timer" colors={colors} value={String(draft.runTimeoutMs)} options={withChoice(draft.runTimeoutMs, RUN_TIMEOUTS).map(ms => ({ value: String(ms), label: durationLabel(ms, 'h') }))} placeholder={durationLabel(draft.runTimeoutMs, 'h')} disabled={disabled} open={picker === 'run'} onOpenChange={open => setPicker(open ? 'run' : null)} onChange={value => props.onChange({ ...draft, runTimeoutMs: Number(value) })} />
-          <Select label={ui('Step limit', '单步时限')} icon="Timer" colors={colors} value={String(draft.turnTimeoutMs)} options={withChoice(draft.turnTimeoutMs, TURN_TIMEOUTS).map(ms => ({ value: String(ms), label: durationLabel(ms, 'm') }))} placeholder={durationLabel(draft.turnTimeoutMs, 'm')} disabled={disabled} open={picker === 'turn'} onOpenChange={open => setPicker(open ? 'turn' : null)} onChange={value => props.onChange({ ...draft, turnTimeoutMs: Number(value) })} />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16, zIndex: picker === 'rework' || picker === 'run' || picker === 'turn' ? 20 : 1 }}>
+          <View style={{ gap: 6 }}>
+            <FieldLabel colors={colors}>{ui('Reworks', '返工')}</FieldLabel>
+            <Select label={ui('Reworks', '返工')} icon="RotateCcw" colors={colors} value={String(draft.maxReworks)} options={Array.from({ length: 11 }, (_, count) => ({ value: String(count), label: String(count) }))} placeholder="2" disabled={disabled} open={picker === 'rework'} onOpenChange={open => setPicker(open ? 'rework' : null)} onChange={value => props.onChange({ ...draft, maxReworks: Number(value) })} />
+          </View>
+          <View style={{ gap: 6 }}>
+            <FieldLabel colors={colors}>{ui('Time budget', '时间预算')}</FieldLabel>
+            <Select label={ui('Time budget', '时间预算')} icon="Timer" colors={colors} value={String(draft.runTimeoutMs)} options={withChoice(draft.runTimeoutMs, RUN_TIMEOUTS).map(ms => ({ value: String(ms), label: durationLabel(ms, 'h') }))} placeholder={durationLabel(draft.runTimeoutMs, 'h')} disabled={disabled} open={picker === 'run'} onOpenChange={open => setPicker(open ? 'run' : null)} onChange={value => props.onChange({ ...draft, runTimeoutMs: Number(value) })} />
+          </View>
+          <View style={{ gap: 6 }}>
+            <FieldLabel colors={colors}>{ui('Step limit', '单步时限')}</FieldLabel>
+            <Select label={ui('Step limit', '单步时限')} icon="Timer" colors={colors} value={String(draft.turnTimeoutMs)} options={withChoice(draft.turnTimeoutMs, TURN_TIMEOUTS).map(ms => ({ value: String(ms), label: durationLabel(ms, 'm') }))} placeholder={durationLabel(draft.turnTimeoutMs, 'm')} disabled={disabled} open={picker === 'turn'} onOpenChange={open => setPicker(open ? 'turn' : null)} onChange={value => props.onChange({ ...draft, turnTimeoutMs: Number(value) })} />
+          </View>
         </View>
-        <TextInput
-          value={String(draft.maxAttempts)}
-          editable={!disabled}
-          onChangeText={value => {
-            const digits = value.replace(/\D/g, '');
-            if (!digits) return;
-            props.onChange({ ...draft, maxAttempts: Math.min(200, Math.max(3, Number(digits))) });
-          }}
-          keyboardType="number-pad"
-          accessibilityLabel={ui('Attempts per round', '每轮最多操作次数')}
-          style={{ height: 34, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 12, outlineStyle: 'solid', outlineWidth: 0 }}
-        />
-        <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{ui('Attempts per round', '每轮最多操作次数')}</Text>
+        <View style={{ gap: 6, alignSelf: 'flex-start' }}>
+          <FieldLabel colors={colors}>{ui('Attempts per round', '每轮最多操作次数')}</FieldLabel>
+          <TextInput
+            value={String(draft.maxAttempts)}
+            editable={!disabled}
+            onChangeText={value => {
+              const digits = value.replace(/\D/g, '');
+              if (!digits) return;
+              props.onChange({ ...draft, maxAttempts: Math.min(200, Math.max(3, Number(digits))) });
+            }}
+            keyboardType="number-pad"
+            accessibilityLabel={ui('Attempts per round', '每轮最多操作次数')}
+            style={{ width: 120, height: 34, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 12, outlineStyle: 'solid', outlineWidth: 0 }}
+          />
+        </View>
         {draft.mode === 'full' ? <CheckRow colors={colors} checked={draft.requirePlanApproval} disabled={disabled} label={ui('Require plan approval', '要求批准方案')} onPress={() => props.onChange({ ...draft, requirePlanApproval: !draft.requirePlanApproval })} /> : null}
         <CheckRow colors={colors} checked={draft.preserved.allowDirectorSelection} disabled={disabled} label={ui('Let the lead agent choose the worker profile', '允许主 Agent 选择执行配置')} onPress={() => patchPreserved({ allowDirectorSelection: !draft.preserved.allowDirectorSelection })} />
       </View>
@@ -355,6 +366,11 @@ export function CollaborationForm(props: {
   </View>;
 }
 
+/** The visible name above a control. A Select pill only shows its value, so this is what tells the fields apart. */
+function FieldLabel(props: { children: ReactNode; colors: Colors }) {
+  return <Text style={{ color: props.colors.foregroundMuted, fontSize: 11, fontWeight: '600', letterSpacing: 0.3 }}>{props.children}</Text>;
+}
+
 function fieldStyle(colors: Colors) {
   return { height: 34, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 12, outlineStyle: 'solid' as const, outlineWidth: 0 };
 }
@@ -370,8 +386,8 @@ function Disclosure(props: { colors: Colors; open: boolean; disabled?: boolean; 
 function CheckRow(props: { colors: Colors; checked: boolean; disabled?: boolean; label: string; onPress(): void }) {
   const { colors } = props;
   return <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: props.checked, disabled: props.disabled }} disabled={props.disabled} onPress={props.onPress} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, opacity: props.disabled ? 0.5 : 1 }}>
-    <View style={{ width: 16, height: 16, borderRadius: 4, borderWidth: 1, borderColor: outline(colors), alignItems: 'center', justifyContent: 'center', backgroundColor: props.checked ? colors.foreground : 'transparent' }}>
-      {props.checked ? <Icon name="Check" size={12} color={colors.surface0} /> : null}
+    <View style={{ width: 18, height: 18, borderRadius: 5, borderWidth: 1, borderColor: outline(colors), alignItems: 'center', justifyContent: 'center', backgroundColor: props.checked ? colors.foreground : 'transparent' }}>
+      {props.checked ? <Icon name="Check" size={13} color={colors.surface0} /> : null}
     </View>
     <Text style={{ flex: 1, color: colors.foreground, fontSize: 12 }}>{props.label}</Text>
   </Pressable>;

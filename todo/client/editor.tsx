@@ -54,6 +54,7 @@ export function NewTaskDialog(props: {
   const models = catalog?.providers.flatMap(entry => entry.models.map(model => ({ value: `${entry.provider}/${model.id}`, label: model.label, group: entry.label }))) ?? [];
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [promptFocused, setPromptFocused] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState<string | null>(null);
   const [undo, setUndo] = useState<PromptUndo | null>(null);
@@ -150,28 +151,30 @@ export function NewTaskDialog(props: {
   };
   return <Backdrop onClose={props.onClose} align="center">
     <View style={{ width: Math.min(640, props.width - 24), maxHeight: '90%', borderRadius: 16, borderWidth: 1, borderColor: outline(colors), backgroundColor: colors.surface0 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 18, paddingBottom: 4 }}>
-        <Text style={{ flex: 1, color: colors.foregroundMuted, fontSize: 13, fontWeight: '600' }}>{ui('New task', '新建任务')}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel={ui('Close', '关闭')} onPress={props.onClose} style={{ padding: 4 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: outline(colors) }}>
+        <Text style={{ flex: 1, color: colors.foreground, fontSize: 15, fontWeight: '700' }}>{ui('New task', '新建任务')}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={ui('Close', '关闭')} onPress={props.onClose} style={{ padding: 6, borderRadius: 8 }}>
           <Icon name="X" size={16} color={colors.foregroundMuted} />
         </Pressable>
       </View>
-      <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16, gap: 14 }}>
+      <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 16, gap: 16 }}>
         <TextInput
           value={title}
           onChangeText={setTitle}
           autoFocus
           placeholder={ui('Task title (optional)', '任务标题（可不填）')}
-          placeholderTextColor={tint(colors.foregroundMuted, 0.55)}
+          placeholderTextColor={tint(colors.foregroundMuted, 0.7)}
           style={{ color: colors.foreground, fontSize: 19, fontWeight: '700', paddingVertical: 6, outlineStyle: 'solid', outlineWidth: 0 }}
         />
         <TextInput
           value={prompt}
           onChangeText={value => { setPrompt(value); setTranslateError(null); }}
+          onFocus={() => setPromptFocused(true)}
+          onBlur={() => setPromptFocused(false)}
           multiline
           placeholder={ui('Describe what needs doing. The agent gets its own worktree and branch, and nothing merges until you accept it.', '写下要做什么。Agent 会拿到独立的工作树和分支，你验收之前不会合并。')}
-          placeholderTextColor={tint(colors.foregroundMuted, 0.55)}
-          style={{ minHeight: 150, padding: 12, borderRadius: 12, backgroundColor: colors.surface1, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 13, lineHeight: 19, textAlignVertical: 'top', outlineStyle: 'solid', outlineWidth: 0 }}
+          placeholderTextColor={tint(colors.foregroundMuted, 0.7)}
+          style={{ minHeight: 150, padding: 12, borderRadius: 12, backgroundColor: colors.surface1, borderWidth: 1, borderColor: promptFocused ? tint(colors.foreground, 0.3) : outline(colors), color: colors.foreground, fontSize: 13, lineHeight: 19, textAlignVertical: 'top', outlineStyle: 'solid', outlineWidth: 0 }}
         />
         {/* The translate plugin can connect after this dialog opens. The click reads the live bridge, so the button stays on screen. */}
         <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
@@ -186,7 +189,7 @@ export function NewTaskDialog(props: {
             disabled={translating || props.busy || (!undoable && !prompt.trim())}
           />
         </View>
-        {!props.scope && projects.length === 0 ? <TextInput value={repository} onChangeText={setRepository} placeholder={ui('/path/to/repository', '/仓库/路径')} placeholderTextColor={tint(colors.foregroundMuted, 0.55)} autoCapitalize="none" autoCorrect={false}
+        {!props.scope && projects.length === 0 ? <TextInput value={repository} onChangeText={setRepository} placeholder={ui('/path/to/repository', '/仓库/路径')} placeholderTextColor={tint(colors.foregroundMuted, 0.7)} autoCapitalize="none" autoCorrect={false}
           style={{ height: 34, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 12, outlineStyle: 'solid', outlineWidth: 0 }} /> : null}
         <View style={{ gap: 8 }}>
           <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: '600' }}>{ui('Collaboration', '协作')}</Text>

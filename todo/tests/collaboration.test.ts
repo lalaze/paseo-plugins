@@ -538,7 +538,7 @@ describe('collaboration drafts', () => {
     assert.deepEqual(result.collaboration?.settings.verificationCommands[0].args, [' test name ', '', 'path with spaces']);
   });
 
-  it('round-trips a saved snapshot, including execute + review with its own lead', () => {
+  it('round-trips a saved snapshot, and execute + review uses the worker as the lead', () => {
     const rich = taskCollaborationSchema.parse({
       mode: 'full',
       settings: {
@@ -570,11 +570,22 @@ describe('collaboration drafts', () => {
     assert.deepEqual(canonical(twice.collaboration as TaskCollaboration), canonical(once.collaboration as TaskCollaboration));
 
     const review = taskCollaborationSchema.parse({ mode: 'execute_review', settings: rich.settings });
-    const reviewSnap = snapshotFromDraft(draftFromCollaboration(review));
+    const reviewDraft = draftFromCollaboration(review);
+    assert.ok(reviewDraft.director);
+    const reviewSnap = snapshotFromDraft(reviewDraft);
     assert.equal(reviewSnap.error, null);
-    assert.equal(reviewSnap.collaboration?.settings.directorProfileId, 'director');
+    assert.equal(reviewSnap.collaboration?.settings.directorProfileId, 'worker');
+    assert.equal(reviewSnap.collaboration?.settings.workerProfileId, 'worker');
+    assert.equal(reviewSnap.collaboration?.settings.reviewerProfileId, 'reviewer');
+    assert.equal(reviewSnap.collaboration?.settings.profiles.some(profile => profile.id === 'director'), false);
     assert.equal(reviewSnap.collaboration?.settings.requirePlanApproval, true);
-    assert.deepEqual(canonical(reviewSnap.collaboration as TaskCollaboration), canonical(review));
+
+    reviewDraft.preserved.categoryOverrides.backend = reviewDraft.ids.director;
+    const kept = snapshotFromDraft(reviewDraft);
+    assert.equal(kept.error, null);
+    assert.equal(kept.collaboration?.settings.directorProfileId, 'worker');
+    assert.equal(kept.collaboration?.settings.categoryOverrides.backend, 'director');
+    assert.equal(kept.collaboration?.settings.profiles.find(profile => profile.id === 'director')?.provider, 'stub/design');
   });
 
   it('requires a reviewer only for execute + review, and a lead for the full flow', () => {
@@ -674,7 +685,11 @@ describe('collaboration drafts', () => {
     const draft = draftFromCollaboration(taskCollaborationSchema.parse({ mode: 'execute_review', settings: settingsOf(true) }));
     assert.ok(draft.director);
     draft.director = { ...draft.director, provider: 'other' };
+    assert.deepEqual(foreignProviderIds(draft, ['stub']), []);
+    assert.ok(draft.worker);
+    draft.worker = { ...draft.worker, provider: 'other' };
     assert.deepEqual(foreignProviderIds(draft, ['stub']), ['other']);
+    draft.worker = { ...draft.worker, provider: 'stub' };
     draft.mode = 'full';
     assert.deepEqual(foreignProviderIds(draft, ['stub']), ['other']);
   });

@@ -382,6 +382,12 @@ export function inheritCollaborationDraft(
   return { ...seeded, enabled: false, prompts: mergePromptFields(catalog.settings.rolePrompts, catalog.rolePrompts) };
 }
 
+function leadProfileReferenced(draft: CollaborationDraft): boolean {
+  const id = draft.ids.director;
+  return Object.values(draft.preserved.categoryOverrides).includes(id)
+    || Object.values(draft.preserved.taskOverrides).includes(id);
+}
+
 function complete(selection: RoleSelection | null): selection is RoleSelection {
   return Boolean(selection && selection.provider.trim() && selection.model.trim());
 }
@@ -458,13 +464,19 @@ export function snapshotFromDraft(draft: CollaborationDraft): { collaboration: T
     return profile.id;
   };
   let directorProfileId = draft.ids.worker;
-  if (draft.mode === 'full' || draft.director) {
+  // Execute + review has no lead row. A selection left over from the full flow must not open a separate conversation.
+  if (draft.mode === 'full') {
     const director = buildProfile(
-      draft.director ? draft.ids.director : draft.ids.worker,
-      (draft.director ?? draft.worker) as RoleSelection,
+      draft.ids.director,
+      draft.director as RoleSelection,
       draft.preserved.profileExtras.director,
     );
     directorProfileId = addRole(director, 'director');
+  } else if (draft.director && leadProfileReferenced(draft)) {
+    addRole(
+      buildProfile(draft.ids.director, draft.director, draft.preserved.profileExtras.director),
+      'director',
+    );
   }
   let reviewerProfileId: string | undefined;
   if (draft.reviewer) {
@@ -522,8 +534,7 @@ export function collaborationWarning(catalog: { capabilities: CollaborationCapab
 export function foreignProviderIds(draft: CollaborationDraft, providerIds: readonly string[]): string[] {
   const known = new Set(providerIds);
   const selected: RoleSelection[] = [];
-  // Execute + review still creates a main conversation from the director profile.
-  if (draft.director) selected.push(draft.director);
+  if (draft.mode === 'full' && draft.director) selected.push(draft.director);
   if (draft.worker) selected.push(draft.worker);
   if (draft.reviewer) selected.push(draft.reviewer);
   return [...new Set(selected.map(item => item.provider).filter(id => id && !known.has(id)))];
