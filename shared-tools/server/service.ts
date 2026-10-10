@@ -4,8 +4,10 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { PaseoApi } from '@getpaseo/client';
 import { nameSchema, providerAccessSchema, type FoundSkill, type McpConfig, type McpServer, type ProviderAccess, type ProviderRow, type SharedState, type SkillRow } from '../shared/rpc';
+import type { GatewayConfig, GatewayState } from '../shared/gateway';
 import { allowsProvider } from '../shared/access';
 import { normalizeServer, parseServerJson, readClaudeServers, readCodexServers, RESERVED_SERVERS, serversFor, stripStored, type Parsed, type StoredServer } from './mcp';
+import { Gateway } from './gateway';
 import { REDIRECT_URI, SignIns, type FlowStatus } from './oauth';
 import { CodexSignIns, type StartedSignIn } from './codex-sign-in';
 import { expandHome, knownSkillsDir, mcpDefault } from './providers';
@@ -55,6 +57,7 @@ export class SharedTools {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   readonly signIns: SignIns;
+  readonly gateway: Gateway;
   private readonly codexSignIns: CodexSignIns;
 
   constructor(readonly root: string, private readonly home = homedir(), private readonly log: (error: unknown) => void = () => undefined, signIns?: SignIns, codexSignIns?: CodexSignIns) {
@@ -65,6 +68,12 @@ export class SharedTools {
     this.libraryDir = join(root, 'skills');
     this.backupDir = join(root, 'backups');
     this.configPath = join(root, 'config.json');
+    // The gateway keeps its own file and only reads the shared config through these callbacks.
+    this.gateway = new Gateway(root, {
+      servers: async () => this.servers(await this.load()).valid,
+      providerMcpOn: async provider => this.row(provider, (await this.load()).providers[provider] ?? {}).mcp,
+      authHeader: (name, config) => this.signIns.header(name, config),
+    }, log);
   }
 
   /** Every read-modify-write and every sync runs one at a time. */
@@ -251,6 +260,8 @@ export class SharedTools {
         catch (error) { this.log(error); }
       }
       if (save) await this.save(stored);
+      // A permission, enablement or server change may invalidate live gateway requests and sessions.
+      if (save) await this.gateway.reconcile().catch(this.log);
       await this.signIns.load().catch(this.log);
       await this.signIns.readSources().catch(this.log);
       const report = resync || !this.report ? await this.sync(stored, force) : this.report;
@@ -325,6 +336,36 @@ export class SharedTools {
       await this.signIns.signOut(name);
       return { save: false, resync: false };
     });
+  }
+
+  /* ------------------------------------------------------ multi-machine */
+
+  gatewayState(): Promise<GatewayState> {
+    return this.gateway.state();
+  }
+
+  saveGatewayConfig(input: GatewayConfig): Promise<GatewayState> {
+    return this.gateway.saveConfig(input);
+  }
+
+  createDevice(input: { name: string; provider: string; servers: string[] | null }): Promise<{ state: GatewayState; token: string }> {
+    return this.gateway.createDevice(input);
+  }
+
+  revokeDevice(id: string): Promise<GatewayState> {
+    return this.gateway.revokeDevice(id);
+  }
+
+  connectRemote(input: { name: string; url: string; token: string; provider: string }): Promise<GatewayState> {
+    return this.gateway.connectRemote(input);
+  }
+
+  refreshRemote(id: string): Promise<GatewayState> {
+    return this.gateway.refreshRemote(id);
+  }
+
+  disconnectRemote(id: string): Promise<GatewayState> {
+    return this.gateway.disconnectRemote(id);
   }
 
   importServers(source: 'claude' | 'codex' | 'json', json: string | undefined, replace: boolean): Promise<{ state: SharedState; imported: string[]; skipped: string[] }> {
@@ -411,11 +452,18 @@ export class SharedTools {
       const header = await this.signIns.header(name, config).catch((error: unknown) => { this.log(error); return null; });
       if (header) added[name] = { ...config, headers: { ...config.headers, Authorization: header } };
     }
+    // Servers reached through a center gateway, using this host's revocable device credential.
+    // Refresh the directory first, so a server just added or removed on the center is reflected;
+    // a failed refresh marks the connection failed and yields no cached servers.
+    await this.gateway.refreshRemotes(provider).catch(this.log);
+    const remote = await this.gateway.remoteServers(provider).catch((error: unknown) => { this.log(error); return {}; });
+    for (const [name, config] of Object.entries(remote)) if (added[name] === undefined && existing?.[name] === undefined) added[name] = config;
     return Object.keys(added).length ? added : null;
   }
 
   /** Syncs once, then again whenever the library changes on disk. */
   start(): void {
+    this.gateway.start();
     void this.mutate(async () => ({ save: false, resync: true })).catch(this.log);
     void mkdir(this.libraryDir, { recursive: true }).then(() => {
       if (!this.stopped && this.watcher === null) this.watch();
@@ -441,6 +489,7 @@ export class SharedTools {
 
   stop(): void {
     this.stopped = true;
+    this.gateway.stop();
     this.signIns.stop();
     this.codexSignIns.stop();
     this.watcher?.close();

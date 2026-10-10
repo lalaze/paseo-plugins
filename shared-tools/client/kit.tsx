@@ -120,7 +120,7 @@ export function Tabs<Id extends string>(props: {
   small?: boolean;
 }) {
   const { colors } = props;
-  return <View accessibilityRole="tablist" style={{ flexDirection: 'row', alignSelf: 'flex-start', gap: 2, padding: 3, borderRadius: 10, backgroundColor: tint(colors.foreground, 0.06) }}>
+  return <View accessibilityRole="tablist" style={{ flexDirection: 'row', flexWrap: 'wrap', maxWidth: '100%', alignSelf: 'flex-start', gap: 2, padding: 3, borderRadius: 10, backgroundColor: tint(colors.foreground, 0.06) }}>
     {props.items.map(item => {
       const selected = item.id === props.value;
       return <Pressable
@@ -198,6 +198,8 @@ export function Field(props: {
   placeholder?: string;
   multiline?: boolean;
   mono?: boolean;
+  /** Hides the value, for a token or password. */
+  secure?: boolean;
   /** Leading icon; a field with one also gets a clear button. */
   icon?: string;
   onSubmit?(): void;
@@ -214,6 +216,7 @@ export function Field(props: {
         placeholder={props.placeholder}
         placeholderTextColor={tint(colors.foregroundMuted, 0.7)}
         multiline={props.multiline}
+        secureTextEntry={props.secure}
         autoCapitalize="none"
         autoCorrect={false}
         style={{

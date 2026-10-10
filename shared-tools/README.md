@@ -1,6 +1,6 @@
 # paseo-shared-tools
 
-A **Shared MCP & skills** page in the app's left sidebar, also available in Settings (the plugin's **…** menu), as a panel in each workspace's explorer next to Files and Changes and from the command center, that gives every provider on a host one list of MCP servers and one skill library, so Claude Code, Codex, Grok, Kimi, CodeBuddy, Pi and the rest work with the same tools. Plugin ID: `paseo-shared-tools`. It needs a Paseo daemon from 0.10 up to, but not including, 0.12. Install it on each host separately.
+A **Shared MCP & skills** page in the app's left sidebar, also available in Settings (the plugin's **…** menu), as a panel in each workspace's explorer next to Files and Changes and from the command center, that gives every provider on a host one list of MCP servers and one skill library, so Claude Code, Codex, Grok, Kimi, CodeBuddy, Pi and the rest work with the same tools. It also lets one host share its MCP servers with other machines through a small authenticated gateway (see **Multi-machine** below). Plugin ID: `paseo-shared-tools`. It needs a Paseo daemon from 0.10 up to, but not including, 0.12. Install it on each host separately.
 
 ```bash
 paseo plugin add git:lalaze/paseo-plugins --path shared-tools
@@ -60,12 +60,37 @@ A custom provider is matched by its id, then by the executable it runs (`kimi ac
 - **Removing:** removing a skill moves it from the library to the backups and removes the untouched copies. Switching **Skills** off for a provider removes the plugin's untouched copies from its folder.
 - Skills are copied, not linked, since not every CLI follows links. A link you made yourself from a provider's folder into the library counts as in sync.
 
+## Multi-machine: sign in once, use it everywhere
+
+One host — the **center** — can run a small authenticated MCP gateway. Sign in to an MCP server once there, create a device credential for another machine, and that machine's new agents reach the same server through the center, under the center account's permissions. The center's upstream token never leaves the center; a device only ever holds its own revocable token. The gateway is **off by default**.
+
+**On the center host**
+
+1. Open the **Machines** tab and switch **Center gateway** on. It binds `0.0.0.0:47822` by default, and the address other machines use is `http://100.96.195.115:47822`; change it if this host's private-network address differs. Plain HTTP is for Tailscale or another trusted private network — put HTTPS in front of it for the public internet.
+2. **Create device**, pick the provider the device will run as, and limit it to some servers if you like. The token is shown **once**: copy it now. Only its hash is stored and it cannot be shown again; if it is lost, revoke the device and create another.
+3. Add the servers to share on the **MCP servers** tab. Only enabled **http** servers are shared; older **sse** and local **stdio** servers stay on this machine and are listed as not shared. Each server's **Provider permissions** and the provider's **MCP** switch both still apply.
+
+**On the other machine**
+
+1. Install this plugin there too, open the **Machines** tab, and **Connect** with the center URL and the device token. The provider must match the one the credential was created for, or the center refuses it.
+2. New agents of that provider get the center's servers; the caller's own same-named servers and this host's own servers keep priority. The center must be online — if it is not, the page shows the failure and **no** gateway servers are added, rather than serving a stale copy.
+3. **Revoke** a device on the center to stop it at once; its live calls are cut. **Check now** refreshes a connection's catalog.
+
+A client outside Paseo uses the same endpoints with the device token:
+
+```json
+{ "mcpServers": { "docs": { "type": "http", "url": "http://100.96.195.115:47822/mcp/docs", "headers": { "Authorization": "Bearer <device token>" } } } }
+```
+
+`GET /v1/servers` lists the servers a token may use. The MCP Streamable HTTP methods are proxied, including SSE responses; redirects are refused, the request body is size-limited, and each device's sessions are kept separate.
+
 ## Files
 
 Everything lives in `$PASEO_SHARED_TOOLS_DIR`, or `$PASEO_HOME/shared-tools`:
 
 - `config.json`: the shared servers in the usual `mcpServers` format, plus `enabled: false`, `providers: [...]` (allowlist), and `excludedProviders: [...]` (denylist) where set, the per-provider switches, and `skillAccess` rules keyed by skill name with the same permission fields. Missing/null `providers` allows everyone; `providers: []` allows nobody. Denials take precedence if both lists are hand-edited. These metadata fields are never passed to MCP clients. It may hold tokens, so it is written with mode 600. You can edit it by hand; an entry the plugin cannot read is reported on the screen and kept. Invalid permission rules stop sharing the affected resource rather than allowing everyone.
 - `oauth.json`: sign-ins, by server name (clients, access and refresh tokens for browser sign-ins; source references for reused native authorization), mode 600.
+- `gateway.json`: the multi-machine gateway's own settings, device token **hashes**, and connections to other centers, mode 600. Kept apart from `config.json` and `oauth.json` so a hand-edited server list and this file never race.
 - `skills/`: the library.
 - `backups/`: replaced copies and removed library skills.
 
@@ -74,3 +99,6 @@ Everything lives in `$PASEO_SHARED_TOOLS_DIR`, or `$PASEO_HOME/shared-tools`:
 - The plugin runs as the daemon user and writes only to the skills folders above and its own folder.
 - Skills are user-level only; project folders such as `.claude/skills` in a repository are not touched.
 - The library is watched for changes while the daemon runs. Changes made while it is stopped are applied at the next start.
+- The multi-machine gateway shares only enabled **http** MCP servers. Older **sse** and local **stdio** servers are not reachable from other machines.
+- Other machines depend on the center being online and authorized. A borrowed authorization is refreshed by the client that owns it, so if the center's borrowed token expires, re-authorize that MCP on the center and retry; the center does not take over the login.
+- The gateway is off by default and listens only while it is switched on. Revoking a device credential stops its calls immediately.

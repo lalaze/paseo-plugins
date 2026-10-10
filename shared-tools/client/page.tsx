@@ -10,10 +10,12 @@ import {
   signInStatus, signOut, startSignIn, syncSkills, updateProvider, updateSkillAccess,
   type FoundSkill, type McpServer, type ProviderAccess, type ProviderRow, type SharedState, type SkillRow, type TargetStatus,
 } from '../shared/rpc';
+import { readGatewayState, type GatewayState } from '../shared/gateway';
 import { Banner, Button, Card, Chip, Dot, Empty, Field, Heading, List, MONO, Muted, Switch, Tabs, type Colors } from './kit';
+import { GatewayTab } from './gateway';
 
 type Rpc = PluginClientContext['rpc'];
-type Tab = 'mcp' | 'skills' | 'providers';
+type Tab = 'mcp' | 'skills' | 'providers' | 'machines';
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -35,6 +37,7 @@ function needsLook(target: SkillRow['targets'][number]): boolean {
 export function SharedToolsPage(props: PluginSurfaceProps & { rpc: Rpc }) {
   const { colors } = props.theme;
   const [state, setState] = useState<SharedState | null>(null);
+  const [gateway, setGateway] = useState<GatewayState | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('mcp');
@@ -57,7 +60,26 @@ export function SharedToolsPage(props: PluginSurfaceProps & { rpc: Rpc }) {
     }
   }, []);
 
+  /** The multi-machine page has its own state shape, so it runs separately. */
+  const runGateway = useCallback(async (job: () => Promise<GatewayState | null>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await job();
+      if (alive.current && next) setGateway(next);
+      return true;
+    } catch (cause) {
+      if (alive.current) setError(message(cause));
+      return false;
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  }, []);
+
   useEffect(() => { void run(() => props.rpc(readState, {})); }, [run, props.rpc]);
+  useEffect(() => { void runGateway(() => props.rpc(readGatewayState, {})); }, [runGateway, props.rpc]);
+  // Entering the multi-machine tab re-reads the gateway's live status and shareable servers.
+  useEffect(() => { if (tab === 'machines') void runGateway(() => props.rpc(readGatewayState, {})); }, [tab, runGateway, props.rpc]);
 
   const providerLabel = (id: string) => state?.providers.find(p => p.id === id)?.label ?? id;
   const section = { colors, busy, rpc: props.rpc, run, providerLabel };
@@ -73,19 +95,24 @@ export function SharedToolsPage(props: PluginSurfaceProps & { rpc: Rpc }) {
             `在 ${props.host.label} 上按 Provider 共享 MCP 服务器和技能。`,
           )}</Muted>
         </View>
-        <Button colors={colors} icon="RefreshCw" label={ui('Sync now', '立即同步')} iconOnly={compact} blocked={busy} onPress={() => void run(() => props.rpc(syncSkills, {}))} />
+        <Button colors={colors} icon="RefreshCw" label={ui('Sync now', '立即同步')} iconOnly={compact} blocked={busy}
+          onPress={() => { void run(() => props.rpc(syncSkills, {})).then(() => runGateway(() => props.rpc(readGatewayState, {}))); }} />
       </View>
       {state ? <Tabs<Tab> colors={colors} value={tab} onChange={setTab} items={[
-        { id: 'mcp', label: ui('MCP servers', 'MCP 服务器'), count: state.mcpServers.length },
+        { id: 'mcp', label: 'MCP', count: state.mcpServers.length },
         { id: 'skills', label: ui('Skills', '技能'), count: state.skills.length, alert: state.notes.length > 0 || state.skills.some(skill => skill.targets.some(needsLook)) },
         { id: 'providers', label: 'Provider', count: state.providers.filter(row => row.present).length },
+        { id: 'machines', label: ui('Machines', '多机器'), alert: Boolean(gateway?.error) },
       ]} /> : null}
       {error ? <Banner tone="danger" colors={colors} onClose={() => setError(null)}>{error}</Banner> : null}
       {state === null
         ? error ? null : <ActivityIndicator color={colors.foregroundMuted} style={{ paddingVertical: 32 }} />
         : tab === 'mcp' ? <McpTab {...section} state={state} />
         : tab === 'skills' ? <SkillsTab {...section} state={state} />
-        : <ProvidersTab {...section} state={state} />}
+        : tab === 'providers' ? <ProvidersTab {...section} state={state} />
+        : gateway
+          ? <GatewayTab colors={colors} busy={busy} compact={compact} rpc={props.rpc} state={gateway} providers={state.providers} run={runGateway} />
+          : <ActivityIndicator color={colors.foregroundMuted} style={{ paddingVertical: 32 }} />}
       {state ? <Muted colors={colors} small selectable>
         {ui('Data folder', '数据目录')} {state.dataDir}{state.syncedAt ? ` · ${ui('last synced', '上次同步')} ${new Date(state.syncedAt).toLocaleString()}` : ''}
       </Muted> : null}

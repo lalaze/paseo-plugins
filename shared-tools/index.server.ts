@@ -3,6 +3,9 @@ import {
   cancelSignIn, deleteMcpServer, deleteSkill, finishSignIn, importMcpServers, importSkill, overwriteSkill, readState, saveMcpServer,
   signInStatus, signOut, startSignIn, syncSkills, updateProvider, updateSkillAccess,
 } from './shared/rpc';
+import {
+  connectRemote, createDevice, disconnectRemote, readGatewayState, refreshRemote, revokeDevice, saveGatewayConfig,
+} from './shared/gateway';
 import { sharedToolsDir } from './server/providers';
 import { SharedTools } from './server/service';
 
@@ -32,6 +35,14 @@ export default function contribute(server: PluginServerContext) {
   });
   server.handle(cancelSignIn, ({ name }) => { tools.cancelSignIn(name); return {}; });
   server.handle(signOut, ({ name }) => tools.signOut(name));
+
+  server.handle(readGatewayState, () => tools.gatewayState());
+  server.handle(saveGatewayConfig, input => tools.saveGatewayConfig(input));
+  server.handle(createDevice, input => tools.createDevice(input));
+  server.handle(revokeDevice, ({ id }) => tools.revokeDevice(id));
+  server.handle(connectRemote, input => tools.connectRemote(input));
+  server.handle(refreshRemote, ({ id }) => tools.refreshRemote(id));
+  server.handle(disconnectRemote, ({ id }) => tools.disconnectRemote(id));
 
   const stopCreate = server.before('agent.create', async ({ request }, { paseo }) => {
     try {
