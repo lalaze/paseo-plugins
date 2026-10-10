@@ -260,7 +260,7 @@ export class TodoEngine {
     let execution = false;
     await this.lockTask(id, async () => {
       const task = this.options.store.get(id);
-      if (task.status === 'merging' || task.status === 'canceling' || !canCancel(task.status)) throw todoError('cancel-rejected');
+      if (!canCancel(task.status)) throw todoError('cancel-rejected');
       // A paused or blocked collaboration is not in the execution slot, but its host run can still
       // have child sessions. Cancel those before the task is marked canceled.
       const liveCollaboration = Boolean(task.collaboration && task.operationId && (task.collaborationConversationId || task.collaborationRunId));
@@ -268,7 +268,7 @@ export class TodoEngine {
         await this.write({ ...task, status: 'canceled', errorCode: null, errorDetail: null });
         return;
       }
-      await this.write({ ...task, status: 'canceling' });
+      if (task.status !== 'canceling') await this.write({ ...task, status: 'canceling' });
       agentId = task.agentId;
       operationId = task.operationId;
       execution = true;
@@ -287,7 +287,7 @@ export class TodoEngine {
     await this.lockTask(id, async () => {
       const current = this.options.store.get(id);
       if (!canRetry(current.status)) throw todoError('retry-rejected');
-      if (current.collaboration && current.collaborationRunId && current.collaborationControl === 'needs_attention') {
+      if (current.status !== 'canceled' && current.collaboration && current.collaborationRunId && current.collaborationControl === 'needs_attention') {
         if (!this.options.collaboration) throw todoError('collaboration-unavailable');
         // Keep this run, but let the repository queue reserve its execution slot before resuming it.
         await this.write({ ...current, status: 'queued', review: null, lastOutcome: null, errorCode: null, errorDetail: null });
@@ -840,9 +840,10 @@ export class TodoEngine {
     try {
       const task = this.options.store.tryGet(id);
       if (!task || task.status !== 'canceling' || task.operationId !== operationId) return;
+      let collaboration: Pick<Task, 'agentId' | 'collaborationRunId' | 'collaborationPhase' | 'collaborationControl'> | null = null;
       if (task.collaboration) {
-        const stopped = await this.cancelCollaborationRun(task);
-        if (!stopped) return;
+        collaboration = await this.cancelCollaborationRun(task);
+        if (!collaboration) return;
       }
       let agentId = knownAgent ?? task.agentId;
       if (!agentId) {
@@ -867,7 +868,7 @@ export class TodoEngine {
         if (current.status !== 'canceling' || current.operationId !== operationId) return;
         const rejected = Boolean(current.collaboration && (current.collaborationAcceptance === 'pending' || current.collaborationPhase === 'awaiting_acceptance'));
         await this.write({
-          ...current, agentId: current.agentId ?? agentId, status: 'canceled',
+          ...current, agentId: current.agentId ?? agentId, ...collaboration, status: 'canceled',
           review: current.collaboration ? null : current.review,
           collaborationAcceptance: current.collaboration ? null : current.collaborationAcceptance,
           errorCode: rejected ? 'collaboration-declined' : 'turn-canceled', errorDetail: null,
@@ -1079,22 +1080,27 @@ export class TodoEngine {
     }
   }
 
-  /** Stops child sessions through the host run. Returns false when the run might still be executing. */
-  private async cancelCollaborationRun(task: Task): Promise<boolean> {
-    if (!task.collaboration) return true;
+  /** Stops the host run and any recovered main session. Null means the run might still be executing. */
+  private async cancelCollaborationRun(task: Task): Promise<Pick<Task, 'agentId' | 'collaborationRunId' | 'collaborationPhase' | 'collaborationControl'> | null> {
+    const stopped = {
+      agentId: task.agentId,
+      collaborationRunId: task.collaborationRunId,
+      collaborationPhase: task.collaborationPhase,
+      collaborationControl: task.collaborationControl,
+    };
+    if (!task.collaboration) return stopped;
     const port = this.options.collaboration;
-    if (!port) return false;
+    if (!port) return null;
     let runId = task.collaborationRunId;
-    let unlinkedAgentId: string | null = null;
     if (!runId && (task.collaborationConversationId || task.operationId)) {
       try {
         const state = await port.status();
-        if (state.error) return false;
+        if (state.error) return null;
         const conversation = conversationOf(state, task);
         runId = conversation?.run?.id ?? null;
-        if (conversation?.agentId && !task.agentId) unlinkedAgentId = conversation.agentId;
-      } catch (error) {
-        return false;
+        if (conversation?.agentId) stopped.agentId = conversation.agentId;
+      } catch {
+        return null;
       }
     }
     try {
@@ -1106,16 +1112,22 @@ export class TodoEngine {
           // instead of treating an error containing the word "canceled" as proof.
           state = await port.status();
         }
-        if (state.error) return false;
-        const run = state.conversations.find(entry => entry.run?.id === runId)?.run;
-        if (!run || (run.control !== 'canceled' && run.phase !== 'completed')) return false;
+        if (state.error) return null;
+        const conversation = state.conversations.find(entry => entry.run?.id === runId);
+        const run = conversation?.run;
+        if (!run || (run.control !== 'canceled' && run.phase !== 'completed')) return null;
+        stopped.collaborationRunId = run.id;
+        stopped.collaborationPhase = run.phase;
+        stopped.collaborationControl = run.control;
+        if (conversation?.agentId) stopped.agentId = conversation.agentId;
       }
-      if (unlinkedAgentId) {
-        await this.options.agents.cancel(unlinkedAgentId).catch(() => undefined);
-        await this.assertAgentIdle(unlinkedAgentId);
+      // Resync can replace the main session while Todo still points at the old one.
+      if (stopped.agentId && stopped.agentId !== task.agentId) {
+        await this.options.agents.cancel(stopped.agentId).catch(() => undefined);
+        await this.assertAgentIdle(stopped.agentId);
       }
-      return true;
-    } catch { return false; }
+      return stopped;
+    } catch { return null; }
   }
 
   private async recoverCollaboration(id: string): Promise<void> {
@@ -1316,6 +1328,9 @@ export class TodoEngine {
         });
       }
       return;
+    }
+    if (conversation.agentId && conversation.agentId !== task.agentId) {
+      await this.writeChanged(task, { agentId: conversation.agentId });
     }
     const view: CollaborationObservation = {
       runId: conversation.run?.id ?? null,

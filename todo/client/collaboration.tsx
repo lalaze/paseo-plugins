@@ -3,11 +3,11 @@ import { Icon } from '@getpaseo/plugin/client/react-native';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import {
   COLLABORATION_ROLE_LABELS,
-  blankCollaborationDraft,
   collaborationModeLabel,
   collaborationStatus,
   collaborationWarning,
   promptExamples,
+  selectRoleModel,
   type CollaborationCatalog,
   type CollaborationDefaultStore,
   type CollaborationDraft,
@@ -77,9 +77,10 @@ function modelValue(selection: RoleSelection | null): string {
 
 /** Models on this host. A saved model the catalog no longer lists stays in the menu so the form does not drop it. */
 function modelOptions(catalog: Catalog | null, selection: RoleSelection | null): SelectOption[] {
-  const options = catalog?.providers.flatMap(entry => entry.models.map(model => ({
+  const options: SelectOption[] = catalog?.providers.flatMap(entry => entry.models.map(model => ({
     value: `${entry.provider}/${model.id}`,
     label: model.label,
+    description: model.description,
     group: entry.label,
   }))) ?? [];
   if (selection && !options.some(option => option.value === modelValue(selection))) {
@@ -96,6 +97,19 @@ function modeOptions(catalog: Catalog | null, selection: RoleSelection | null): 
     options.unshift({ value: selection.modeId, label: selection.modeId });
   }
   return [{ value: '', label: ui('Default permission', '默认权限') }, ...options];
+}
+
+function thinkingOptions(catalog: Catalog | null, selection: RoleSelection | null): SelectOption[] {
+  const provider = catalog?.providers.find(entry => entry.provider === selection?.provider);
+  const model = provider?.models.find(entry => entry.id === selection?.model);
+  const options: SelectOption[] = (model?.thinkingOptions ?? []).map(option => ({
+    value: option.id, label: option.label, description: option.description,
+  }));
+  if (selection?.thinkingOptionId && !options.some(option => option.value === selection.thinkingOptionId)) {
+    options.unshift({ value: selection.thinkingOptionId, label: selection.thinkingOptionId });
+  }
+  if (!options.length) return [];
+  return [{ value: '', label: ui('Provider default', '供应商默认') }, ...options];
 }
 
 /** Preset timeouts plus a saved value that is not one of the presets. */
@@ -146,8 +160,9 @@ export function CollaborationSummary(props: {
       const providerLabel = entry?.label ?? providerId;
       const modelLabel = entry?.models.find(item => item.id === modelId)?.label ?? profile.label;
       const permission = entry?.modes.find(item => item.id === profile.modeId)?.label ?? profile.modeId;
+      const thinking = entry?.models.find(item => item.id === modelId)?.thinkingOptions?.find(item => item.id === profile.thinkingOptionId)?.label ?? profile.thinkingOptionId;
       return <Text key={role} style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>
-        {ui(...COLLABORATION_ROLE_LABELS[role])} · {providerLabel} · {modelLabel}{permission ? ` · ${permission}` : ''}
+        {ui(...COLLABORATION_ROLE_LABELS[role])} · {providerLabel} · {modelLabel}{permission ? ` · ${permission}` : ''}{thinking ? ` · ${ui('Thinking', '思考强度')}: ${thinking}` : ''}
       </Text>;
     })}
     <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>
@@ -177,27 +192,18 @@ export function CollaborationForm(props: {
   const [picker, setPicker] = useState<string | null>(null);
   const disabled = props.disabled;
   const warning = collaborationWarning(props.collaboration);
-  /** Prompts and limits stay collapsed unless this draft already customizes them. */
-  const blank = blankCollaborationDraft();
+  /** Advanced settings stay collapsed by default; custom prompts open with them when this draft sets any. */
   const hostPrompt = (role: 'plan' | 'execute' | 'review') =>
     (props.collaboration?.settings?.rolePrompts?.[role] ?? props.collaboration?.rolePrompts?.[role] ?? '').trim();
   const customPrompts = (['plan', 'execute', 'review'] as const).some(role => {
     const value = draft.prompts[role].trim();
     return value !== '' && value !== hostPrompt(role);
   });
-  const customAdvanced = customPrompts
-    || draft.maxReworks !== blank.maxReworks
-    || draft.maxAttempts !== blank.maxAttempts
-    || draft.turnTimeoutMs !== blank.turnTimeoutMs
-    || draft.runTimeoutMs !== blank.runTimeoutMs
-    || draft.requirePlanApproval !== blank.requirePlanApproval
-    || draft.preserved.allowDirectorSelection
-    || draft.preserved.verificationCommands.length > 0;
-  const [advanced, setAdvanced] = useState(customAdvanced);
+  const [advanced, setAdvanced] = useState(false);
   const [editPrompts, setEditPrompts] = useState(customPrompts);
   // React Native Web gives every View z-index 0, so a menu's own z-index stays inside its section.
   // The open section has to be the dismiss layer's sibling and sit above it, or a provider click hits the layer and closes the list.
-  const modelsOpen = picker === 'director' || picker === 'worker' || picker === 'reviewer' || picker?.endsWith('-mode') === true;
+  const modelsOpen = picker === 'director' || picker === 'worker' || picker === 'reviewer' || picker?.endsWith('-mode') === true || picker?.endsWith('-thinking') === true;
   const limitsOpen = picker === 'rework' || picker === 'run' || picker === 'turn';
   const modes: Array<'off' | CollaborationMode> = ['off', 'full', 'execute_review'];
   const selectedMode = draft.enabled ? draft.mode : 'off';
@@ -217,16 +223,14 @@ export function CollaborationForm(props: {
     const model = value.slice(slash + 1);
     const entry = props.catalog?.providers.find(item => item.provider === provider);
     const previous = draft[role];
-    const same = previous?.provider === provider && previous.model === model;
     props.onChange({
       ...draft,
-      [role]: {
+      [role]: selectRoleModel(previous, {
         provider,
         model,
-        modeId: same ? previous.modeId : null,
         providerLabel: entry?.label ?? provider,
         modelLabel: entry?.models.find(item => item.id === model)?.label ?? previous?.modelLabel ?? model,
-      },
+      }),
     });
   };
   const setPermission = (role: RoleName, modeId: string) => {
@@ -234,12 +238,18 @@ export function CollaborationForm(props: {
     if (!selection) return;
     props.onChange({ ...draft, [role]: { ...selection, modeId: modeId || null } });
   };
+  const setThinking = (role: RoleName, thinkingOptionId: string) => {
+    const selection = draft[role];
+    if (!selection) return;
+    props.onChange({ ...draft, [role]: { ...selection, thinkingOptionId: thinkingOptionId || null } });
+  };
   const patchPreserved = (patch: Partial<CollaborationDraft['preserved']>) => {
     props.onChange({ ...draft, preserved: { ...draft.preserved, ...patch } });
   };
   const roleRow = (role: RoleName, optional: boolean) => {
     const selection = draft[role];
     const options = modelOptions(props.catalog, selection);
+    const thinking = thinkingOptions(props.catalog, selection);
     const fallback = role === 'director' ? ui('Use worker for the conversation', '会话使用执行配置') : ui('Reviewed by the lead agent', '由主 Agent 审核');
     if (optional) options.unshift({ value: '', label: fallback });
     return <View key={role} style={{ gap: 6 }}>
@@ -260,6 +270,14 @@ export function CollaborationForm(props: {
           disabled={disabled}
           open={picker === `${role}-mode`} onOpenChange={open => setPicker(open ? `${role}-mode` : null)}
           onChange={value => setPermission(role, value)}
+        /> : null}
+        {selection && thinking.length > 0 ? <Select
+          label={ui('Thinking', '思考强度')} icon="Brain" colors={colors}
+          value={selection.thinkingOptionId ?? ''} options={thinking}
+          placeholder={ui('Provider default', '供应商默认')}
+          disabled={disabled}
+          open={picker === `${role}-thinking`} onOpenChange={open => setPicker(open ? `${role}-thinking` : null)}
+          onChange={value => setThinking(role, value)}
         /> : null}
       </View>
     </View>;

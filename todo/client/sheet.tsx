@@ -178,7 +178,7 @@ export function TaskSheet(props: SheetHandlers & {
               <Button label={ui('Save on this task', '保存到这个任务')} colors={colors} size="xs" disabled={props.busy} onPress={() => { void saveCollaboration(); }} />
             </View>
           </> : <>
-            <CollaborationSummary collaboration={task.collaboration} phase={task.collaborationPhase} control={task.collaborationControl} acceptance={task.collaborationAcceptance} catalog={props.catalog} colors={colors} />
+            <CollaborationSummary collaboration={task.collaboration} phase={task.collaborationPhase} control={task.status === 'canceled' ? 'canceled' : task.collaborationControl} acceptance={task.status === 'canceled' ? null : task.collaborationAcceptance} catalog={props.catalog} colors={colors} />
             {editable ? <Button label={ui('Edit', '修改')} colors={colors} variant="outline" size="xs" onPress={() => { setCollabError(null); setCollabDraft(draftFromCollaboration(task.collaboration)); setEditing(true); }} /> : null}
           </>}
         </Section>
@@ -216,12 +216,12 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
   const { colors, task } = props;
   const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState('');
-  const sessionPending = Boolean(task.collaboration) && (task.collaborationAcceptance === 'pending' || task.collaborationPhase === 'awaiting_acceptance');
+  const sessionPending = task.status !== 'canceled' && task.status !== 'canceling' && Boolean(task.collaboration) && (task.collaborationAcceptance === 'pending' || task.collaborationPhase === 'awaiting_acceptance');
   const collab = task.collaboration ? collaborationStatus(task) : null;
   const review = !sessionPending && canAccept(task.status) && Boolean(task.review);
   const text = (() => {
     if (task.status === 'draft' && props.collaborationDirty) return ui('Save or cancel the collaboration edits before starting.', '先保存或取消协作设置的修改，再开始。');
-    if (collab && task.status !== 'draft' && task.status !== 'queued' && task.status !== 'merged' && task.status !== 'canceled') return ui(...collab.detail);
+    if (collab && task.status !== 'draft' && task.status !== 'queued' && task.status !== 'merged' && task.status !== 'canceled' && task.status !== 'canceling') return ui(...collab.detail);
     switch (task.status) {
       case 'draft': return ui('Not started. Start it now, or leave it in To do for the queue.', '还没开始。现在开始，或者留在待办里等队列。');
       case 'queued': return ui('Waiting for the repository queue. One task runs per repository at a time.', '等待仓库队列。同一仓库一次只跑一个任务。');
@@ -250,7 +250,7 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
     : task.status === 'draft'
       ? <Button label={ui('Start', '开始')} icon="Play" onPress={props.onStart} colors={colors} full disabled={props.busy || props.collaborationDirty} />
       : canRetry(task.status)
-        ? <Button label={task.collaboration && task.collaborationControl === 'needs_attention' ? ui('Retry this collaboration', '重试这次协作') : ui('Retry with a new session', '用新会话重试')} icon="RotateCcw" onPress={props.onRetry} colors={colors} full disabled={props.busy} />
+        ? <Button label={task.status !== 'canceled' && task.collaboration && task.collaborationControl === 'needs_attention' ? ui('Retry this collaboration', '重试这次协作') : ui('Retry with a new session', '用新会话重试')} icon="RotateCcw" onPress={props.onRetry} colors={colors} full disabled={props.busy} />
         : task.status === 'needs_attention' && props.onOpenSession
           ? <Button label={ui('Open session', '打开会话')} icon="MessageSquare" onPress={props.onOpenSession} colors={colors} full />
           : null;
@@ -260,7 +260,7 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
       {canContinue(task.status) ? <Button label={ui('Send back', '打回修改')} icon="CornerDownLeft" onPress={() => setComposing(value => !value)} colors={colors} variant="outline" size="xs" /> : null}
       {props.onOpenSession && task.status !== 'needs_attention' && !sessionPending ? <Button label={ui('Open session', '打开会话')} icon="MessageSquare" onPress={props.onOpenSession} colors={colors} variant="outline" size="xs" /> : null}
-      {canCancel(task.status) && task.status !== 'canceling' ? <Button label={ui('Cancel task', '取消任务')} icon="X" onPress={props.onCancel} colors={colors} variant="ghost" size="xs" disabled={props.busy} /> : null}
+      {canCancel(task.status) ? <Button label={task.status === 'canceling' ? ui('Retry stop', '重试停止') : task.collaboration && task.operationId ? ui('Stop collaboration', '停止协作') : ui('Cancel task', '取消任务')} icon="Square" onPress={props.onCancel} colors={colors} variant="outline" size="xs" disabled={props.busy} /> : null}
     </View>
     {composing && canContinue(task.status) ? <View style={{ gap: 8 }}>
       <TextInput

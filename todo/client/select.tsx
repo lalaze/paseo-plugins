@@ -7,6 +7,8 @@ import { outline, tint, type Colors } from './kit';
 export interface SelectOption {
   value: string;
   label: string;
+  /** Provider model descriptions can include credit multipliers such as x0.00. */
+  description?: string;
   /** With more than one group the menu opens on a list of groups and drills into one; the trigger shows `group · label`. */
   group?: string;
 }
@@ -21,6 +23,10 @@ type Row =
 
 function shownLabel(option: SelectOption): string {
   return option.group ? `${option.group} · ${option.label}` : option.label;
+}
+
+function accessibleLabel(option: SelectOption): string {
+  return option.description ? `${shownLabel(option)}, ${option.description}` : shownLabel(option);
 }
 
 function groupsOf(options: readonly SelectOption[]): string[] {
@@ -59,7 +65,7 @@ export function Select(props: {
   const needle = query.trim().toLowerCase();
 
   const rows: Row[] = needle
-    ? props.options.filter(option => shownLabel(option).toLowerCase().includes(needle)).map(option => ({ kind: 'option', option, showGroup: drill }))
+    ? props.options.filter(option => accessibleLabel(option).toLowerCase().includes(needle)).map(option => ({ kind: 'option', option, showGroup: drill }))
     : drill && view === null
       ? groups.map(group => ({
         kind: 'group', group,
@@ -111,7 +117,7 @@ export function Select(props: {
   return <View style={{ position: 'relative', zIndex: props.open ? 20 : 1, flexShrink: 1, minWidth: 0 }}>
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${props.label}: ${selected ? shownLabel(selected) : props.placeholder}`}
+      accessibilityLabel={`${props.label}: ${selected ? accessibleLabel(selected) : props.placeholder}`}
       accessibilityState={{ expanded: props.open, disabled: props.disabled }}
       disabled={props.disabled}
       onPress={() => props.onOpenChange(!props.open)}
@@ -126,6 +132,7 @@ export function Select(props: {
       <Text numberOfLines={1} style={{ flexShrink: 1, color: selected ? colors.foreground : colors.foregroundMuted, fontSize: 12, fontWeight: '500' }}>
         {selected ? shownLabel(selected) : props.placeholder}
       </Text>
+      {selected?.description ? <Text numberOfLines={1} style={{ flexShrink: 0, maxWidth: 96, color: colors.foregroundMuted, fontSize: 11, fontVariant: ['tabular-nums'] }}>{selected.description}</Text> : null}
       {props.disabled ? null : <Icon name="ChevronsUpDown" size={12} color={colors.foregroundMuted} />}
     </Pressable>
 
@@ -176,9 +183,12 @@ export function Select(props: {
               </Pressable>;
             }
             const isSelected = row.option.value === props.value;
-            return <Pressable key={row.option.value} accessibilityRole="menuitem" accessibilityState={{ selected: isSelected }} onHoverIn={() => setActive(index)} onPress={() => activate(row)} style={rowStyle}>
-              <Text numberOfLines={1} style={{ flex: 1, color: colors.foreground, fontSize: 13, fontWeight: isSelected ? '600' : '400' }}>{row.option.label}</Text>
-              {row.showGroup && row.option.group ? <Text numberOfLines={1} style={{ maxWidth: 110, color: colors.foregroundMuted, fontSize: 12 }}>{row.option.group}</Text> : null}
+            return <Pressable key={row.option.value} accessibilityRole="menuitem" accessibilityLabel={accessibleLabel(row.option)} accessibilityState={{ selected: isSelected }} onHoverIn={() => setActive(index)} onPress={() => activate(row)} style={[rowStyle, row.showGroup && row.option.group ? { height: ROW + 14 } : null]}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 13, fontWeight: isSelected ? '600' : '400' }}>{row.option.label}</Text>
+                {row.showGroup && row.option.group ? <Text numberOfLines={1} style={{ color: colors.foregroundMuted, fontSize: 11 }}>{row.option.group}</Text> : null}
+              </View>
+              {row.option.description ? <Text numberOfLines={1} style={{ flexShrink: 0, maxWidth: 110, color: colors.foregroundMuted, fontSize: 12, fontVariant: ['tabular-nums'] }}>{row.option.description}</Text> : null}
               {isSelected ? <Icon name="Check" size={14} color={colors.foreground} /> : null}
             </Pressable>;
           })}

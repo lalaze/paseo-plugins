@@ -2,7 +2,7 @@ import { Icon } from '@getpaseo/plugin/client/react-native';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { relativeAge } from '../shared/board';
 import { collaborationModeLabel } from '../shared/collaboration';
-import type { TaskStatus } from '../shared/machine';
+import { canCancel, type TaskStatus } from '../shared/machine';
 import type { Task } from '../shared/schema';
 import { explain, statusLabel, ui } from './i18n';
 import { Button, Dot, MONO, outline, tint, type Colors } from './kit';
@@ -53,10 +53,11 @@ export function HostTag(props: { label: string; colors: Colors }) {
   </View>;
 }
 
-/** One task on the board. The button is the single next step; opening the card shows the rest. */
-export function TaskCard(props: { task: Task; hostLabel?: string | null; colors: Colors; now: number; action: CardAction | null; busy: boolean; onOpen(): void }) {
+/** One task on the board, with a direct stop for a started collaboration. */
+export function TaskCard(props: { task: Task; hostLabel?: string | null; colors: Colors; now: number; action: CardAction | null; busy: boolean; onOpen(): void; onCancel(): void }) {
   const { colors, task } = props;
   const failed = Boolean(task.errorCode) && (task.status === 'failed' || task.status === 'needs_check' || task.status === 'merge_failed');
+  const stoppable = Boolean(task.collaboration && task.operationId && canCancel(task.status));
   return <Pressable
     accessibilityRole="button"
     accessibilityLabel={task.title}
@@ -86,8 +87,9 @@ export function TaskCard(props: { task: Task; hostLabel?: string | null; colors:
       <Icon name="CircleAlert" size={13} color={colors.statusDanger} />
       <Text numberOfLines={1} style={{ flex: 1, color: colors.statusDanger, fontSize: 11 }}>{explain(task.errorCode)}</Text>
     </View> : <Text numberOfLines={2} style={{ marginTop: 6, color: colors.foregroundMuted, fontSize: 11, lineHeight: 16 }}>{task.pendingPrompt ?? task.prompt}</Text>}
-    {props.action ? <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: outline(colors), flexDirection: 'row' }}>
-      <Button label={props.action.label} icon={props.action.icon} onPress={props.action.onPress} colors={colors} size="xs" disabled={props.busy} />
+    {props.action || stoppable ? <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: outline(colors), flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+      {props.action ? <Button label={props.action.label} icon={props.action.icon} onPress={props.action.onPress} colors={colors} size="xs" disabled={props.busy} /> : null}
+      {stoppable ? <Button label={task.status === 'canceling' ? ui('Retry stop', '重试停止') : ui('Stop collaboration', '停止协作')} icon="Square" onPress={props.onCancel} colors={colors} variant="outline" size="xs" disabled={props.busy} /> : null}
     </View> : null}
   </Pressable>;
 }

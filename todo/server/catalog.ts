@@ -16,7 +16,13 @@ export async function readCatalog(api: PaseoApi): Promise<Catalog> {
       provider: entry.provider,
       label: entry.label || entry.provider,
       defaultModeId: entry.defaultModeId ?? null,
-      models: (entry.models ?? []).filter(model => model.isSelectable !== false).map(model => ({ id: model.id, label: model.label || model.id })),
+      models: (entry.models ?? []).filter(model => model.isSelectable !== false).map(model => ({
+        id: model.id, label: model.label || model.id, description: model.description,
+        thinkingOptions: model.thinkingOptions?.map(option => ({
+          id: option.id, label: option.label || option.id, description: option.description, isDefault: option.isDefault,
+        })),
+        defaultThinkingOptionId: model.defaultThinkingOptionId,
+      })),
       modes: (entry.modes ?? []).map(mode => ({ id: mode.id, label: mode.label || mode.id })),
     })),
   });

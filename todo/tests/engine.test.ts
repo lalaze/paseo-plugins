@@ -1310,6 +1310,85 @@ describe('collaboration lifecycle', () => {
     });
   });
 
+  it('cancels a recovered main session and records the stopped collaboration state', async () => {
+    const host = new CollaborationHost();
+    const box = harness({ collaboration: host.port });
+    await withEngine(box, async engine => {
+      const task = await engine.createTask({
+        title: 'Stop recovered chat', prompt: 'Do the work', repository: REPO, projectId: null, projectName: null,
+        targetBranch: 'main', provider: 'stub/model', modeId: null, collaboration: collaborationSnapshot(),
+      });
+      await engine.startTask(task.id);
+      await waitFor(() => engine.list().tasks[0]?.status === 'running');
+      host.phase = 'executing';
+      const running = await settled(engine, task.id);
+      host.childRunning = true;
+      const control = host.port.control;
+      host.port.control = async input => {
+        const state = await control(input);
+        state.conversations[0].agentId = 'recovered-main';
+        return state;
+      };
+      const stopped = await engine.cancel(task.id);
+      assert.equal(stopped.status, 'canceled');
+      assert.equal(stopped.collaborationControl, 'canceled');
+      assert.equal(stopped.collaborationPhase, 'executing');
+      assert.equal(stopped.agentId, 'recovered-main');
+      assert.ok(box.cancels.includes('recovered-main'));
+      assert.ok(box.cancels.includes(running.agentId!));
+      assert.equal(host.childRunning, false);
+    });
+  });
+
+  it('retries an old canceled record with stale collaboration metadata as a new run', async () => {
+    const host = new CollaborationHost();
+    const box = harness({ collaboration: host.port });
+    let saved!: Task;
+    await withEngine(box, async engine => {
+      await engine.retry(saved.id);
+      await waitFor(() => engine.list().tasks[0]?.status !== 'queued' && engine.list().tasks[0]?.status !== 'preparing');
+      const retried = engine.list().tasks[0];
+      assert.equal(retried.status, 'running');
+      assert.notEqual(retried.operationId, saved.operationId);
+      assert.equal(host.opens.length, 2);
+      assert.equal(host.controls.some(entry => entry.action === 'retry'), false);
+    }, async dir => {
+      saved = await seed(dir, {
+        status: 'canceled', collaboration: collaborationSnapshot(),
+        collaborationConversationId: 'chat-00000000-0000-4000-8000-00000000beef',
+        collaborationRunId: 'run-00000000-0000-4000-8000-00000000beef',
+        collaborationPhase: 'executing', collaborationControl: 'needs_attention',
+      });
+      await host.port.open({ requestId: saved.operationId!, workspaceId: 'ws-1', collaboration: saved.collaboration! });
+      host.phase = 'executing';
+      host.control = 'canceled';
+    });
+  });
+
+  it('lets the user retry a pending stop without dispatching more work', async () => {
+    const host = new CollaborationHost();
+    const box = harness({ collaboration: host.port });
+    await withEngine(box, async engine => {
+      const task = await engine.createTask({
+        title: 'Retry stop', prompt: 'Do the work', repository: REPO, projectId: null, projectName: null,
+        targetBranch: 'main', provider: 'stub/model', modeId: null, collaboration: collaborationSnapshot(),
+      });
+      await engine.startTask(task.id);
+      await waitFor(() => engine.list().tasks[0]?.status === 'running');
+      host.phase = 'executing';
+      await settled(engine, task.id);
+      const control = host.port.control;
+      host.port.control = async () => { throw new Error('connection interrupted'); };
+      assert.equal((await engine.cancel(task.id)).status, 'canceling');
+      host.port.control = control;
+      const stopped = await engine.cancel(task.id);
+      assert.equal(stopped.status, 'canceled');
+      assert.equal(stopped.collaborationControl, 'canceled');
+      assert.equal(host.opens.length, 1);
+      assert.equal(box.sent.length, 0);
+    });
+  });
+
   it('cancels the host run before the main agent, and retry or continue starts one new run from the saved snapshot', async () => {
     const host = new CollaborationHost();
     const box = harness({ collaboration: host.port });

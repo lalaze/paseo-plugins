@@ -22,6 +22,7 @@ import {
   inheritCollaborationDraft,
   readCollaborationDefaults,
   sameCollaborationDraft,
+  selectRoleModel,
   snapshotFromDraft,
   storedDefault,
   taskCollaborationSchema,
@@ -291,7 +292,13 @@ describe('collaboration adapter', () => {
 
   it('opens in the current workspace with the saved snapshot before any task prompt', async () => {
     const peer = new ScriptedPeer(capable);
-    const collaboration = snapshot('execute_review');
+    const draft = draftFromCollaboration(snapshot('execute_review'));
+    assert.ok(draft.worker);
+    assert.ok(draft.reviewer);
+    draft.worker.thinkingOptionId = 'low';
+    draft.reviewer.thinkingOptionId = 'high';
+    const collaboration = snapshotFromDraft(draft).collaboration;
+    assert.ok(collaboration);
     const opened = await portFor(peer).open({
       requestId: '00000000-0000-4000-8000-000000000001',
       workspaceId: 'ws-1',
@@ -523,6 +530,51 @@ describe('collaboration drafts', () => {
     assert.equal(split.reviewerProfileId, 'director');
     assert.equal(split.categoryOverrides.docs, 'director');
     assert.equal(split.profiles.find(profile => profile.id === 'director')?.provider, 'stub/review');
+  });
+
+  it('edits each role thinking level and keeps it through task snapshots and remembered defaults', () => {
+    const saved = snapshot('full');
+    saved.settings.profiles[0].thinkingOptionId = 'high';
+    const draft = draftFromCollaboration(saved);
+    assert.equal(draft.director?.thinkingOptionId, 'high');
+    assert.ok(draft.director);
+    assert.ok(draft.worker);
+    assert.ok(draft.reviewer);
+    draft.director.thinkingOptionId = 'medium';
+    draft.worker.thinkingOptionId = 'low';
+    draft.reviewer.thinkingOptionId = 'high';
+    const result = snapshotFromDraft(draft);
+    assert.equal(result.error, null);
+    assert.ok(result.collaboration);
+    assert.deepEqual(result.collaboration.settings.profiles.map(profile => [profile.id, profile.thinkingOptionId]), [
+      ['worker', 'low'], ['director', 'medium'], ['reviewer', 'high'],
+    ]);
+    const store = memoryStore();
+    writeCollaborationDefault(store, 'host-a', result.collaboration);
+    const restored = draftFromCollaboration(readCollaborationDefaults(store)['host-a']);
+    assert.equal(restored.director?.thinkingOptionId, 'medium');
+    assert.equal(restored.worker?.thinkingOptionId, 'low');
+    assert.equal(restored.reviewer?.thinkingOptionId, 'high');
+    draft.director.thinkingOptionId = null;
+    assert.equal(snapshotFromDraft(draft).collaboration?.settings.profiles.find(profile => profile.id === 'director')?.thinkingOptionId, undefined);
+    assert.equal(saved.settings.profiles[0].thinkingOptionId, 'high');
+  });
+
+  it('clears thinking when changing a model or provider, but keeps it when choosing the same model', () => {
+    const draft = draftFromCollaboration(snapshot('full'));
+    assert.ok(draft.worker);
+    draft.worker.thinkingOptionId = 'high';
+    const next = { provider: 'stub', model: 'work', providerLabel: 'Stub', modelLabel: 'Work' };
+    draft.worker = selectRoleModel(draft.worker, next);
+    assert.equal(draft.worker.thinkingOptionId, 'high');
+    assert.equal(draft.worker.modeId, 'code');
+    draft.worker = selectRoleModel(draft.worker, { ...next, model: 'other' });
+    assert.equal(draft.worker.thinkingOptionId, null);
+    assert.equal(draft.worker.modeId, null);
+    assert.equal(snapshotFromDraft(draft).collaboration?.settings.profiles.find(profile => profile.id === 'worker')?.thinkingOptionId, undefined);
+    draft.worker.thinkingOptionId = 'low';
+    draft.worker = selectRoleModel(draft.worker, { ...next, provider: 'other' });
+    assert.equal(draft.worker.thinkingOptionId, null);
   });
 
   it('clears an inherited permission mode and preserves verification argv exactly', () => {

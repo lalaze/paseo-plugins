@@ -4,6 +4,7 @@ import type { PaseoApi } from '@getpaseo/client';
 import type { DaemonClient } from '@getpaseo/client/internal/daemon-client';
 import { unavailableCatalog } from '../shared/collaboration';
 import type { AgentInspection } from '../server/agents';
+import { readCatalog } from '../server/catalog';
 import { PaseoTodoGateway } from '../server/paseo';
 import { ReconnectingAgents, type ConnectedAgents } from '../server/reconnecting';
 
@@ -26,6 +27,55 @@ function fake(): ConnectedAgents & { closed: number } {
     async close() { this.closed += 1; },
   };
 }
+
+describe('model catalog', () => {
+  it('keeps model thinking choices, descriptions, and defaults through the catalog RPC', async () => {
+    const api = {
+      projects: { list: async () => ({ projects: [] }) },
+      providers: { snapshot: async () => ({ entries: [{
+        provider: 'codex', label: 'Codex', status: 'ready', enabled: true,
+        models: [{
+          id: 'model', label: 'Model', defaultThinkingOptionId: 'high',
+          thinkingOptions: [
+            { id: 'low', label: 'Low', description: 'Faster' },
+            { id: 'high', label: 'High', isDefault: true, metadata: { internal: true } },
+          ],
+        }, { id: 'plain', label: 'Plain' }],
+      }] }) },
+    };
+    const catalog = await readCatalog(api as unknown as PaseoApi);
+    assert.deepEqual(JSON.parse(JSON.stringify(catalog.providers[0]?.models)), [
+      { id: 'model', label: 'Model', defaultThinkingOptionId: 'high', thinkingOptions: [
+        { id: 'low', label: 'Low', description: 'Faster' },
+        { id: 'high', label: 'High', isDefault: true },
+      ] },
+      { id: 'plain', label: 'Plain' },
+    ]);
+  });
+
+  it('keeps provider descriptions, including zero-credit multipliers, through the catalog RPC', async () => {
+    const api = {
+      projects: { list: async () => ({ projects: [] }) },
+      providers: { snapshot: async () => ({ entries: [{
+        provider: 'codebuddy-code', label: 'Codebuddy Code', status: 'ready',
+        models: [
+          { id: 'hy4-preview', label: 'Hy4 preview', description: 'x0.29' },
+          { id: 'deepseek-v4.1-flash', label: 'Deepseek-V4.1-Flash', description: 'x0.00' },
+          { id: 'fast-model', label: 'Fast', description: 'x0.34 credits' },
+          { id: 'default-model', label: 'Auto' },
+          { id: 'hidden', label: 'Hidden', description: 'x1.00', isSelectable: false },
+        ],
+      }] }) },
+    };
+    const catalog = await readCatalog(api as unknown as PaseoApi);
+    assert.deepEqual(JSON.parse(JSON.stringify(catalog.providers[0]?.models)), [
+      { id: 'hy4-preview', label: 'Hy4 preview', description: 'x0.29' },
+      { id: 'deepseek-v4.1-flash', label: 'Deepseek-V4.1-Flash', description: 'x0.00' },
+      { id: 'fast-model', label: 'Fast', description: 'x0.34 credits' },
+      { id: 'default-model', label: 'Auto' },
+    ]);
+  });
+});
 
 describe('reconnecting gateway', () => {
   it('rejects while the daemon is unreachable instead of reporting agents as gone, then reconnects', async () => {

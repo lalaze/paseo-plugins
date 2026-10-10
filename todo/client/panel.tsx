@@ -322,6 +322,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     busy={busy}
     action={cardAction(task)}
     onOpen={() => setOpen({ hostId: task.hostId, id: task.id })}
+    onCancel={() => { void run(hostOf(task.hostId), rpc => rpc(cancelTask, { id: task.id })); }}
   />);
   // A wide column needs a lane to scroll. It has no border: the cards already have one.
   const lane = { borderRadius: 14, backgroundColor: tint(colors.surface1, 0.22) } as const;

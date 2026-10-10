@@ -32,7 +32,7 @@ export function canEnqueue(status: TaskStatus): boolean {
 export function canCancel(status: TaskStatus): boolean {
   return status === 'draft' || status === 'queued' || status === 'preparing' || status === 'running'
     || status === 'needs_attention' || status === 'awaiting_review' || status === 'needs_check'
-    || status === 'failed' || status === 'merge_failed';
+    || status === 'failed' || status === 'merge_failed' || status === 'canceling';
 }
 
 export function canAccept(status: TaskStatus): boolean {

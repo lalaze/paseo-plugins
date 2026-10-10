@@ -104,7 +104,13 @@ export const catalogSchema = z.object({
     provider: z.string(),
     label: z.string(),
     defaultModeId: z.string().nullable(),
-    models: z.array(z.object({ id: z.string(), label: z.string() }).strict()),
+    models: z.array(z.object({
+      id: z.string(), label: z.string(), description: z.string().optional(),
+      thinkingOptions: z.array(z.object({
+        id: z.string(), label: z.string(), description: z.string().optional(), isDefault: z.boolean().optional(),
+      }).strict()).optional(),
+      defaultThinkingOptionId: z.string().optional(),
+    }).strict()),
     modes: z.array(z.object({ id: z.string(), label: z.string() }).strict()),
   }).strict()),
 }).strict();

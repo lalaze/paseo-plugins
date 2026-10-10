@@ -177,15 +177,24 @@ export interface RoleSelection {
   model: string;
   /** Catalog permission mode. Null keeps the provider default. */
   modeId: string | null;
+  thinkingOptionId?: string | null;
   providerLabel: string;
   modelLabel: string;
+}
+
+export function selectRoleModel(previous: RoleSelection | null, next: Pick<RoleSelection, 'provider' | 'model' | 'providerLabel' | 'modelLabel'>): RoleSelection {
+  const same = previous?.provider === next.provider && previous.model === next.model;
+  return {
+    ...next,
+    modeId: same ? previous.modeId : null,
+    thinkingOptionId: same ? previous.thinkingOptionId : null,
+  };
 }
 
 interface ProfileExtra {
   provider: string;
   transport: 'structured' | 'mcp';
   modeId?: string;
-  thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
   instructions?: string;
 }
@@ -202,7 +211,7 @@ interface PreservedCollaboration {
 
 /**
  * Editable collaboration form. `enabled: false` is Off and stores `null`.
- * Role prompts, permission modes, and limits are the fields the form edits;
+ * Role prompts, permission modes, thinking levels, and limits are the fields the form edits;
  * overrides, verification commands, and profile instructions ride along in `preserved`.
  */
 export interface CollaborationDraft {
@@ -281,6 +290,7 @@ function selectionFrom(profile: CollaborationProfile | undefined): RoleSelection
     provider: profile.provider.slice(0, slash),
     model: profile.provider.slice(slash + 1),
     modeId: profile.modeId ?? null,
+    thinkingOptionId: profile.thinkingOptionId ?? null,
     providerLabel: profile.provider.slice(0, slash),
     modelLabel: profile.label,
   };
@@ -292,7 +302,6 @@ function extraFrom(profile: CollaborationProfile | undefined): ProfileExtra | nu
     provider: profile.provider,
     transport: profile.transport,
     ...(profile.modeId ? { modeId: profile.modeId } : {}),
-    ...(profile.thinkingOptionId ? { thinkingOptionId: profile.thinkingOptionId } : {}),
     ...(profile.featureValues ? { featureValues: { ...profile.featureValues } } : {}),
     ...(profile.instructions ? { instructions: profile.instructions } : {}),
   };
@@ -405,7 +414,7 @@ function buildProfile(id: string, selection: RoleSelection, extra: ProfileExtra 
     label: selection.modelLabel.trim() || selection.model,
     provider,
     ...(modeId ? { modeId } : {}),
-    ...(same && extra?.thinkingOptionId ? { thinkingOptionId: extra.thinkingOptionId } : {}),
+    ...(selection.thinkingOptionId ? { thinkingOptionId: selection.thinkingOptionId } : {}),
     ...(same && extra?.featureValues ? { featureValues: { ...extra.featureValues } } : {}),
     transport: same ? extra.transport : 'mcp',
     ...(same && extra?.instructions ? { instructions: extra.instructions } : {}),
