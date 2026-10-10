@@ -78,7 +78,7 @@ export function SharedToolsPage(props: PluginSurfaceProps & { rpc: Rpc }) {
       {state ? <Tabs<Tab> colors={colors} value={tab} onChange={setTab} items={[
         { id: 'mcp', label: ui('MCP servers', 'MCP 服务器'), count: state.mcpServers.length },
         { id: 'skills', label: ui('Skills', '技能'), count: state.skills.length, alert: state.notes.length > 0 || state.skills.some(skill => skill.targets.some(needsLook)) },
-        { id: 'providers', label: 'Provider', count: state.providers.length },
+        { id: 'providers', label: 'Provider', count: state.providers.filter(row => row.present).length },
       ]} /> : null}
       {error ? <Banner tone="danger" colors={colors} onClose={() => setError(null)}>{error}</Banner> : null}
       {state === null
@@ -575,12 +575,13 @@ const COLUMN = 48;
 function ProvidersTab(props: TabProps) {
   const { state, colors } = props;
   const columnLabel = { color: colors.foregroundMuted, fontSize: 11, fontWeight: '600' as const };
+  const providers = state.providers.filter(row => row.present);
   return <View style={{ gap: 12 }}>
     <Muted colors={colors}>{ui(
-      'Choose which providers get the shared servers and skills. Providers disabled in Paseo keep their choices.',
-      '选择哪些 Provider 使用共享的服务器和技能。在 Paseo 中停用的 Provider 会保留设置。',
+      'Choose which providers get the shared servers and skills.',
+      '选择哪些 Provider 使用共享的服务器和技能。',
     )}</Muted>
-    {state.providers.length === 0
+    {providers.length === 0
       ? <Empty colors={colors} icon="Boxes" title={ui('No providers yet', '暂无 Provider')} hint={ui('They appear here once Paseo lists them.', 'Paseo 列出后会显示在这里。')} />
       : <List colors={colors}>
         <View key="header" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 8 }}>
@@ -588,7 +589,7 @@ function ProvidersTab(props: TabProps) {
           <Text style={[columnLabel, { width: COLUMN, textAlign: 'center' }]}>MCP</Text>
           <Text style={[columnLabel, { width: COLUMN, textAlign: 'center' }]}>{ui('Skills', '技能')}</Text>
         </View>
-        {state.providers.map(row => <ProviderItem key={row.id} {...props} row={row} />)}
+        {providers.map(row => <ProviderItem key={row.id} {...props} row={row} />)}
       </List>}
   </View>;
 }
@@ -608,12 +609,11 @@ function ProviderItem(props: TabProps & { row: ProviderRow }) {
     void update(key === 'mcp' ? { mcp: value } : { skills: value }).then(clear);
   };
   const startEditing = () => { setDir(row.skillsDir ?? ''); setEditing(true); };
-  return <View style={{ paddingHorizontal: 14, paddingVertical: 10, gap: 8, opacity: row.present ? 1 : 0.7 }}>
+  return <View style={{ paddingHorizontal: 14, paddingVertical: 10, gap: 8 }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
       <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 13, fontWeight: '600', flexShrink: 1 }}>{row.label}</Text>
-          {!row.present ? <Chip colors={colors} label={ui('not enabled in Paseo', '未在 Paseo 启用')} /> : null}
           {row.skillsDirCustom ? <Chip colors={colors} label={ui('custom folder', '自定义目录')} /> : null}
         </View>
         {editing ? null : <Pressable accessibilityRole="button" accessibilityLabel={ui('Change skills folder', '修改技能目录')} onPress={startEditing}
