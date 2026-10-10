@@ -475,6 +475,25 @@ export class Gateway {
     });
   }
 
+  /**
+   * Removes a revoked device credential for good. An unrevoked device is refused here, not just in
+   * the UI, so a live credential can never be deleted without first revoking it. Deleting an id that
+   * is already gone is a no-op that returns the current state.
+   */
+  deleteDevice(id: string): Promise<GatewayState> {
+    return this.exclusive(async () => {
+      const stored = await this.load();
+      const device = stored.devices[id];
+      if (!device) return this.state();
+      if (device.revokedAt === null) throw new Error('Revoke this device before deleting it.');
+      delete stored.devices[id];
+      await this.save();
+      // Defensive: a revoked device should have no live requests or sessions, but end any stragglers.
+      this.abortDevice(id);
+      return this.state();
+    });
+  }
+
   /* ------------------------------------------------------------ remotes */
 
   connectRemote(input: { name: string; url: string; token: string; provider?: string; providers?: string[] }): Promise<GatewayState> {

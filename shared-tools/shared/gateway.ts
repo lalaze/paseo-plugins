@@ -113,6 +113,13 @@ export const revokeDevice = defineRpc({
   output: gatewayStateSchema,
 });
 
+/** Removes a revoked device credential for good. Only revoked devices may be deleted. */
+export const deleteDevice = defineRpc({
+  name: 'delete-device',
+  input: z.object({ id: z.string() }),
+  output: gatewayStateSchema,
+});
+
 /** Saves a center connection on this host and checks it right away, one row per provider. */
 export const connectRemote = defineRpc({
   name: 'connect-remote',

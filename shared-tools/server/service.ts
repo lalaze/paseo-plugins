@@ -360,6 +360,10 @@ export class SharedTools {
     return this.gateway.revokeDevice(id);
   }
 
+  deleteDevice(id: string): Promise<GatewayState> {
+    return this.gateway.deleteDevice(id);
+  }
+
   connectRemote(input: { name: string; url: string; token: string; provider?: string; providers?: string[] }): Promise<GatewayState> {
     return this.gateway.connectRemote(input);
   }

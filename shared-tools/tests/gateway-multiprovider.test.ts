@@ -258,6 +258,43 @@ test('removing one provider ends only its streams and sessions', async () => {
   codexReader.cancel().catch(() => undefined);
 });
 
+/* ------------------------------------------------------- deletion */
+
+test('a revoked device can be deleted, and the deletion survives a reload', async () => {
+  const h = await harness();
+  const created = await h.gateway.createDevice({ name: 'gone', providers: ['claude'], servers: null });
+  const id = created.state.devices[0]!.id;
+  assert.equal((await catalog(h.base, created.token, 'claude')).status, 200);
+
+  await h.gateway.revokeDevice(id);
+  assert.equal((await catalog(h.base, created.token, 'claude')).status, 401);
+
+  const afterDelete = await h.gateway.deleteDevice(id);
+  assert.deepEqual(afterDelete.devices, []);
+  assert.equal((await catalog(h.base, created.token, 'claude')).status, 401);
+
+  // Deleting the same id again is an idempotent no-op.
+  assert.deepEqual((await h.gateway.deleteDevice(id)).devices, []);
+
+  // A fresh instance over the same directory must not resurrect the deleted record.
+  const reloaded = new Gateway(afterDelete.dataDir, {
+    servers: async () => h.servers, providerMcpOn: async () => true, authHeader: async () => null,
+  });
+  assert.deepEqual((await reloaded.state()).devices, []);
+});
+
+test('deleting a device that is not revoked is refused and leaves it usable', async () => {
+  const h = await harness();
+  const created = await h.gateway.createDevice({ name: 'live', providers: ['claude'], servers: null });
+  const id = created.state.devices[0]!.id;
+
+  await assert.rejects(h.gateway.deleteDevice(id), /Revoke this device before deleting it/);
+
+  // The record and its token are untouched.
+  assert.deepEqual((await h.gateway.state()).devices.map(device => device.id), [id]);
+  assert.equal((await catalog(h.base, created.token, 'claude')).status, 200);
+});
+
 /* ------------------------------------------------------- storage */
 
 test('a legacy single-provider row loads, and a bad providers[] never falls back', async () => {

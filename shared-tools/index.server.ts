@@ -4,7 +4,7 @@ import {
   signInStatus, signOut, startSignIn, syncSkills, updateProvider, updateSkillAccess,
 } from './shared/rpc';
 import {
-  connectRemote, createDevice, disconnectRemote, readGatewayState, refreshRemote, revokeDevice, saveGatewayConfig, updateDeviceProviders,
+  connectRemote, createDevice, deleteDevice, disconnectRemote, readGatewayState, refreshRemote, revokeDevice, saveGatewayConfig, updateDeviceProviders,
 } from './shared/gateway';
 import { sharedToolsDir } from './server/providers';
 import { SharedTools } from './server/service';
@@ -41,6 +41,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(createDevice, input => tools.createDevice(input));
   server.handle(updateDeviceProviders, input => tools.updateDeviceProviders(input));
   server.handle(revokeDevice, ({ id }) => tools.revokeDevice(id));
+  server.handle(deleteDevice, ({ id }) => tools.deleteDevice(id));
   server.handle(connectRemote, input => tools.connectRemote(input));
   server.handle(refreshRemote, ({ id }) => tools.refreshRemote(id));
   server.handle(disconnectRemote, ({ id }) => tools.disconnectRemote(id));

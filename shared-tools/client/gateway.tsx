@@ -4,7 +4,7 @@ import { copyText, useToast } from '@getpaseo/plugin/client/react-native';
 import { Text, View } from 'react-native';
 import { ui } from '../shared/i18n';
 import {
-  connectRemote, createDevice, disconnectRemote, readGatewayState, refreshRemote, revokeDevice, saveGatewayConfig, updateDeviceProviders,
+  connectRemote, createDevice, deleteDevice, disconnectRemote, readGatewayState, refreshRemote, revokeDevice, saveGatewayConfig, updateDeviceProviders,
   type Device, type GatewayState, type Remote,
 } from '../shared/gateway';
 import type { ProviderRow } from '../shared/rpc';
@@ -194,10 +194,12 @@ function DeviceRow(props: GatewayTabProps & { device: Device }) {
   const { colors, device } = props;
   const [confirming, setConfirming] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const revoked = device.revokedAt !== null;
   return <View>
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 11, opacity: revoked ? 0.55 : 1 }}>
-      <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 11 }}>
+      {/* Only the content is dimmed; the action buttons stay fully readable. */}
+      <View style={{ flex: 1, minWidth: 0, gap: 3, opacity: revoked ? 0.55 : 1 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 13, fontWeight: '600', flexShrink: 1 }}>{device.name}</Text>
           {device.providers.map(id => <Chip key={id} colors={colors} label={props.providers.find(row => row.id === id)?.label ?? id} />)}
@@ -206,7 +208,12 @@ function DeviceRow(props: GatewayTabProps & { device: Device }) {
         <Muted colors={colors} small lines={1}>{deviceServers(device)} · {new Date(device.createdAt).toLocaleString()}</Muted>
       </View>
       {revoked
-        ? null
+        ? (deleting
+          ? <>
+            <Button colors={colors} variant="danger" label={ui('Delete', '删除')} blocked={props.busy} onPress={() => void props.run(() => props.rpc(deleteDevice, { id: device.id })).then(ok => ok && setDeleting(false))} />
+            <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={() => setDeleting(false)} />
+          </>
+          : <Button colors={colors} variant="ghost" iconOnly icon="Trash2" label={ui('Delete device', '删除设备')} blocked={props.busy} onPress={() => setDeleting(true)} />)
         : <>
           <Button colors={colors} variant="ghost" iconOnly icon="Users" label={ui('Edit providers', '编辑授权 Provider')} blocked={props.busy} onPress={() => setEditing(value => !value)} />
           {confirming

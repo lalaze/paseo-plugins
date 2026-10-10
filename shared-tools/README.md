@@ -76,6 +76,7 @@ One host — the **center** — can run a small authenticated MCP gateway. Sign 
 1. Install this plugin there too, open the **Machines** tab, and **Connect** with the center URL and the device token. Tick the providers this token is authorized for on the center; one connection is saved per provider with the same token. A provider the center does not allow is saved as an error row and is not added to agents.
 2. New agents of each connected provider get that provider's view of the center's servers; the caller's own same-named servers and this host's own servers keep priority. The center must be online — if it is not, the page shows the failure and **no** gateway servers are added, rather than serving a stale copy.
 3. **Revoke** a device on the center to stop it at once; its live calls are cut. **Check now** refreshes a connection's catalog.
+4. A **revoked** device can then be **deleted** to clear it from the list; only revoked devices can be deleted, and a live one is refused.
 
 Each request names the provider it acts as in an `X-Paseo-Provider` header, so one token's providers never share permissions or sessions. A client outside Paseo uses the same endpoints with the device token and that header:
 
