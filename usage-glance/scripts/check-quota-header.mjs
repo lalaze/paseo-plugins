@@ -30,14 +30,18 @@ for (const platform of ['android', 'ios', 'web']) {
   const contribute = (0, eval)(source)(runtimeRequire).default;
   const buttons = new Map();
   const workspaceIds = ['workspace-first', 'workspace-middle', 'workspace-last'];
-  let tree, removed = 0, quotaFails = false;
+  let tree, removed = 0, quotaFails = false, codexAccount = 'current';
+  const codex = account => ({
+    providerId: 'codex', displayName: `Codex (${account}@example.com)`, status: 'available', planLabel: null,
+    windows: [{ id: 'weekly', label: 'Weekly', remainingPct: account === 'old' ? 1 : 99 }],
+  });
   const client = {
     paseo: {
       providers: { listUsage: async () => ({
-        providers: Array.from({ length: 12 }, (_, index) => ({
+        providers: [codex(codexAccount), ...Array.from({ length: 12 }, (_, index) => ({
           providerId: `provider-${index}`, displayName: `Provider ${index}`, status: 'available', planLabel: null,
           windows: [{ id: 'weekly', label: 'Weekly', remainingPct: 80 }],
-        })), fetchedAt: new Date().toISOString(),
+        })), codex('old')], fetchedAt: new Date().toISOString(),
       }), subscribe: () => noop },
       workspaces: { subscribe: () => noop, list: async () => ({ entries: workspaceIds.map(id => ({ id })), pageInfo: { hasMore: false } }) },
     },
@@ -72,10 +76,17 @@ for (const platform of ['android', 'ios', 'web']) {
         if (workspaceId === workspaceIds[0] && attempt === 0) {
           const text = () => tree.root.findAllByType('text').map(node => node.props.children).flat().join(' ');
           assert.match(text(), /Antigravity/, 'official quota card renders in the real client bundle');
+          assert.equal(tree.root.findAllByType('text').filter(node => /^Codex \(/.test(node.props.children)).length, 1, 'one Codex card renders after an account switch');
+          assert.match(text(), /Codex \(current@example.com\)/);
+          assert.doesNotMatch(text(), /old@example.com/);
+          assert.doesNotMatch(button.label, /Codex/, 'stale account quota does not affect the header minimum');
           const refresh = () => tree.root.findAllByType('pressable').find(node => /Refresh quota|刷新额度/.test(node.props.accessibilityLabel));
           quotaFails = true;
+          codexAccount = 'next';
           await act(async () => { refresh().props.onPress(); await new Promise(resolve => setTimeout(resolve, 20)); });
           assert.match(text(), /Antigravity/);
+          assert.match(text(), /Codex \(next@example.com\)/);
+          assert.doesNotMatch(text(), /current@example.com|old@example.com/);
           assert.match(text(), /Showing previous quota|保留上次额度/, 'failed refresh keeps and marks the previous quota');
           quotaFails = false;
           await act(async () => { refresh().props.onPress(); await new Promise(resolve => setTimeout(resolve, 20)); });

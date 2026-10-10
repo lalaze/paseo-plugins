@@ -10,7 +10,17 @@ export function createUsageQuery(paseo: PaseoApi, readAntigravity?: () => Promis
   const options = queryOptions({
     queryKey: ['provider-usage'],
     queryFn: async (): Promise<UsageResult> => {
-      const result = await paseo.providers.listUsage();
+      const response = await paseo.providers.listUsage();
+      // Legacy usage lists put default logins before remembered session accounts,
+      // but expose only providerId. Keep the same primary record as the header
+      // picker; trailing accounts would also collide with the quota card keys.
+      const seen = new Set<string>();
+      const primary = response.providers.filter(provider => {
+        if (seen.has(provider.providerId)) return false;
+        seen.add(provider.providerId);
+        return true;
+      });
+      const result = primary.length === response.providers.length ? response : { ...response, providers: primary };
       const native = findUsage(result.providers, 'antigravity');
       if (hasQuota(native)) {
         lastKnown = { usage: native!, fetchedAt: result.fetchedAt };

@@ -13,6 +13,46 @@ const native = (available = false): UsageResult => ({
 const snapshot = { fetchedAt: '2026-10-08T15:59:00.000Z', windows: [{ id: 'weekly', label: 'Gemini Models · Weekly limit', remainingPct: 99.96, usedPct: 0.04, resetsAt: null, tone: 'ok' as const }] };
 const api = (result: UsageResult) => ({ providers: { listUsage: async () => result } }) as unknown as PaseoApi;
 
+test('account switches replace the current provider quota instead of adding a stale session account', async () => {
+  const account = (email: string, remainingPct: number) => ({
+    ...native().providers[0], displayName: `Codex (${email})`,
+    windows: [{ id: 'weekly', label: 'Weekly', remainingPct }],
+  });
+  const old = account('old@example.com', 8);
+  const current = account('current@example.com', 99);
+  const next = account('next@example.com', 54);
+  const kimi = { ...old, providerId: 'kimi', displayName: 'Kimi' };
+  let result: UsageResult = { ...native(), providers: [old, kimi] };
+  const query = createUsageQuery({ providers: { listUsage: async () => result } } as unknown as PaseoApi);
+  try {
+    assert.deepEqual((await query.client.fetchQuery(query.options)).providers, [old, kimi]);
+    result = { ...result, providers: [current, kimi, old] };
+    assert.deepEqual((await query.client.fetchQuery({ ...query.options, staleTime: 0 })).providers, [current, kimi]);
+    result = { ...result, providers: [next, kimi, old, current] };
+    assert.deepEqual((await query.client.fetchQuery({ ...query.options, staleTime: 0 })).providers, [next, kimi]);
+    assert.deepEqual(result.providers, [next, kimi, old, current], 'the daemon response remains unchanged');
+  } finally { query.client.clear(); }
+});
+
+test('stale session accounts are removed on native and fallback quota paths without replacing an unavailable current account', async () => {
+  for (const available of [false, true]) {
+    const result = native(available);
+    const current = { ...result.providers[0], displayName: 'Codex (current@example.com)', status: 'unavailable' as const, windows: [] };
+    const old = { ...result.providers[0], displayName: 'Codex (old@example.com)' };
+    result.providers = [current, result.providers[1], old];
+    let calls = 0;
+    const query = createUsageQuery(api(result), async () => { calls++; return snapshot; });
+    try {
+      const filled = await query.client.fetchQuery(query.options);
+      assert.deepEqual(filled.providers.filter(provider => provider.providerId === 'codex'), [current]);
+      assert.equal(filled.providers.length, 2);
+      assert.equal(filled.providers[1]?.windows[0]?.remainingPct, available ? 80 : 99.96);
+      assert.equal(calls, available ? 0 : 1);
+      assert.equal(result.providers.length, 3);
+    } finally { query.client.clear(); }
+  }
+});
+
 test('missing native Antigravity quota is filled from the official CLI without duplicating providers', async () => {
   const result = native();
   let calls = 0;
