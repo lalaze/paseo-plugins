@@ -107,6 +107,7 @@ export interface GitPort {
   prepareMerge(input: PrepareMergeInput): Promise<PrepareResult>;
   applyMerge(input: PrepareOk): Promise<ApplyResult>;
   removeWorktree(input: { root: string; worktree: string; branch: string }): Promise<void>;
+  deleteBranch(input: { root: string; branch: string }): Promise<void>;
   deleteMergedBranch(input: { root: string; branch: string; expectedHead: string; targetBranch: string }): Promise<void>;
 }
 
@@ -416,6 +417,20 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
       await assertTaskCheckout(input.root, input.worktree, input.branch);
       const removed = await text(input.root, ['worktree', 'remove', input.worktree]);
       if (removed.code !== 0) throw new Error(clip(removed.stderr || removed.stdout || '无法移除任务工作树'));
+    },
+    /**
+     * Force-deletes a plugin-made branch whose task is being removed for good, merged or not — unlike
+     * deleteMergedBranch there is no kept record to retry from. Refuses a branch a worktree still has checked out.
+     */
+    async deleteBranch(input) {
+      if (!input.branch.startsWith('paseo-todo/') || !branchSchema.safeParse(input.branch).success) {
+        throw new Error(`只删除插件创建的 paseo-todo/ 任务分支:${input.branch}`);
+      }
+      if (!await this.branchExists(input.root, input.branch)) return;
+      const ref = `refs/heads/${input.branch}`;
+      if ((await worktrees(input.root)).some(row => row.branch === ref)) throw new Error('任务分支仍在某个工作树检出,没有删除');
+      const deleted = await text(input.root, ['update-ref', '-d', ref]);
+      if (deleted.code !== 0) throw new Error(clip(deleted.stderr || deleted.stdout || '无法删除任务分支'));
     },
     /**
      * Deletes a plugin-made branch only when its tip is the accepted commit, that commit is already in the target,

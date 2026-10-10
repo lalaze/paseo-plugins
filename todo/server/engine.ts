@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { taskCollaborationSchema, unavailableCatalog, type CollaborationCatalog, type CollaborationState, type TaskCollaboration } from '../shared/collaboration';
 import { explain, todoError, type TodoErrorCode, type TodoFailure } from '../shared/errors';
-import { canAccept, canCancel, canContinue, canEnqueue, canRetry, isExecution, recoverExecution, reduceCollaboration, reducePermission, reduceTurn, type CollaborationDecision, type CollaborationObservation, type TurnKind } from '../shared/machine';
+import { canAccept, canCancel, canContinue, canDelete, canEnqueue, canRetry, isExecution, recoverExecution, reduceCollaboration, reducePermission, reduceTurn, type CollaborationDecision, type CollaborationObservation, type TurnKind } from '../shared/machine';
 import { reviewBindingSchema, reviewsMatch, taskSchema, type ReviewBinding, type Task, type TaskDiff, type TaskOutcome } from '../shared/schema';
 import type { AgentInspection, AgentPort } from './agents';
 import type { CollaborationPort } from './collaboration';
@@ -278,6 +278,73 @@ export class TodoEngine {
     if (execution && operationId && (agentId || !this.preparing.has(id))) await this.settleCancel(id, operationId, agentId);
     this.tick();
     return this.options.store.get(id);
+  }
+
+  /**
+   * Deletes a task from the board and cleans up any sessions or worktree it left behind.
+   * Tasks currently preparing, running, waiting for permission, canceling, or merging cannot be deleted.
+   */
+  async deleteTask(id: string): Promise<Task> {
+    if (this.disposed) throw todoError('delete-rejected');
+    this.ensureWritable();
+    // Hold a span like cleanup(): dispose() waits for the cleanup writes below instead of
+    // releasing the store lock under them, and a delete that starts during shutdown is refused.
+    const release = this.enter();
+    if (!release) throw todoError('delete-rejected');
+    try {
+      let removedTask: Task | null = null;
+      await this.lockTask(id, async () => {
+        const task = this.options.store.get(id);
+        if (!canDelete(task.status)) throw todoError('delete-rejected');
+
+        if (task.collaboration && (task.collaborationRunId || task.collaborationConversationId)) {
+          await this.cancelCollaborationRun(task).catch(() => undefined);
+        }
+        if (task.workspaceId || task.worktree || task.agentId) {
+          await this.options.agents.archiveTask({
+            taskId: task.id,
+            workspaceId: task.workspaceId,
+            worktree: task.worktree,
+          }).catch(() => undefined);
+        }
+        // Branch deletion needs the worktree gone first: git will not delete a checked-out branch.
+        const worktreeGone = !task.worktree || !task.branch || await this.gitSerial(task.repository, () =>
+          this.options.git.removeWorktree({
+            root: task.repository,
+            worktree: task.worktree!,
+            branch: task.branch!,
+          })
+        ).then(() => true, () => false);
+        if (worktreeGone && task.branch) {
+          const branch = task.branch;
+          await this.gitSerial(task.repository, async () => {
+            if (task.status === 'merged' && task.review) {
+              await this.options.git.deleteMergedBranch({
+                root: task.repository, branch, expectedHead: task.review.resultCommit, targetBranch: task.review.targetBranch,
+              });
+            } else {
+              await this.options.git.deleteBranch({ root: task.repository, branch });
+            }
+          }).catch(() => undefined);
+        }
+
+        removedTask = await this.options.store.remove(id);
+        this.collaborationSyncs.delete(id);
+        this.collaborationSyncedAt.delete(id);
+        this.reconciles.delete(id);
+        this.reconciledAt.delete(id);
+        this.collaborationRecoveries.delete(id);
+        if (task.agentId) {
+          this.startedTurn.delete(task.agentId);
+          this.permissions.delete(task.agentId);
+        }
+      });
+      this.tick();
+      if (!removedTask) throw todoError('task-missing');
+      return removedTask;
+    } finally {
+      release();
+    }
   }
 
   /** A blocked collaboration keeps its run and waits for the repository slot. Anything else stops the old run first. */

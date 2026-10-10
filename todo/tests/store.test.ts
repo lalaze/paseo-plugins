@@ -138,4 +138,34 @@ describe('task store', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('removes a task and persists the deletion', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'todo-store-'));
+    try {
+      const store = await TaskStore.open(dir);
+      const t1 = draft('11111111-1111-4111-8111-111111111111');
+      const t2 = draft('22222222-2222-4222-8222-222222222222');
+      await store.insert(t1);
+      await store.insert(t2);
+      assert.equal(store.list().length, 2);
+
+      const removed = await store.remove(t1.id);
+      assert.equal(removed.id, t1.id);
+      assert.equal(store.list().length, 1);
+      assert.equal(store.tryGet(t1.id), null);
+      assert.equal(store.tryGet(t2.id)?.id, t2.id);
+
+      await assert.rejects(() => store.remove('33333333-3333-4333-8333-333333333333'), /task-missing/);
+      await store.dispose();
+
+      // Verify persistence by reopening
+      const reloaded = await TaskStore.open(dir);
+      assert.equal(reloaded.list().length, 1);
+      assert.equal(reloaded.tryGet(t1.id), null);
+      assert.equal(reloaded.tryGet(t2.id)?.id, t2.id);
+      await reloaded.dispose();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

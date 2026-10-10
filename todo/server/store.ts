@@ -112,6 +112,20 @@ export class TaskStore {
     return parsed;
   }
 
+  async remove(id: string): Promise<Task> {
+    let removed: Task | null = null;
+    await this.transaction(current => {
+      const index = current.findIndex(item => item.id === id);
+      if (index < 0) throw todoError('task-missing');
+      removed = current[index];
+      const next = current.slice();
+      next.splice(index, 1);
+      return next;
+    });
+    if (!removed) throw todoError('task-missing');
+    return removed;
+  }
+
   async dispose(): Promise<void> {
     await this.queue;
     await this.release();

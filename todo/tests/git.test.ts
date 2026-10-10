@@ -310,6 +310,31 @@ describe('git merge and capture', () => {
     }
   });
 
+  it('force-deletes a task branch once its worktree is gone, and refuses anything else', async () => {
+    const root = await initRepo();
+    try {
+      const tool = createGit({ worktreeRoot: await worktreeRoot() });
+      const ensured = await tool.ensureWorktree({
+        root, taskId: '99999999-9999-4999-8999-999999999999', branch: 'paseo-todo/nine', targetBranch: 'main', existingPath: null,
+      });
+      await writeFile(join(ensured.worktree, 'note.txt'), 'nine\n');
+      const captured = await tool.capture({ root, worktree: ensured.worktree, branch: ensured.branch, message: 'capture' });
+
+      // Still checked out: the branch stays. Not a plugin branch: refused.
+      await assert.rejects(tool.deleteBranch({ root, branch: ensured.branch }), /检出/);
+      await assert.rejects(tool.deleteBranch({ root, branch: 'main' }), /paseo-todo\//);
+      assert.equal(await git(root, ['rev-parse', 'refs/heads/paseo-todo/nine']), captured.commit);
+
+      // Unmerged work is dropped for good once the worktree is removed. Idempotent afterwards.
+      await tool.removeWorktree({ root, worktree: ensured.worktree, branch: ensured.branch });
+      await tool.deleteBranch({ root, branch: ensured.branch });
+      assert.equal((await exec('git', ['branch', '--list', 'paseo-todo/nine'], { cwd: root })).stdout.trim(), '');
+      await tool.deleteBranch({ root, branch: ensured.branch });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps a worktree with uncommitted work and a branch another worktree still has checked out', async () => {
     const root = await initRepo();
     try {

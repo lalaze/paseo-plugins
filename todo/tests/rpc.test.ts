@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { collaborationSettingsSchema, taskCollaborationSchema } from '../shared/collaboration';
-import { acceptTask, createTask, listTasks, readCollaborationCatalog, updateTaskCollaboration } from '../shared/rpc';
+import { acceptTask, createTask, deleteTask, listTasks, readCollaborationCatalog, updateTaskCollaboration } from '../shared/rpc';
 import type { ReviewBinding } from '../shared/schema';
 
 const id = '11111111-1111-4111-8111-111111111111';
@@ -15,6 +15,13 @@ describe('accept task rpc', () => {
     assert.equal(acceptTask.input.safeParse({ id }).success, false);
     assert.equal(acceptTask.input.safeParse({ id, review, extra: true }).success, false);
     assert.equal(acceptTask.input.safeParse({ id, review }).success, true);
+  });
+
+  it('validates delete task input', () => {
+    assert.equal(deleteTask.input.safeParse({ id }).success, true);
+    assert.equal(deleteTask.input.safeParse({ id: 'invalid-id' }).success, false);
+    assert.equal(deleteTask.input.safeParse({ id, extra: true }).success, false);
+    assert.equal(deleteTask.input.safeParse({}).success, false);
   });
 
   it('lists every task or only one repository', () => {

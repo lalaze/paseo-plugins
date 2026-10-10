@@ -10,6 +10,7 @@ const messages = {
   'accept-rejected': ['Accept is only available while the task is awaiting review.', '只有待验收或合并失败且绑定仍在的任务可以验收。'],
   'agent-busy': ['The session is still running or waiting for permission, so this review cannot be merged.', '会话仍在执行或等待权限，不能合并这次验收。'],
   'cancel-rejected': ['This task cannot be canceled right now.', '当前不能取消这个任务。'],
+  'delete-rejected': ['This task cannot be deleted right now.', '当前不能删除这个任务。正在执行或合并中的任务请先取消或等待完成。'],
   'start-rejected': ['Only a draft can be started.', '只有草稿可以开始。'],
   'cleanup-rejected': ['Only a merged task can be cleaned up.', '只有已合并的任务可以清理。'],
   'retry-rejected': ['This task cannot be retried.', '当前不能重试这个任务。'],

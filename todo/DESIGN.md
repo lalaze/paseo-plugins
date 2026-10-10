@@ -30,6 +30,10 @@
 
 取消在创建会话之前和之后都要收尾。只有确认没有会话，或检查明确显示会话已停止且没有待处理权限，才写成已取消并放开该仓库。检查失败保持 `canceling`，仓库继续被占用。插件关闭时先停止新的派发，等已经开始的准备、固化、合并和写盘结束后才释放数据目录锁；关闭之后的回调不再写盘。
 
+## 删除任务
+
+通过 `deleteTask`（RPC `delete-task`，入参 `{ id }`）删除任务。非执行状态（`draft`、`queued`、`awaiting_review`、`needs_check`、`failed`、`canceled`、`merged`、`merge_failed`）允许删除；执行中或合并中的任务（`preparing`、`running`、`needs_attention`、`canceling`、`merging`）拒绝直接删除（返回 `delete-rejected`，需先取消或等待完成）。删除时尽力清理关联的协作 run、会话工作区、工作树以及任务分支（工作树移除成功后才删分支；已合并且绑定仍在的分支走 `deleteMergedBranch` 的安全校验，其余强制删除），并从 `state.json` 存档中永久移除。前端在卡片及详情抽屉提供带二次确认的删除操作。
+
 ## 验收绑定
 
 进入待验收时记下：成果 commit、成果 tree、目标分支、当时的目标分支 HEAD、本轮 `turnId`。

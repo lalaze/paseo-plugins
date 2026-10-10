@@ -1,6 +1,6 @@
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 import { todoError } from './shared/errors';
-import { acceptTask, cancelTask, cleanupTask, continueTask, createTask, listTasks, readBranches, readCatalog, readCollaborationCatalog, readHostIdentity, readTask, retryTask, startQueue, startTask, updateTaskCollaboration } from './shared/rpc';
+import { acceptTask, cancelTask, cleanupTask, continueTask, createTask, deleteTask, listTasks, readBranches, readCatalog, readCollaborationCatalog, readHostIdentity, readTask, retryTask, startQueue, startTask, updateTaskCollaboration } from './shared/rpc';
 import type { TurnKind } from './shared/machine';
 import { readBranches as branchesFor, readCatalog as catalogFor } from './server/catalog';
 import { TodoEngine } from './server/engine';
@@ -53,6 +53,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(cleanupTask, async ({ id }) => ({ task: await (await useEngine()).cleanup(id) }));
   server.handle(startTask, async ({ id }) => ({ task: await (await useEngine()).startTask(id) }));
   server.handle(cancelTask, async ({ id }) => ({ task: await (await useEngine()).cancel(id) }));
+  server.handle(deleteTask, async ({ id }) => ({ task: await (await useEngine()).deleteTask(id) }));
   server.handle(retryTask, async ({ id }) => ({ task: await (await useEngine()).retry(id) }));
   server.handle(continueTask, async ({ id, prompt }) => ({ task: await (await useEngine()).continue(id, prompt) }));
   server.handle(acceptTask, async ({ id, review }) => ({ task: await (await useEngine()).accept(id, review) }));

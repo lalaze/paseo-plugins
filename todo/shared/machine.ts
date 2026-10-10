@@ -35,6 +35,10 @@ export function canCancel(status: TaskStatus): boolean {
     || status === 'failed' || status === 'merge_failed' || status === 'canceling';
 }
 
+export function canDelete(status: TaskStatus): boolean {
+  return !isExecution(status) && status !== 'merging';
+}
+
 export function canAccept(status: TaskStatus): boolean {
   return status === 'awaiting_review' || status === 'merge_failed';
 }

@@ -3,7 +3,7 @@ import { Icon } from '@getpaseo/plugin/client/react-native';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { diffLineKind, diffStats, pendingCleanup, relativeAge, type CleanupStep } from '../shared/board';
 import { collaborationDraftIssue, collaborationModeLabel, collaborationStatus, draftFromCollaboration, sameCollaborationDraft, snapshotFromDraft, type CollaborationCatalog, type CollaborationDraft, type TaskCollaboration } from '../shared/collaboration';
-import { canAccept, canCancel, canContinue, canRetry } from '../shared/machine';
+import { canAccept, canCancel, canContinue, canDelete, canRetry } from '../shared/machine';
 import type { Catalog, Task, TaskDiff } from '../shared/schema';
 import { HostTag, projectLabel, StatusChip } from './card';
 import { CollaborationForm, CollaborationSummary, collaborationIssueText } from './collaboration';
@@ -13,6 +13,7 @@ import { Backdrop, Button, Dot, MONO, outline, SectionTitle, tint, type Colors }
 export interface SheetHandlers {
   onStart(): void;
   onCancel(): void;
+  onDelete(): void;
   onRetry(): void;
   onCleanup(): void;
   onContinue(prompt: string): Promise<boolean>;
@@ -216,6 +217,7 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
   const { colors, task } = props;
   const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const sessionPending = task.status !== 'canceled' && task.status !== 'canceling' && Boolean(task.collaboration) && (task.collaborationAcceptance === 'pending' || task.collaborationPhase === 'awaiting_acceptance');
   const collab = task.collaboration ? collaborationStatus(task) : null;
   const review = !sessionPending && canAccept(task.status) && Boolean(task.review);
@@ -257,10 +259,14 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
   return <View style={{ gap: 12, padding: 12, borderRadius: 12, borderWidth: 1, borderColor: warn ? tint(colors.statusWarning, 0.35) : outline(colors), backgroundColor: warn ? tint(colors.statusWarning, 0.05) : tint(colors.surface2, 0.4) }}>
     <Text style={{ color: task.status === 'merged' ? (cleanupFailed ? colors.statusWarning : colors.statusSuccess) : colors.foreground, fontSize: 12, lineHeight: 18 }}>{text}</Text>
     {primary}
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
       {canContinue(task.status) ? <Button label={ui('Send back', '打回修改')} icon="CornerDownLeft" onPress={() => setComposing(value => !value)} colors={colors} variant="outline" size="xs" /> : null}
       {props.onOpenSession && task.status !== 'needs_attention' && !sessionPending ? <Button label={ui('Open session', '打开会话')} icon="MessageSquare" onPress={props.onOpenSession} colors={colors} variant="outline" size="xs" /> : null}
       {canCancel(task.status) ? <Button label={task.status === 'canceling' ? ui('Retry stop', '重试停止') : task.collaboration && task.operationId ? ui('Stop collaboration', '停止协作') : ui('Cancel task', '取消任务')} icon="Square" onPress={props.onCancel} colors={colors} variant="outline" size="xs" disabled={props.busy} /> : null}
+      {canDelete(task.status) ? (confirmDelete ? <>
+        <Button label={ui('Confirm delete', '确认删除')} icon="Trash2" onPress={props.onDelete} colors={colors} size="xs" disabled={props.busy} />
+        <Button label={ui('Cancel', '取消')} onPress={() => setConfirmDelete(false)} colors={colors} variant="ghost" size="xs" disabled={props.busy} />
+      </> : <Button label={ui('Delete task', '删除任务')} icon="Trash2" onPress={() => setConfirmDelete(true)} colors={colors} variant="outline" size="xs" disabled={props.busy} />) : null}
     </View>
     {composing && canContinue(task.status) ? <View style={{ gap: 8 }}>
       <TextInput

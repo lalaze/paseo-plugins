@@ -74,6 +74,7 @@ export const startQueue = defineRpc({
 export const cleanupTask = defineRpc({ name: 'cleanup-task', input: idInput, output: taskOutput });
 export const startTask = defineRpc({ name: 'start-task', input: idInput, output: taskOutput });
 export const cancelTask = defineRpc({ name: 'cancel-task', input: idInput, output: taskOutput });
+export const deleteTask = defineRpc({ name: 'delete-task', input: idInput, output: taskOutput });
 export const retryTask = defineRpc({ name: 'retry-task', input: idInput, output: taskOutput });
 export const continueTask = defineRpc({
   name: 'continue-task',

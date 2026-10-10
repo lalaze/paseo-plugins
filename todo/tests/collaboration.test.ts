@@ -76,6 +76,7 @@ function git(): GitPort {
     prepareMerge: async () => failure,
     applyMerge: async () => ({ ok: true, mergeCommit: sha, method: 'update-ref' }),
     removeWorktree: async () => undefined,
+    deleteBranch: async () => undefined,
     deleteMergedBranch: async () => undefined,
   };
 }

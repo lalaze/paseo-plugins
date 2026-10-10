@@ -57,6 +57,7 @@ function harness(options: {
   const archived: Array<{ taskId: string; workspaceId: string | null; worktree: string | null }> = [];
   const removed: string[] = [];
   const deleted: Array<{ branch: string; expectedHead: string; targetBranch: string }> = [];
+  const forceDeleted: string[] = [];
   const created: string[] = [];
   const workspaces: string[] = [];
   const workspaceTitles: Array<string | undefined> = [];
@@ -99,11 +100,12 @@ function harness(options: {
     prepareMerge: options.prepare ?? (async input => { prepares.push(1); return prepared(input); }),
     applyMerge: options.apply ?? (async input => ({ ok: true, mergeCommit: input.mergeCommit, method: 'update-ref' })),
     async removeWorktree(input) { await options.removeWorktree?.(input); removed.push(input.worktree); },
+    async deleteBranch(input) { forceDeleted.push(input.branch); },
     async deleteMergedBranch(input) { deleted.push({ branch: input.branch, expectedHead: input.expectedHead, targetBranch: input.targetBranch }); },
   };
   let now = 1;
   return {
-    created, sent, captures, prepares, prompts, cancels, archived, removed, deleted, workspaces, workspaceTitles, agents, git,
+    created, sent, captures, prepares, prompts, cancels, archived, removed, deleted, forceDeleted, workspaces, workspaceTitles, agents, git,
     engine: null as unknown as TodoEngine,
     async open(dir: string) {
       const store = await TaskStore.open(dir);
@@ -1603,4 +1605,121 @@ describe('collaboration lifecycle', () => {
       assert.equal(host.reads, synced + 2);
     });
   });
+
+  describe('engine delete task', () => {
+    it('deletes a draft task immediately and persists removal', async () => {
+      const box = harness();
+      await withEngine(box, async (engine, dir) => {
+        const task = await draft(engine, 'to-delete');
+        assert.equal(engine.list().tasks.length, 1);
+        const deleted = await engine.deleteTask(task.id);
+        assert.equal(deleted.id, task.id);
+        assert.equal(engine.list().tasks.length, 0);
+
+        const store = await TaskStore.open(dir);
+        assert.equal(store.list().length, 0);
+        await store.dispose();
+      });
+    });
+
+    it('rejects deleting an active running task', async () => {
+      const box = harness();
+      await withEngine(box, async engine => {
+        const task = await draft(engine, 'running-task');
+        await engine.startTask(task.id);
+        await waitFor(() => engine.list().tasks[0]?.status === 'running');
+        await assert.rejects(() => engine.deleteTask(task.id), /delete-rejected/);
+        assert.equal(engine.list().tasks[0]?.status, 'running');
+      });
+    });
+
+    it('deletes a reviewed task and cleans up its sessions, worktree, and branch', async () => {
+      const box = harness();
+      await withEngine(box, async engine => {
+        const task = await reviewed(box, engine, 'reviewed-task');
+        assert.equal(task.status, 'awaiting_review');
+        assert.ok(task.worktree);
+        const deleted = await engine.deleteTask(task.id);
+        assert.equal(deleted.id, task.id);
+        assert.equal(engine.list().tasks.length, 0);
+        assert.equal(box.archived.length, 1);
+        assert.equal(box.archived[0].taskId, task.id);
+        assert.equal(box.removed.includes(task.worktree!), true);
+        assert.deepEqual(box.forceDeleted, [`paseo-todo/${task.id}`]);
+        assert.equal(box.deleted.length, 0);
+      });
+    });
+
+    it('deletes a merged task through the merged-branch check, never the force delete', async () => {
+      const box = harness();
+      await withEngine(box, async engine => {
+        const task = await reviewed(box, engine, 'merged-task');
+        const merged = await engine.accept(task.id, reviewOf(task));
+        assert.equal(merged.status, 'merged');
+        // The merge's automatic cleanup already archived, removed, and deleted once.
+        assert.equal(box.deleted.length, 1);
+        await engine.deleteTask(task.id);
+        assert.equal(engine.list().tasks.length, 0);
+        assert.equal(box.deleted.length, 2);
+        assert.equal(box.forceDeleted.length, 0);
+      });
+    });
+
+    it('keeps the branch when the worktree cannot be removed during delete', async () => {
+      const box = harness({ removeWorktree: async () => { throw new Error('contains untracked files'); } });
+      await withEngine(box, async engine => {
+        const task = await reviewed(box, engine, 'dirty-delete');
+        await engine.deleteTask(task.id);
+        assert.equal(engine.list().tasks.length, 0);
+        assert.equal(box.forceDeleted.length, 0);
+        assert.equal(box.deleted.length, 0);
+      });
+    });
+
+    it('throws task-missing when deleting a non-existent task', async () => {
+      const box = harness();
+      await withEngine(box, async engine => {
+        await assert.rejects(
+          () => engine.deleteTask('00000000-0000-4000-8000-000000009999'),
+          /task-missing/,
+        );
+      });
+    });
+
+    it('dispose waits for an in-flight delete before releasing the store lock', async () => {
+      let releaseArchive: () => void = () => undefined;
+      let entered: () => void = () => undefined;
+      const enteredPromise = new Promise<void>(resolve => { entered = resolve; });
+      const gate = new Promise<void>(resolve => { releaseArchive = resolve; });
+      const box = harness({
+        archive: async () => { entered(); await gate; },
+      });
+      const dir = await mkdtemp(join(tmpdir(), 'todo-engine-'));
+      try {
+        const engine = await box.open(dir);
+        const task = await reviewed(box, engine, 'delete-drain');
+        const deleting = engine.deleteTask(task.id);
+        await enteredPromise;
+        let disposed = false;
+        const disposing = engine.dispose().then(() => { disposed = true; });
+        const blocked = await TaskStore.open(dir);
+        assert.equal(blocked.loadError, 'store-locked');
+        await blocked.dispose();
+        assert.equal(disposed, false);
+        releaseArchive();
+        await deleting;
+        await disposing;
+        assert.equal(disposed, true);
+        const reopened = await TaskStore.open(dir);
+        assert.equal(reopened.loadError, null);
+        assert.equal(reopened.list().length, 0);
+        await reopened.dispose();
+        await assert.rejects(() => engine.deleteTask('00000000-0000-4000-8000-000000000099'), /delete-rejected/);
+      } finally {
+        releaseArchive();
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  });
 });
+

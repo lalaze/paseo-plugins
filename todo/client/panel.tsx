@@ -12,7 +12,7 @@ import {
   type TaskCollaboration,
 } from '../shared/collaboration';
 import { canRetry } from '../shared/machine';
-import { acceptTask, cancelTask, cleanupTask, continueTask, createTask, listTasks, readCatalog, readCollaborationCatalog, readTask, retryTask, startQueue, startTask, updateTaskCollaboration } from '../shared/rpc';
+import { acceptTask, cancelTask, cleanupTask, continueTask, createTask, deleteTask, listTasks, readCatalog, readCollaborationCatalog, readTask, retryTask, startQueue, startTask, updateTaskCollaboration } from '../shared/rpc';
 import type { Catalog, Task, TaskDiff } from '../shared/schema';
 import { projectLabel, TaskCard, type CardAction } from './card';
 import { browserCollaborationStore } from './collaboration';
@@ -290,6 +290,16 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     });
   }
 
+  function deleteTaskAction(host: TodoHost, id: string) {
+    void run(host, rpc => rpc(deleteTask, { id })).then(result => {
+      if (result && open && open.id === id) {
+        setUnsavedCollab(current => current && current.hostId === host.id && current.id === id ? null : current);
+        setOpen(null);
+        setDetail(null);
+      }
+    });
+  }
+
   function startAll() {
     const targets = project ? [hostOf(project.hostId)] : hostFilter ? [hostOf(hostFilter)] : hosts;
     let skipped = false;
@@ -323,6 +333,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     action={cardAction(task)}
     onOpen={() => setOpen({ hostId: task.hostId, id: task.id })}
     onCancel={() => { void run(hostOf(task.hostId), rpc => rpc(cancelTask, { id: task.id })); }}
+    onDelete={() => deleteTaskAction(hostOf(task.hostId), task.id)}
   />);
   // A wide column needs a lane to scroll. It has no border: the cards already have one.
   const lane = { borderRadius: 14, backgroundColor: tint(colors.surface1, 0.22) } as const;
@@ -442,6 +453,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
         onSaveCollaboration={async (collaboration: TaskCollaboration | null) => (await run(host, rpc => rpc(updateTaskCollaboration, { id: openTask.id, collaboration }))) !== null}
         onStart={() => { if (!startBlocked(openTask)) void run(host, rpc => rpc(startTask, { id: openTask.id })); }}
         onCancel={() => { void run(host, rpc => rpc(cancelTask, { id: openTask.id })); }}
+        onDelete={() => deleteTaskAction(host, openTask.id)}
         onRetry={() => { void run(host, rpc => rpc(retryTask, { id: openTask.id })); }}
         onCleanup={() => { void run(host, rpc => rpc(cleanupTask, { id: openTask.id })); }}
         onContinue={async prompt => (await run(host, rpc => rpc(continueTask, { id: openTask.id, prompt }))) !== null}
