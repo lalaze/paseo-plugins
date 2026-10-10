@@ -100,7 +100,7 @@ test('a second host reaches the center MCP with only its device token', async ()
   assert.equal(connected.remotes[0]!.status, 'ok');
   const added = await remote.mcpFor('claude', undefined, paseo);
   assert.deepEqual(Object.keys(added ?? {}), ['docs']);
-  assert.deepEqual(added!.docs, { type: 'http', url: `${base}/mcp/docs`, headers: { Authorization: `Bearer ${token}` } });
+  assert.deepEqual(added!.docs, { type: 'http', url: `${base}/mcp/docs`, headers: { Authorization: `Bearer ${token}`, 'X-Paseo-Provider': 'claude' } });
   assert.ok(!JSON.stringify(added).includes('upstream-secret'), 'the upstream token must never reach the remote host');
 
   const remoteFiles = await readFile(join(remoteRoot, 'gateway.json'), 'utf8');
@@ -164,4 +164,32 @@ test('a server added or removed on the center is reflected on the next agent', a
 
   await center.deleteServer('extra');
   assert.deepEqual(Object.keys((await remote.mcpFor('claude', undefined, paseo))!), ['docs']);
+});
+
+test('one token authorized for two providers injects each provider’s servers with its own header', async () => {
+  const centerHome = await mkdtemp(join(tmpdir(), 'gateway-center-'));
+  const remoteHome = await mkdtemp(join(tmpdir(), 'gateway-remote-'));
+  const upstream = await fakeUpstream();
+  const port = await freePort();
+  const center = new SharedTools(join(centerHome, '.paseo/shared-tools'), centerHome, () => undefined);
+  const remote = new SharedTools(join(remoteHome, '.paseo/shared-tools'), remoteHome, () => undefined);
+  cleanups.push(async () => { center.stop(); remote.stop(); await upstream.close(); await rm(centerHome, { recursive: true, force: true }); await rm(remoteHome, { recursive: true, force: true }); });
+
+  await center.state(paseo);
+  await center.saveServer({ name: 'docs', previousName: null, enabled: true, providers: null, config: { type: 'http', url: upstream.url } });
+  await center.saveGatewayConfig({ enabled: true, host: '127.0.0.1', port, publicUrl: `http://100.96.195.115:${port}` });
+  const { token } = await center.createDevice({ name: 'laptop', providers: ['claude', 'codex'], servers: null });
+  const base = `http://127.0.0.1:${port}`;
+
+  const connected = await remote.connectRemote({ name: 'center', url: base, token, providers: ['claude', 'codex'] });
+  assert.deepEqual(connected.remotes.map(remote => remote.provider).sort(), ['claude', 'codex']);
+
+  const claude = await remote.mcpFor('claude', undefined, paseo);
+  const codex = await remote.mcpFor('codex', undefined, paseo);
+  assert.deepEqual(Object.keys(claude ?? {}), ['docs']);
+  assert.deepEqual(Object.keys(codex ?? {}), ['docs']);
+  assert.equal((claude!.docs as { headers: Record<string, string> }).headers['X-Paseo-Provider'], 'claude');
+  assert.equal((codex!.docs as { headers: Record<string, string> }).headers['X-Paseo-Provider'], 'codex');
+  assert.equal((claude!.docs as { headers: Record<string, string> }).headers.Authorization, `Bearer ${token}`);
+  assert.ok(!JSON.stringify([claude, codex]).includes('upstream-secret'), 'the upstream token must never reach the remote host');
 });

@@ -32,9 +32,9 @@ export type GatewayConfig = z.infer<typeof gatewayConfigSchema>;
 export const deviceSchema = z.object({
   id: z.string(),
   name: z.string(),
-  /** The provider this credential is fixed to; it cannot be used as another provider. */
-  provider: z.string(),
-  /** Null allows every server the provider may use; an empty list allows none. */
+  /** The providers this credential is authorized for; it cannot be used as any other provider. */
+  providers: z.array(z.string()).min(1),
+  /** Null allows every server the allowed providers may use; an empty list allows none. */
   servers: z.array(z.string()).nullable(),
   createdAt: z.string(),
   revokedAt: z.string().nullable(),
@@ -89,8 +89,22 @@ export const saveGatewayConfig = defineRpc({
 /** Creates a device credential; the token is returned once and only its hash is kept. */
 export const createDevice = defineRpc({
   name: 'create-device',
-  input: z.object({ name: z.string().trim().min(1).max(64), provider: z.string().min(1), servers: z.array(z.string()).nullable() }),
+  input: z.object({
+    name: z.string().trim().min(1).max(64),
+    /** The legacy single-provider form; still accepted. */
+    provider: z.string().min(1).optional(),
+    /** One or more providers this credential may be used as; the preferred form. */
+    providers: z.array(z.string().min(1)).optional(),
+    servers: z.array(z.string()).nullable(),
+  }),
   output: z.object({ state: gatewayStateSchema, token: z.string() }),
+});
+
+/** Changes which providers a device credential is authorized for, keeping the same token. */
+export const updateDeviceProviders = defineRpc({
+  name: 'update-device-providers',
+  input: z.object({ id: z.string(), providers: z.array(z.string().min(1)).min(1) }),
+  output: gatewayStateSchema,
 });
 
 export const revokeDevice = defineRpc({
@@ -99,14 +113,17 @@ export const revokeDevice = defineRpc({
   output: gatewayStateSchema,
 });
 
-/** Saves a center connection on this host and checks it right away. */
+/** Saves a center connection on this host and checks it right away, one row per provider. */
 export const connectRemote = defineRpc({
   name: 'connect-remote',
   input: z.object({
     name: z.string().trim().min(1).max(64),
     url: z.string().min(1).max(2048),
     token: z.string().min(1).max(4096),
-    provider: z.string().min(1),
+    /** The legacy single-provider form; still accepted. */
+    provider: z.string().min(1).optional(),
+    /** One or more providers to connect with the same token; the preferred form. */
+    providers: z.array(z.string().min(1)).optional(),
   }),
   output: gatewayStateSchema,
 });

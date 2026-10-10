@@ -433,15 +433,19 @@ test('the gateway caps concurrent upstream requests', async () => {
   const h = await harness({ hang: true });
   const { token } = await h.gateway.createDevice({ name: 'a', provider: 'claude', servers: null });
   const controllers: AbortController[] = [];
+  // Hold every response so its stream stays open; a collected body would free a slot and mask the cap.
+  const held: Response[] = [];
   const statuses: number[] = [];
   for (let index = 0; index < MAX_ACTIVE_REQUESTS + 8; index += 1) {
     const controller = new AbortController();
     controllers.push(controller);
     const response = await fetch(`${h.base}/mcp/docs`, { headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' }, signal: controller.signal });
+    held.push(response);
     statuses.push(response.status);
   }
   assert.equal(statuses[0], 200);
   assert.ok(statuses.includes(503), 'a saturated gateway must answer 503 rather than pile up');
+  assert.equal(held.filter(response => response.status === 200).length, MAX_ACTIVE_REQUESTS, 'exactly the cap is admitted');
   for (const controller of controllers) controller.abort();
   // Once the streams are released, a new request is served again.
   let recovered = false;

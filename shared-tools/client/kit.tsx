@@ -97,7 +97,7 @@ export function Switch(props: { label: string; value: boolean; onChange(value: b
   </Pressable>;
 }
 
-export function Chip(props: { label: string; colors: Colors; tone?: Tone; selected?: boolean; onPress?(): void }) {
+export function Chip(props: { label: string; colors: Colors; tone?: Tone; selected?: boolean; icon?: string; onPress?(): void }) {
   const { colors } = props;
   const tone = props.tone ?? 'muted';
   const fg = props.selected ? colors.surface0 : toneColor(colors, tone);
@@ -105,7 +105,10 @@ export function Chip(props: { label: string; colors: Colors; tone?: Tone; select
     flexDirection: 'row' as const, alignItems: 'center' as const, gap: 4, paddingHorizontal: 7, height: 20, borderRadius: 6, flexShrink: 0,
     backgroundColor: props.selected ? colors.foreground : tone === 'muted' ? tint(colors.foreground, 0.07) : tint(fg, 0.12),
   };
-  const body = <Text numberOfLines={1} style={{ color: fg, fontSize: 11, fontWeight: '600' }}>{props.label}</Text>;
+  const body = <>
+    {props.icon ? <Icon name={props.icon} size={11} color={fg} /> : null}
+    <Text numberOfLines={1} style={{ color: fg, fontSize: 11, fontWeight: '600' }}>{props.label}</Text>
+  </>;
   return props.onPress
     ? <Pressable accessibilityRole="button" accessibilityLabel={props.label} accessibilityState={{ selected: props.selected }} onPress={props.onPress} style={style}>{body}</Pressable>
     : <View style={style}>{body}</View>;

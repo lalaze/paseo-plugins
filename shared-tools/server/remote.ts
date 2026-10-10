@@ -61,17 +61,21 @@ function usableServerName(name: string): boolean {
   return nameSchema.safeParse(name).success && !RESERVED_SERVERS.has(name);
 }
 
+/** The request header a device uses to name the provider it is acting as. */
+export const PROVIDER_HEADER = 'X-Paseo-Provider';
+
 /**
- * Reads the catalog the center allows this credential. It verifies the center's `provider` is the
- * one this credential was created for, refuses redirects, and rebuilds every server path itself
- * rather than trusting the center. Errors are fixed descriptions, never raw fetch errors.
+ * Reads the catalog the center allows this credential for `expectedProvider`. It names the provider
+ * in `X-Paseo-Provider`, verifies the center's `provider` matches, refuses redirects, and rebuilds
+ * every server path itself rather than trusting the center. Errors are fixed descriptions, never
+ * raw fetch errors.
  */
 export async function fetchCatalog(baseUrl: string, token: string, expectedProvider: string, fetcher: Fetch = fetch, timeoutMs = 10_000): Promise<CatalogServer[]> {
   const url = `${baseUrl.replace(/\/+$/, '')}/v1/servers`;
   let response: Response;
   try {
     response = await fetcher(url, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', [PROVIDER_HEADER]: expectedProvider },
       redirect: 'manual',
       signal: deadline(timeoutMs),
     });
@@ -106,12 +110,14 @@ export async function fetchCatalog(baseUrl: string, token: string, expectedProvi
 }
 
 /** The MCP servers a remote connection adds to a new agent: the center's endpoints with this device's token. */
-export function remoteMcpConfigs(baseUrl: string, token: string, catalog: readonly CatalogServer[]): Record<string, McpConfig> {
+export function remoteMcpConfigs(baseUrl: string, token: string, catalog: readonly CatalogServer[], provider?: string): Record<string, McpConfig> {
   const base = baseUrl.replace(/\/+$/, '');
   const configs: Record<string, McpConfig> = {};
   for (const server of catalog) {
     if (!usableServerName(server.name)) continue;
-    configs[server.name] = mcpConfigSchema.parse({ type: 'http', url: `${base}${gatewayServerPath(server.name)}`, headers: { Authorization: `Bearer ${token}` } });
+    // The provider header names the provider the gateway must act as; the device token stays the credential.
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}`, ...(provider ? { [PROVIDER_HEADER]: provider } : {}) };
+    configs[server.name] = mcpConfigSchema.parse({ type: 'http', url: `${base}${gatewayServerPath(server.name)}`, headers });
   }
   return configs;
 }

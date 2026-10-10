@@ -4,7 +4,7 @@ import { copyText, useToast } from '@getpaseo/plugin/client/react-native';
 import { Text, View } from 'react-native';
 import { ui } from '../shared/i18n';
 import {
-  connectRemote, createDevice, disconnectRemote, readGatewayState, refreshRemote, revokeDevice, saveGatewayConfig,
+  connectRemote, createDevice, disconnectRemote, readGatewayState, refreshRemote, revokeDevice, saveGatewayConfig, updateDeviceProviders,
   type Device, type GatewayState, type Remote,
 } from '../shared/gateway';
 import type { ProviderRow } from '../shared/rpc';
@@ -123,6 +123,47 @@ function ShareCard(props: GatewayTabProps) {
   </View>;
 }
 
+/* ------------------------------------------------------------- picker */
+
+/** Every provider Paseo lists, in a stable order. */
+function providerIds(providers: ProviderRow[]): string[] {
+  return [...new Set(providers.map(row => row.id))];
+}
+
+/**
+ * The multi-select used by every device and connection form: each chip toggles, a tick marks the
+ * chosen ones, and Select all / Clear make the whole set one tap away. Clearing disables submit.
+ */
+function ProviderPicker(props: {
+  colors: Colors;
+  providers: ProviderRow[];
+  selected: string[];
+  onChange(ids: string[]): void;
+  label: string;
+  hint: string;
+}) {
+  const { colors, providers, selected } = props;
+  const ids = providerIds(providers);
+  const all = ids.length > 0 && ids.every(id => selected.includes(id));
+  const toggle = (id: string) => props.onChange(selected.includes(id) ? selected.filter(value => value !== id) : [...selected, id]);
+  return <View style={{ gap: 6 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <Text style={{ color: colors.foregroundMuted, fontSize: 11, fontWeight: '600' }}>{props.label}</Text>
+      <View style={{ flex: 1, minWidth: 8 }} />
+      <Button colors={colors} variant="ghost" label={ui('Select all', '全选')} disabled={!ids.length || all} onPress={() => props.onChange(ids)} />
+      <Button colors={colors} variant="ghost" label={ui('Clear', '清空')} disabled={!selected.length} onPress={() => props.onChange([])} />
+    </View>
+    <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+      {ids.map(id => {
+        const on = selected.includes(id);
+        return <Chip key={id} colors={colors} label={providers.find(row => row.id === id)?.label ?? id} selected={on} icon={on ? 'Check' : undefined} onPress={() => toggle(id)} />;
+      })}
+      {!ids.length ? <Muted colors={colors} small>{ui('No providers discovered yet.', '暂未发现 Provider。')}</Muted> : null}
+    </View>
+    <Muted colors={colors} small>{props.hint}</Muted>
+  </View>;
+}
+
 /* -------------------------------------------------------------- devices */
 
 function DevicesSection(props: GatewayTabProps) {
@@ -132,7 +173,7 @@ function DevicesSection(props: GatewayTabProps) {
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
       <View style={{ flex: 1, minWidth: 160 }}>
         <Heading colors={colors} title={ui('Device credentials', '设备凭据')} count={state.devices.length}
-          hint={ui('Each credential is fixed to one provider and can be revoked here at any time.', '每个凭据固定一个 Provider，可随时在此撤销。')} />
+          hint={ui('Each credential is authorized for one or more providers and can be revoked here at any time.', '每个凭据可授权一个或多个 Provider，可随时在此撤销。')} />
       </View>
       <Button colors={colors} icon="Plus" variant="primary" label={ui('Create device', '创建设备')} blocked={props.busy} onPress={() => setCreating(value => !value)} />
     </View>
@@ -152,41 +193,63 @@ function deviceServers(device: Device): string {
 function DeviceRow(props: GatewayTabProps & { device: Device }) {
   const { colors, device } = props;
   const [confirming, setConfirming] = useState(false);
+  const [editing, setEditing] = useState(false);
   const revoked = device.revokedAt !== null;
-  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 11, opacity: revoked ? 0.55 : 1 }}>
-    <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-        <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 13, fontWeight: '600', flexShrink: 1 }}>{device.name}</Text>
-        <Chip colors={colors} label={props.providers.find(row => row.id === device.provider)?.label ?? device.provider} />
-        {revoked ? <Chip colors={colors} tone="danger" label={ui('revoked', '已撤销')} /> : null}
+  return <View>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 11, opacity: revoked ? 0.55 : 1 }}>
+      <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <Text numberOfLines={1} style={{ color: colors.foreground, fontSize: 13, fontWeight: '600', flexShrink: 1 }}>{device.name}</Text>
+          {device.providers.map(id => <Chip key={id} colors={colors} label={props.providers.find(row => row.id === id)?.label ?? id} />)}
+          {revoked ? <Chip colors={colors} tone="danger" label={ui('revoked', '已撤销')} /> : null}
+        </View>
+        <Muted colors={colors} small lines={1}>{deviceServers(device)} · {new Date(device.createdAt).toLocaleString()}</Muted>
       </View>
-      <Muted colors={colors} small lines={1}>{deviceServers(device)} · {new Date(device.createdAt).toLocaleString()}</Muted>
+      {revoked
+        ? null
+        : <>
+          <Button colors={colors} variant="ghost" iconOnly icon="Users" label={ui('Edit providers', '编辑授权 Provider')} blocked={props.busy} onPress={() => setEditing(value => !value)} />
+          {confirming
+            ? <>
+              <Button colors={colors} variant="danger" label={ui('Revoke', '撤销')} blocked={props.busy} onPress={() => void props.run(() => props.rpc(revokeDevice, { id: device.id })).then(ok => ok && setConfirming(false))} />
+              <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={() => setConfirming(false)} />
+            </>
+            : <Button colors={colors} variant="ghost" iconOnly icon="Ban" label={ui('Revoke', '撤销')} blocked={props.busy} onPress={() => setConfirming(true)} />}
+        </>}
     </View>
-    {revoked
-      ? null
-      : confirming
-        ? <>
-          <Button colors={colors} variant="danger" label={ui('Revoke', '撤销')} blocked={props.busy} onPress={() => void props.run(() => props.rpc(revokeDevice, { id: device.id })).then(ok => ok && setConfirming(false))} />
-          <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={() => setConfirming(false)} />
-        </>
-        : <Button colors={colors} variant="ghost" iconOnly icon="Ban" label={ui('Revoke', '撤销')} blocked={props.busy} onPress={() => setConfirming(true)} />}
+    {editing ? <DeviceProvidersForm {...props} device={device} onClose={() => setEditing(false)} /> : null}
+  </View>;
+}
+
+/** Changes which providers a device may act as, keeping the same token. */
+function DeviceProvidersForm(props: GatewayTabProps & { device: Device; onClose(): void }) {
+  const { colors, providers, device } = props;
+  const [chosen, setChosen] = useState<string[]>(device.providers);
+  const save = () => void props.run(() => props.rpc(updateDeviceProviders, { id: device.id, providers: chosen })).then(ok => ok && props.onClose());
+  return <View style={{ padding: 14, gap: 12, backgroundColor: colors.surface1 }}>
+    <ProviderPicker colors={colors} providers={providers} selected={chosen} onChange={setChosen}
+      label={ui('Authorized providers', '授权 Provider')}
+      hint={ui('The token stays the same. Removing a provider stops that provider’s running calls and sessions at once; the others keep working.', '令牌保持不变。移除某个 Provider 会立即停止该 Provider 的活动调用与会话，其余不受影响。')} />
+    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
+      <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={props.onClose} />
+      <Button colors={colors} variant="primary" label={ui('Save', '保存')} disabled={!chosen.length} blocked={props.busy} onPress={save} />
+    </View>
   </View>;
 }
 
 function CreateDevice(props: GatewayTabProps & { onClose(): void }) {
   const { colors, providers, state } = props;
   const [name, setName] = useState('');
-  const [provider, setProvider] = useState(providers[0]?.id ?? '');
+  const [chosen, setChosen] = useState<string[]>(() => providerIds(providers));
   const [mode, setMode] = useState<'all' | 'choose'>('all');
   const [selected, setSelected] = useState<string[]>([]);
   const [token, setToken] = useState<string | null>(null);
   const copy = useCopy();
-  const ids = [...new Set([...providers.map(row => row.id), provider].filter(Boolean))];
   const toggle = (id: string) => setSelected(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id]);
   const submit = () => {
     let created: string | null = null;
     void props.run(async () => {
-      const result = await props.rpc(createDevice, { name: name.trim(), provider, servers: mode === 'all' ? null : selected });
+      const result = await props.rpc(createDevice, { name: name.trim(), providers: chosen, servers: mode === 'all' ? null : selected });
       created = result.token;
       return result.state;
     }).then(ok => { if (ok && created) { setToken(created); setName(''); } });
@@ -204,14 +267,9 @@ function CreateDevice(props: GatewayTabProps & { onClose(): void }) {
   </Card>;
   return <Card colors={colors}>
     <Field colors={colors} label={ui('Device name', '设备名称')} value={name} onChange={setName} placeholder={ui('My laptop', '我的笔记本')} />
-    <View style={{ gap: 6 }}>
-      <Text style={{ color: colors.foregroundMuted, fontSize: 11, fontWeight: '600' }}>{ui('Fixed provider', '固定 Provider')}</Text>
-      <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-        {ids.map(id => <Chip key={id} colors={colors} label={providers.find(row => row.id === id)?.label ?? id} selected={provider === id} onPress={() => setProvider(id)} />)}
-        {!ids.length ? <Muted colors={colors} small>{ui('No providers discovered yet.', '暂未发现 Provider。')}</Muted> : null}
-      </View>
-      <Muted colors={colors} small>{ui('The device must be used with this provider; create a separate device for each provider.', '该设备只能用于此 Provider；不同 Provider 请分别创建。')}</Muted>
-    </View>
+    <ProviderPicker colors={colors} providers={providers} selected={chosen} onChange={setChosen}
+      label={ui('Authorized providers', '授权 Provider')}
+      hint={ui('Select every provider this device may be used as; the same token works for all of them.', '勾选该设备可使用的所有 Provider；同一个令牌通用。')} />
     <View style={{ gap: 6 }}>
       <Text style={{ color: colors.foregroundMuted, fontSize: 11, fontWeight: '600' }}>{ui('Allowed servers', '允许的服务器')}</Text>
       <Tabs<'all' | 'choose'> colors={colors} small value={mode} onChange={setMode} items={[
@@ -219,14 +277,14 @@ function CreateDevice(props: GatewayTabProps & { onClose(): void }) {
         { id: 'choose', label: ui('Choose', '选择') },
       ]} />
       {mode === 'choose' ? <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-        {state.shareable.map(name => <Chip key={name} colors={colors} label={name} selected={selected.includes(name)} onPress={() => toggle(name)} />)}
+        {state.shareable.map(name => <Chip key={name} colors={colors} label={name} selected={selected.includes(name)} icon={selected.includes(name) ? 'Check' : undefined} onPress={() => toggle(name)} />)}
         {!state.shareable.length ? <Muted colors={colors} small>{ui('No shareable servers.', '暂无可共享服务器。')}</Muted> : null}
         {state.shareable.length && !selected.length ? <Muted colors={colors} small>{ui('None selected means this device may use no servers.', '不选表示该设备不允许任何服务器。')}</Muted> : null}
       </View> : null}
     </View>
     <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
       <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={props.onClose} />
-      <Button colors={colors} variant="primary" label={ui('Create', '创建')} disabled={!name.trim() || !provider} blocked={props.busy} onPress={submit} />
+      <Button colors={colors} variant="primary" label={ui('Create', '创建')} disabled={!name.trim() || !chosen.length} blocked={props.busy} onPress={submit} />
     </View>
   </Card>;
 }
@@ -285,14 +343,13 @@ function ConnectRemote(props: GatewayTabProps & { onClose(): void }) {
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
-  const [provider, setProvider] = useState(providers[0]?.id ?? '');
+  const [chosen, setChosen] = useState<string[]>(() => { const first = providers[0]?.id; return first ? [first] : []; });
   const [problem, setProblem] = useState<string | null>(null);
-  const ids = [...new Set([...providers.map(row => row.id), provider].filter(Boolean))];
   const submit = () => {
     setProblem(null);
     void props.run(async () => {
       try {
-        return await props.rpc(connectRemote, { name: name.trim(), url: url.trim(), token: token.trim(), provider });
+        return await props.rpc(connectRemote, { name: name.trim(), url: url.trim(), token: token.trim(), providers: chosen });
       } catch (error) {
         setProblem(message(error));
         throw error;
@@ -307,17 +364,13 @@ function ConnectRemote(props: GatewayTabProps & { onClose(): void }) {
     <Field colors={colors} label={ui('Name', '名称')} value={name} onChange={setName} placeholder={ui('Center', '中心')} />
     <Field colors={colors} label={ui('Center URL', '中心 URL')} value={url} onChange={setUrl} placeholder="http://100.96.195.115:47822" mono />
     <Field colors={colors} label={ui('Device token', '设备令牌')} value={token} onChange={setToken} secure placeholder={ui('Paste the token shown at creation', '粘贴创建时显示的令牌')} mono />
-    <View style={{ gap: 6 }}>
-      <Text style={{ color: colors.foregroundMuted, fontSize: 11, fontWeight: '600' }}>{ui('Provider this device was created for', '该设备创建时指定的 Provider')}</Text>
-      <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-        {ids.map(id => <Chip key={id} colors={colors} label={providers.find(row => row.id === id)?.label ?? id} selected={provider === id} onPress={() => setProvider(id)} />)}
-      </View>
-      <Muted colors={colors} small>{ui('It must match the credential’s provider on the center, or the center refuses it.', '必须与中心凭据的 Provider 一致，否则中心会拒绝。')}</Muted>
-    </View>
+    <ProviderPicker colors={colors} providers={providers} selected={chosen} onChange={setChosen}
+      label={ui('Providers this token is authorized for', '该令牌已授权的 Provider')}
+      hint={ui('One connection is saved per provider with the same token. A provider the center does not allow is saved as an error and is not added to agents.', '每个 Provider 会用同一令牌各保存一条连接。中心不允许的 Provider 会保存为错误，且不会加入 Agent。')} />
     {problem ? <Muted colors={colors} danger selectable>{problem}</Muted> : null}
     <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
       <Button colors={colors} variant="ghost" label={ui('Cancel', '取消')} onPress={props.onClose} />
-      <Button colors={colors} variant="primary" label={ui('Connect', '连接')} disabled={!name.trim() || !url.trim() || !token.trim() || !provider} blocked={props.busy} onPress={submit} />
+      <Button colors={colors} variant="primary" label={ui('Connect', '连接')} disabled={!name.trim() || !url.trim() || !token.trim() || !chosen.length} blocked={props.busy} onPress={submit} />
     </View>
   </Card>;
 }

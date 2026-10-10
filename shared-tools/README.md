@@ -62,27 +62,28 @@ A custom provider is matched by its id, then by the executable it runs (`kimi ac
 
 ## Multi-machine: sign in once, use it everywhere
 
-One host — the **center** — can run a small authenticated MCP gateway. Sign in to an MCP server once there, create a device credential for another machine, and that machine's new agents reach the same server through the center, under the center account's permissions. The center's upstream token never leaves the center; a device only ever holds its own revocable token. The gateway is **off by default**.
+One host — the **center** — can run a small authenticated MCP gateway. Sign in to an MCP server once there, create a device credential for another machine, and that machine's new agents reach the same server through the center, under the center account's permissions. The center's upstream token never leaves the center; a device only ever holds its own revocable token. **One token can be authorized for several providers**, so you do not open one per provider. The gateway is **off by default**.
 
 **On the center host**
 
 1. Open the **Machines** tab and switch **Center gateway** on. It binds `0.0.0.0:47822` by default, and the address other machines use is `http://100.96.195.115:47822`; change it if this host's private-network address differs. Plain HTTP is for Tailscale or another trusted private network — put HTTPS in front of it for the public internet.
-2. **Create device**, pick the provider the device will run as, and limit it to some servers if you like. The token is shown **once**: copy it now. Only its hash is stored and it cannot be shown again; if it is lost, revoke the device and create another.
-3. Add the servers to share on the **MCP servers** tab. Only enabled **http** servers are shared; older **sse** and local **stdio** servers stay on this machine and are listed as not shared. Each server's **Provider permissions** and the provider's **MCP** switch both still apply.
+2. **Create device**, tick every provider the device may run as (**Select all** / **Clear** help), and limit it to some servers if you like. The token is shown **once**: copy it now. Only its hash is stored and it cannot be shown again; if it is lost, revoke the device and create another.
+3. Add the servers to share on the **MCP servers** tab. Only enabled **http** servers are shared; older **sse** and local **stdio** servers stay on this machine and are listed as not shared. Each server's **Provider permissions** and each provider's **MCP** switch both still apply, per provider.
+4. Change a device's providers later with its **Edit providers** button. The token stays the same. Removing a provider takes effect at once: that provider's running calls are cut and its sessions are refused; the remaining providers keep working.
 
 **On the other machine**
 
-1. Install this plugin there too, open the **Machines** tab, and **Connect** with the center URL and the device token. The provider must match the one the credential was created for, or the center refuses it.
-2. New agents of that provider get the center's servers; the caller's own same-named servers and this host's own servers keep priority. The center must be online — if it is not, the page shows the failure and **no** gateway servers are added, rather than serving a stale copy.
+1. Install this plugin there too, open the **Machines** tab, and **Connect** with the center URL and the device token. Tick the providers this token is authorized for on the center; one connection is saved per provider with the same token. A provider the center does not allow is saved as an error row and is not added to agents.
+2. New agents of each connected provider get that provider's view of the center's servers; the caller's own same-named servers and this host's own servers keep priority. The center must be online — if it is not, the page shows the failure and **no** gateway servers are added, rather than serving a stale copy.
 3. **Revoke** a device on the center to stop it at once; its live calls are cut. **Check now** refreshes a connection's catalog.
 
-A client outside Paseo uses the same endpoints with the device token:
+Each request names the provider it acts as in an `X-Paseo-Provider` header, so one token's providers never share permissions or sessions. A client outside Paseo uses the same endpoints with the device token and that header:
 
 ```json
-{ "mcpServers": { "docs": { "type": "http", "url": "http://100.96.195.115:47822/mcp/docs", "headers": { "Authorization": "Bearer <device token>" } } } }
+{ "mcpServers": { "docs": { "type": "http", "url": "http://100.96.195.115:47822/mcp/docs", "headers": { "Authorization": "Bearer <device token>", "X-Paseo-Provider": "claude" } } } }
 ```
 
-`GET /v1/servers` lists the servers a token may use. The MCP Streamable HTTP methods are proxied, including SSE responses; redirects are refused, the request body is size-limited, and each device's sessions are kept separate.
+`GET /v1/servers` lists the servers a token may use for the provider named in `X-Paseo-Provider`, and answers with that provider. A credential authorized for one provider may omit the header; a multi-provider credential must send it (otherwise `400`), and an unauthorized provider is refused (`403`). The MCP Streamable HTTP methods are proxied, including SSE responses; redirects are refused, the request body is size-limited, and each device's sessions are kept separate per server **and** per provider. The provider header stays on this host — it is never forwarded upstream.
 
 ## Files
 
@@ -90,7 +91,7 @@ Everything lives in `$PASEO_SHARED_TOOLS_DIR`, or `$PASEO_HOME/shared-tools`:
 
 - `config.json`: the shared servers in the usual `mcpServers` format, plus `enabled: false`, `providers: [...]` (allowlist), and `excludedProviders: [...]` (denylist) where set, the per-provider switches, and `skillAccess` rules keyed by skill name with the same permission fields. Missing/null `providers` allows everyone; `providers: []` allows nobody. Denials take precedence if both lists are hand-edited. These metadata fields are never passed to MCP clients. It may hold tokens, so it is written with mode 600. You can edit it by hand; an entry the plugin cannot read is reported on the screen and kept. Invalid permission rules stop sharing the affected resource rather than allowing everyone.
 - `oauth.json`: sign-ins, by server name (clients, access and refresh tokens for browser sign-ins; source references for reused native authorization), mode 600.
-- `gateway.json`: the multi-machine gateway's own settings, device token **hashes**, and connections to other centers, mode 600. Kept apart from `config.json` and `oauth.json` so a hand-edited server list and this file never race.
+- `gateway.json`: the multi-machine gateway's own settings, device token **hashes** with the providers each is authorized for, and connections to other centers (one row per provider), mode 600. A legacy single-provider device row is read as `providers: [provider]`; a row whose `providers` is present but empty or malformed is ignored rather than widened. Kept apart from `config.json` and `oauth.json` so a hand-edited server list and this file never race.
 - `skills/`: the library.
 - `backups/`: replaced copies and removed library skills.
 

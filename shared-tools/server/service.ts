@@ -348,15 +348,19 @@ export class SharedTools {
     return this.gateway.saveConfig(input);
   }
 
-  createDevice(input: { name: string; provider: string; servers: string[] | null }): Promise<{ state: GatewayState; token: string }> {
+  createDevice(input: { name: string; provider?: string; providers?: string[]; servers: string[] | null }): Promise<{ state: GatewayState; token: string }> {
     return this.gateway.createDevice(input);
+  }
+
+  updateDeviceProviders(input: { id: string; providers: string[] }): Promise<GatewayState> {
+    return this.gateway.updateDeviceProviders(input);
   }
 
   revokeDevice(id: string): Promise<GatewayState> {
     return this.gateway.revokeDevice(id);
   }
 
-  connectRemote(input: { name: string; url: string; token: string; provider: string }): Promise<GatewayState> {
+  connectRemote(input: { name: string; url: string; token: string; provider?: string; providers?: string[] }): Promise<GatewayState> {
     return this.gateway.connectRemote(input);
   }
 

@@ -56,7 +56,7 @@ const DEFAULT_OPTIONS: GatewayOptions = {
 const storedDeviceSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(64),
-  provider: z.string().min(1),
+  providers: z.array(z.string().min(1)).min(1),
   servers: z.array(z.string()).nullable(),
   createdAt: z.string(),
   revokedAt: z.string().nullable(),
@@ -86,11 +86,12 @@ interface StoredGateway {
   remotes: Record<string, StoredRemote>;
 }
 
-/** One client-facing MCP session, mapped to a device, a server and the upstream's own session id. */
+/** One client-facing MCP session, mapped to a device, a server, a provider and the upstream's own session id. */
 interface Session {
   id: string;
   deviceId: string;
   server: string;
+  provider: string;
   upstreamId: string;
   /** Static identity of the upstream target; never the dynamic OAuth token. */
   fingerprint: string;
@@ -129,6 +130,17 @@ function record(value: unknown): Record<string, unknown> | null {
 function headerValue(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) return value[0] ?? null;
   return typeof value === 'string' && value.length ? value : null;
+}
+
+/**
+ * The provider list from the multi-select field, or the legacy single field. Duplicates are
+ * dropped and an empty selection is refused, so a blank form can never widen or blank a scope.
+ */
+function resolveProviders(input: { provider?: string; providers?: string[] }): string[] {
+  const raw = input.providers ?? (input.provider !== undefined ? [input.provider] : []);
+  const providers = [...new Set(raw.map(value => value.trim()).filter(value => value.length > 0))];
+  if (!providers.length) throw new Error('Choose at least one provider.');
+  return providers;
 }
 
 export function hashToken(token: string): string {
@@ -335,9 +347,13 @@ export class Gateway {
     const config = gatewayConfigSchema.safeParse({ ...defaultConfig(), ...record(parsed?.config) });
     const devices: Record<string, StoredDevice> = {};
     for (const [id, value] of Object.entries(record(parsed?.devices) ?? {})) {
-      const row = storedDeviceSchema.safeParse({ ...(record(value) ?? {}), id });
+      const raw = record(value) ?? {};
+      // A legacy single-provider row migrates only when it has no `providers` field at all; a
+      // present-but-empty or malformed `providers` is rejected rather than falling back to widen.
+      const candidate = 'providers' in raw ? raw : ('provider' in raw ? { ...raw, providers: [raw.provider] } : raw);
+      const row = storedDeviceSchema.safeParse({ ...candidate, id });
       if (!row.success) { this.loadNotes.push(`A stored device credential (${id}) is damaged and is ignored; create a new one.`); continue; }
-      devices[id] = row.data;
+      devices[id] = { ...row.data, providers: [...new Set(row.data.providers)] };
     }
     const remotes: Record<string, StoredRemote> = {};
     for (const [id, value] of Object.entries(record(parsed?.remotes) ?? {})) {
@@ -416,17 +432,33 @@ export class Gateway {
 
   /* ------------------------------------------------------------ devices */
 
-  createDevice(input: { name: string; provider: string; servers: string[] | null }): Promise<{ state: GatewayState; token: string }> {
+  createDevice(input: { name: string; provider?: string; providers?: string[]; servers: string[] | null }): Promise<{ state: GatewayState; token: string }> {
     const token = newDeviceToken();
     return this.exclusive(async () => {
+      const providers = resolveProviders(input);
       const stored = await this.load();
       const id = newId();
       stored.devices[id] = {
-        id, name: input.name, provider: input.provider, servers: input.servers,
+        id, name: input.name, providers, servers: input.servers,
         createdAt: new Date().toISOString(), revokedAt: null, tokenHash: hashToken(token),
       };
       await this.save();
       return { state: await this.state(), token };
+    });
+  }
+
+  /** Widens or narrows a device's providers, keeping the same token. A narrowed provider is cut at once. */
+  updateDeviceProviders(input: { id: string; providers: string[] }): Promise<GatewayState> {
+    return this.exclusive(async () => {
+      const providers = resolveProviders(input);
+      const stored = await this.load();
+      const device = stored.devices[input.id];
+      if (!device) throw new Error('That device credential no longer exists.');
+      const removed = device.providers.filter(provider => !providers.includes(provider));
+      device.providers = providers;
+      await this.save();
+      if (removed.length) this.abortDeviceProviders(input.id, removed);
+      return this.state();
     });
   }
 
@@ -445,20 +477,26 @@ export class Gateway {
 
   /* ------------------------------------------------------------ remotes */
 
-  connectRemote(input: { name: string; url: string; token: string; provider: string }): Promise<GatewayState> {
+  connectRemote(input: { name: string; url: string; token: string; provider?: string; providers?: string[] }): Promise<GatewayState> {
     const base = normalizeGatewayUrl(input.url);
     return this.exclusive(async () => {
+      const providers = resolveProviders(input);
       const stored = await this.load();
-      const id = newId();
-      let catalog: CatalogServer[] = [];
-      let status: RemoteStatus = 'ok';
-      let error: string | null = null;
-      try { catalog = await fetchCatalog(base, input.token, input.provider, this.fetcher, this.options.catalogTimeoutMs); }
-      catch (cause) { status = 'error'; error = message(cause); }
-      stored.remotes[id] = {
-        id, name: input.name, url: base, token: input.token, provider: input.provider,
-        createdAt: new Date().toISOString(), checkedAt: new Date().toISOString(), status, error, catalog,
-      };
+      const now = new Date().toISOString();
+      for (const provider of providers) {
+        // The same URL, token and provider is one connection: refresh it in place rather than duplicate.
+        const existing = Object.values(stored.remotes).find(remote => remote.url === base && remote.token === input.token && remote.provider === provider);
+        const id = existing?.id ?? newId();
+        let catalog: CatalogServer[] = [];
+        let status: RemoteStatus = 'ok';
+        let error: string | null = null;
+        try { catalog = await fetchCatalog(base, input.token, provider, this.fetcher, this.options.catalogTimeoutMs); }
+        catch (cause) { status = 'error'; error = message(cause); }
+        stored.remotes[id] = {
+          id, name: input.name, url: base, token: input.token, provider,
+          createdAt: existing?.createdAt ?? now, checkedAt: now, status, error, catalog,
+        };
+      }
       await this.save();
       return this.state();
     });
@@ -522,7 +560,7 @@ export class Gateway {
     const out: Record<string, McpConfig> = {};
     for (const remote of Object.values(stored.remotes)) {
       if (remote.provider !== provider || remote.status !== 'ok') continue;
-      for (const [name, config] of Object.entries(remoteMcpConfigs(remote.url, remote.token, remote.catalog))) {
+      for (const [name, config] of Object.entries(remoteMcpConfigs(remote.url, remote.token, remote.catalog, remote.provider))) {
         if (out[name] === undefined) out[name] = config;
       }
     }
@@ -544,21 +582,23 @@ export class Gateway {
       if (!mcp.has(provider)) mcp.set(provider, await this.deps.providerMcpOn(provider).catch(() => false));
       return mcp.get(provider)!;
     };
-    const allowed = async (deviceId: string, serverName: string): Promise<boolean> => {
+    const allowed = async (deviceId: string, serverName: string, provider: string): Promise<boolean> => {
       const device = stored.devices[deviceId];
       if (!device || device.revokedAt !== null) return false;
+      // The provider must still be one the device is authorized for; a narrowed scope cuts it here.
+      if (!device.providers.includes(provider)) return false;
       const server = servers[serverName];
-      if (!server || !this.mayUse(device, serverName, server)) return false;
-      return mcpOn(device.provider);
+      if (!server || !this.mayUse(device, provider, serverName, server)) return false;
+      return mcpOn(provider);
     };
     for (const active of [...this.active]) {
       const server = servers[active.server];
-      const ok = await allowed(active.deviceId, active.server);
+      const ok = await allowed(active.deviceId, active.server, active.provider);
       if (!ok || !server || configFingerprint(stripStored(server)) !== active.fingerprint) this.endActive(active);
     }
     for (const [id, session] of [...this.sessions]) {
       const server = servers[session.server];
-      const ok = await allowed(session.deviceId, session.server);
+      const ok = await allowed(session.deviceId, session.server, session.provider);
       if (!ok || !server || configFingerprint(stripStored(server)) !== session.fingerprint) this.sessions.delete(id);
     }
   }
@@ -634,6 +674,18 @@ export class Gateway {
     for (const active of this.active) if (active.deviceId === id) this.endActive(active);
   }
 
+  /**
+   * Ends the streams and forgets the sessions of a device that used one of the now-removed
+   * providers. The sessions are deleted rather than kept: a kept session would be revived if the
+   * provider were authorized again before the next request touched it. Once gone, any later request
+   * carrying that id is answered 404 by the unknown-session pre-check in `handle`.
+   */
+  private abortDeviceProviders(id: string, providers: readonly string[]): void {
+    const drop = new Set(providers);
+    for (const [sessionId, session] of this.sessions) if (session.deviceId === id && drop.has(session.provider)) this.sessions.delete(sessionId);
+    for (const active of this.active) if (active.deviceId === id && drop.has(active.provider)) this.endActive(active);
+  }
+
   /** Stops the listener, ends every live stream and forgets every session; resolves once the port is free. */
   private closeServer(): Promise<void> {
     if (this.sweepTimer) { clearInterval(this.sweepTimer); this.sweepTimer = null; }
@@ -692,6 +744,21 @@ export class Gateway {
     return null;
   }
 
+  /**
+   * The provider this request acts as, named by `X-Paseo-Provider`. A single-provider credential
+   * with no header keeps working; a multi-provider credential must choose, and an unauthorized
+   * choice is refused rather than silently downgraded to another provider.
+   */
+  private selectProvider(request: IncomingMessage, device: StoredDevice): { provider: string } | { status: number; error: string } {
+    const requested = headerValue(request.headers['x-paseo-provider']);
+    if (!requested) {
+      if (device.providers.length === 1) return { provider: device.providers[0]! };
+      return { status: 400, error: 'This device is authorized for more than one provider; send the X-Paseo-Provider header.' };
+    }
+    if (!device.providers.includes(requested)) return { status: 403, error: 'This device is not authorized for that provider.' };
+    return { provider: requested };
+  }
+
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
       const stored = await this.load();
@@ -701,7 +768,9 @@ export class Gateway {
         if (request.method !== 'GET') return json(response, 405, { error: 'Method not allowed.' });
         const device = await this.authenticate(request);
         if (!device) return unauthorized(response);
-        return json(response, 200, { provider: device.provider, servers: await this.catalogFor(device) });
+        const selected = this.selectProvider(request, device);
+        if ('error' in selected) return json(response, selected.status, { error: selected.error });
+        return json(response, 200, { provider: selected.provider, servers: await this.catalogFor(device, selected.provider) });
       }
       const match = /^\/mcp\/([^/]+)$/.exec(url.pathname);
       if (match) {
@@ -711,9 +780,21 @@ export class Gateway {
         if (!device) return unauthorized(response);
         let name: string;
         try { name = decodeURIComponent(match[1]!); } catch { return json(response, 404, { error: 'Unknown server.' }); }
-        const config = await this.serverFor(device, name);
+        // A session that is unknown, or belongs to another device or server, is gone. Answer 404
+        // before the provider check, so a deleted or foreign session is never mistaken for a fresh
+        // request as an unauthorized provider.
+        const incoming = headerValue(request.headers['mcp-session-id']);
+        if (incoming) {
+          const session = this.sessions.get(incoming);
+          if (!session || session.deviceId !== device.id || session.server !== name) {
+            return json(response, 404, { error: 'That MCP session is no longer valid.' });
+          }
+        }
+        const selected = this.selectProvider(request, device);
+        if ('error' in selected) return json(response, selected.status, { error: selected.error });
+        const config = await this.serverFor(device, selected.provider, name);
         if (!config) return json(response, 404, { error: 'No such server for this device.' });
-        return await this.forward(request, response, device, name, config);
+        return await this.forward(request, response, device, selected.provider, name, config);
       }
       return json(response, 404, { error: 'Not found.' });
     } catch (error) {
@@ -723,42 +804,43 @@ export class Gateway {
     }
   }
 
-  /** Whether a device may use a server: the server is enabled, HTTP, and allowed for its provider. */
-  private mayUse(device: StoredDevice, name: string, server: StoredServer): boolean {
+  /** Whether a device may use a server as a provider: the server is enabled, HTTP, and allowed for it. */
+  private mayUse(device: StoredDevice, provider: string, name: string, server: StoredServer): boolean {
     if (server.enabled === false) return false;
     // Only the streamable HTTP transport is shared across machines; sse and stdio are local-only.
     if (server.type !== 'http') return false;
     if (!nameSchema.safeParse(name).success) return false;
     if (device.servers !== null && !device.servers.includes(name)) return false;
-    return allowsProvider(server, device.provider);
+    return allowsProvider(server, provider);
   }
 
-  private async catalogFor(device: StoredDevice): Promise<CatalogServer[]> {
-    if (!await this.deps.providerMcpOn(device.provider).catch(() => false)) return [];
+  private async catalogFor(device: StoredDevice, provider: string): Promise<CatalogServer[]> {
+    if (!await this.deps.providerMcpOn(provider).catch(() => false)) return [];
     const servers = await this.deps.servers();
     const catalog: CatalogServer[] = [];
     for (const [name, server] of Object.entries(servers)) {
-      if (!this.mayUse(device, name, server)) continue;
+      if (!this.mayUse(device, provider, name, server)) continue;
       catalog.push({ name, path: `/mcp/${encodeURIComponent(name)}` });
     }
     return catalog.sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  private async serverFor(device: StoredDevice, name: string): Promise<McpConfig | null> {
-    if (!await this.deps.providerMcpOn(device.provider).catch(() => false)) return null;
+  private async serverFor(device: StoredDevice, provider: string, name: string): Promise<McpConfig | null> {
+    if (!await this.deps.providerMcpOn(provider).catch(() => false)) return null;
     const server = (await this.deps.servers())[name];
-    if (!server || !this.mayUse(device, name, server)) return null;
+    if (!server || !this.mayUse(device, provider, name, server)) return null;
     return stripStored(server);
   }
 
-  /** The current target for a device and server, or null if it is no longer allowed. */
-  private async currentTarget(device: StoredDevice, name: string): Promise<{ config: HttpConfig; fingerprint: string } | null> {
+  /** The current target for a device, provider and server, or null if it is no longer allowed. */
+  private async currentTarget(device: StoredDevice, provider: string, name: string): Promise<{ config: HttpConfig; fingerprint: string } | null> {
     const stored = await this.load();
     const fresh = stored.devices[device.id];
     if (!fresh || fresh.revokedAt !== null) return null;
-    if (!await this.deps.providerMcpOn(fresh.provider).catch(() => false)) return null;
+    if (!fresh.providers.includes(provider)) return null;
+    if (!await this.deps.providerMcpOn(provider).catch(() => false)) return null;
     const server = (await this.deps.servers())[name];
-    if (!server || !this.mayUse(fresh, name, server)) return null;
+    if (!server || !this.mayUse(fresh, provider, name, server)) return null;
     const config = stripStored(server);
     if (config.type !== 'http') return null;
     return { config, fingerprint: configFingerprint(config) };
@@ -781,14 +863,15 @@ export class Gateway {
     return headers;
   }
 
-  private async forward(request: IncomingMessage, response: ServerResponse, device: StoredDevice, name: string, config: McpConfig): Promise<void> {
+  private async forward(request: IncomingMessage, response: ServerResponse, device: StoredDevice, provider: string, name: string, config: McpConfig): Promise<void> {
     if (config.type !== 'http') return json(response, 404, { error: 'No such server for this device.' });
 
     const incoming = headerValue(request.headers['mcp-session-id']);
     let session: Session | null = null;
     if (incoming) {
       session = this.sessions.get(incoming) ?? null;
-      if (!session || session.deviceId !== device.id || session.server !== name) return json(response, 404, { error: 'That MCP session is not known here.' });
+      // A session belongs to one device, one server and one provider; another provider must not reuse it.
+      if (!session || session.deviceId !== device.id || session.server !== name || session.provider !== provider) return json(response, 404, { error: 'That MCP session is not known here.' });
       // A reconfigured upstream must not receive an old session.
       if (session.fingerprint !== configFingerprint(config)) { this.sessions.delete(incoming); return json(response, 404, { error: 'That MCP session is no longer valid.' }); }
       session.lastUsed = Date.now();
@@ -798,7 +881,7 @@ export class Gateway {
     if (this.active.size >= MAX_ACTIVE_REQUESTS) return json(response, 503, { error: 'The gateway is busy; try again shortly.' }, { 'Retry-After': '1' });
 
     const controller = new AbortController();
-    const active: Active = { controller, deviceId: device.id, server: name, provider: device.provider, fingerprint: configFingerprint(config), response };
+    const active: Active = { controller, deviceId: device.id, server: name, provider, fingerprint: configFingerprint(config), response };
     this.active.add(active);
     const onClose = () => { if (!response.writableEnded) controller.abort(); };
     response.on('close', onClose);
@@ -816,9 +899,9 @@ export class Gateway {
       }
       if (controller.signal.aborted) return;
 
-      // The device may have been revoked, the server disabled, permissions changed, or the target
-      // reconfigured while the body was read. Re-check before contacting upstream.
-      const target = await this.currentTarget(device, name);
+      // The device may have been revoked, the server disabled, permissions changed, the provider
+      // narrowed, or the target reconfigured while the body was read. Re-check before contacting upstream.
+      const target = await this.currentTarget(device, provider, name);
       if (!target || target.fingerprint !== active.fingerprint) return json(response, 401, { error: 'This device or server is no longer allowed.' });
 
       const headers = this.forwardHeaders(request, target.config, session);
@@ -826,7 +909,7 @@ export class Gateway {
       if (controller.signal.aborted) return;
 
       // authHeader may have awaited a refresh; re-check once more so a revoke during it is honored.
-      const confirmed = await this.currentTarget(device, name);
+      const confirmed = await this.currentTarget(device, provider, name);
       if (!confirmed || confirmed.fingerprint !== active.fingerprint) return json(response, 401, { error: 'This device or server is no longer allowed.' });
       if (authorization) headers.authorization = authorization;
 
@@ -867,7 +950,7 @@ export class Gateway {
       // Only `initialize` may open a session; other responses must not mint one that could linger.
       if (!outSessionId && upstreamId && isInitializeRequest(body)) {
         outSessionId = newDeviceToken();
-        this.addSession({ id: outSessionId, deviceId: device.id, server: name, upstreamId, fingerprint: active.fingerprint, created: Date.now(), lastUsed: Date.now() });
+        this.addSession({ id: outSessionId, deviceId: device.id, server: name, provider, upstreamId, fingerprint: active.fingerprint, created: Date.now(), lastUsed: Date.now() });
       }
 
       const outHeaders: Record<string, string> = {};
