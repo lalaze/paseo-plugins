@@ -94,7 +94,7 @@ export function TaskCard(props: { task: Task; hostLabel?: string | null; colors:
       {props.action ? <Button label={props.action.label} icon={props.action.icon} onPress={props.action.onPress} colors={colors} size="xs" disabled={props.busy} /> : null}
       {stoppable ? <Button label={task.status === 'canceling' ? ui('Retry stop', '重试停止') : ui('Stop collaboration', '停止协作')} icon="Square" onPress={props.onCancel} colors={colors} variant="outline" size="xs" disabled={props.busy} /> : null}
       {deletable ? (confirmDelete ? <>
-        <Button label={ui('Confirm delete', '确认删除')} icon="Trash2" onPress={props.onDelete!} colors={colors} size="xs" disabled={props.busy} />
+        <Button label={ui('Confirm delete', '确认删除')} icon="Trash2" onPress={props.onDelete!} colors={colors} variant="danger" size="xs" disabled={props.busy} />
         <Button label={ui('Cancel', '取消')} onPress={() => setConfirmDelete(false)} colors={colors} variant="ghost" size="xs" disabled={props.busy} />
       </> : <Button label={ui('Delete', '删除')} icon="Trash2" onPress={() => setConfirmDelete(true)} colors={colors} variant="ghost" size="xs" disabled={props.busy} />) : null}
     </View> : null}

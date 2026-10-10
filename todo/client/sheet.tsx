@@ -264,7 +264,7 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
       {props.onOpenSession && task.status !== 'needs_attention' && !sessionPending ? <Button label={ui('Open session', '打开会话')} icon="MessageSquare" onPress={props.onOpenSession} colors={colors} variant="outline" size="xs" /> : null}
       {canCancel(task.status) ? <Button label={task.status === 'canceling' ? ui('Retry stop', '重试停止') : task.collaboration && task.operationId ? ui('Stop collaboration', '停止协作') : ui('Cancel task', '取消任务')} icon="Square" onPress={props.onCancel} colors={colors} variant="outline" size="xs" disabled={props.busy} /> : null}
       {canDelete(task.status) ? (confirmDelete ? <>
-        <Button label={ui('Confirm delete', '确认删除')} icon="Trash2" onPress={props.onDelete} colors={colors} size="xs" disabled={props.busy} />
+        <Button label={ui('Confirm delete', '确认删除')} icon="Trash2" onPress={props.onDelete} colors={colors} variant="danger" size="xs" disabled={props.busy} />
         <Button label={ui('Cancel', '取消')} onPress={() => setConfirmDelete(false)} colors={colors} variant="ghost" size="xs" disabled={props.busy} />
       </> : <Button label={ui('Delete task', '删除任务')} icon="Trash2" onPress={() => setConfirmDelete(true)} colors={colors} variant="outline" size="xs" disabled={props.busy} />) : null}
     </View>

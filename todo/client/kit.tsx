@@ -19,9 +19,9 @@ export function outline(colors: Colors): string {
   return tint(colors.foreground, 0.12);
 }
 
-export type ButtonVariant = 'primary' | 'outline' | 'ghost';
+export type ButtonVariant = 'primary' | 'outline' | 'ghost' | 'danger';
 
-/** Primary is filled, outline is a border, ghost is text. `xs` is the size used on cards. */
+/** Primary is filled, danger is a red fill for destructive confirmations, outline is a border, ghost is text. `xs` is the size used on cards. */
 export function Button(props: {
   label: string;
   icon?: string;
@@ -37,7 +37,7 @@ export function Button(props: {
   const { colors } = props;
   const variant = props.variant ?? 'primary';
   const small = props.size === 'xs';
-  const fg = variant === 'primary' ? colors.surface0 : variant === 'ghost' ? colors.foregroundMuted : colors.foreground;
+  const fg = variant === 'primary' || variant === 'danger' ? colors.surface0 : variant === 'ghost' ? colors.foregroundMuted : colors.foreground;
   return <Pressable
     accessibilityRole="button"
     accessibilityLabel={props.label}
@@ -48,9 +48,9 @@ export function Button(props: {
       height: small ? 26 : 32, paddingHorizontal: props.iconOnly ? 0 : small ? 9 : 14, borderRadius: small ? 8 : 999,
       width: props.iconOnly ? (small ? 26 : 32) : undefined, flexShrink: 0,
       alignSelf: props.full ? 'stretch' : 'flex-start',
-      backgroundColor: variant === 'primary' ? colors.foreground : pressed ? colors.surface2 : 'transparent',
+      backgroundColor: variant === 'primary' ? colors.foreground : variant === 'danger' ? colors.statusDanger : pressed ? colors.surface2 : 'transparent',
       borderWidth: variant === 'outline' ? 1 : 0, borderColor: outline(colors),
-      opacity: props.disabled ? 0.45 : pressed && variant === 'primary' ? 0.85 : 1,
+      opacity: props.disabled ? 0.45 : pressed && (variant === 'primary' || variant === 'danger') ? 0.85 : 1,
     })}
   >
     {props.icon ? <Icon name={props.icon} size={small ? 12 : 14} color={fg} /> : null}
