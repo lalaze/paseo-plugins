@@ -1,0 +1,211 @@
+{
+  "capturedAt": "2026-10-10T17:45:55.962630+00:00",
+  "protocolVersion": "2026-07-28",
+  "connectionId": "fe7e5a96a1da6b326aedcff10ee35f1a",
+  "callbackVerifiedCount": 2,
+  "dotVerifiedAt": 1791652452623,
+  "subscriptions": [
+    {
+      "id": "bb4ff1f9c2712fd8bc6c3bb413e6b03f",
+      "name": "paseo.dot.task_changed",
+      "arguments": {
+        "connectionId": "fe7e5a96a1da6b326aedcff10ee35f1a"
+      },
+      "expiresAt": 1791738769860
+    },
+    {
+      "id": "f379a51aaaa71c916d091c3024ae14c4",
+      "name": "paseo.dot.connection_test",
+      "arguments": {
+        "connectionId": "fe7e5a96a1da6b326aedcff10ee35f1a"
+      },
+      "expiresAt": 1791738771293
+    }
+  ],
+  "events": [
+    {
+      "eventId": "2a039666-c1df-4a16-bf57-905572096515",
+      "name": "paseo.dot.connection_test",
+      "subscriptionId": "f379a51aaaa71c916d091c3024ae14c4",
+      "status": "delivered",
+      "attempts": 0,
+      "createdAt": 1791652417658
+    },
+    {
+      "eventId": "cf3f75b7-ed00-4b69-8d5c-28fd0b079542",
+      "name": "paseo.dot.task_changed",
+      "subscriptionId": "bb4ff1f9c2712fd8bc6c3bb413e6b03f",
+      "status": "delivered",
+      "attempts": 0,
+      "createdAt": 1791652496739
+    },
+    {
+      "eventId": "a1ff13b9-8d90-4234-9dca-528493aaac12",
+      "name": "paseo.dot.task_changed",
+      "subscriptionId": "bb4ff1f9c2712fd8bc6c3bb413e6b03f",
+      "status": "delivered",
+      "attempts": 0,
+      "createdAt": 1791652513372
+    },
+    {
+      "eventId": "d81175c6-f618-43b1-91ec-da1cfffde8a5",
+      "name": "paseo.dot.task_changed",
+      "subscriptionId": "bb4ff1f9c2712fd8bc6c3bb413e6b03f",
+      "status": "delivered",
+      "attempts": 0,
+      "createdAt": 1791652546340
+    },
+    {
+      "eventId": "407b6fa1-a23d-4471-b33a-493f32860b03",
+      "name": "paseo.dot.task_changed",
+      "subscriptionId": "bb4ff1f9c2712fd8bc6c3bb413e6b03f",
+      "status": "delivered",
+      "attempts": 0,
+      "createdAt": 1791653653904
+    },
+    {
+      "eventId": "214231dc-1684-449b-8095-b762fd62d232",
+      "name": "paseo.dot.task_changed",
+      "subscriptionId": "bb4ff1f9c2712fd8bc6c3bb413e6b03f",
+      "status": "delivered",
+      "attempts": 0,
+      "createdAt": 1791653653907
+    }
+  ],
+  "tasks": [
+    {
+      "taskId": "b6c40a47-a866-45e3-8d0e-933981cfbe38",
+      "roundId": "51f44385-8405-44b1-b4b7-fe1145c48087",
+      "branch": "dot/b6c40a47-a866-45e3-8d0e-933981cfbe38",
+      "status": "completed",
+      "claimedAt": 1791652641639,
+      "progress": [
+        {
+          "updateId": "paseo-a-environment-blocked-20261010T1717",
+          "kind": "waiting_user",
+          "processedThroughSeq": 1,
+          "at": 1791652669952
+        },
+        {
+          "updateId": "a-local-start-20261010T1720",
+          "kind": "running",
+          "processedThroughSeq": 2,
+          "at": 1791652816690
+        },
+        {
+          "updateId": "a-local-committed-auth-blocked-20261010T1721",
+          "kind": "waiting_user",
+          "processedThroughSeq": 3,
+          "at": 1791652900223
+        },
+        {
+          "updateId": "a-plugin-check-20261010T1723",
+          "kind": "waiting_user",
+          "processedThroughSeq": 4,
+          "at": 1791652987523
+        },
+        {
+          "updateId": "a-cloud-start-20261010T1735",
+          "kind": "running",
+          "processedThroughSeq": 6,
+          "at": 1791653742245
+        }
+      ],
+      "resultSubmitted": true,
+      "result": {
+        "baseSha": "2b627271fe4c57e57ea0d5062737ee950df3a2eb",
+        "headSha": "202c38735cb1a7403ce6ed3c5dd6d3af5136b836",
+        "branch": "dot/b6c40a47-a866-45e3-8d0e-933981cfbe38",
+        "updateId": "a-delivered-cloud-20261010T1738",
+        "reportedAt": 1791653909789,
+        "processedThroughSeq": 7,
+        "coversLatest": true
+      },
+      "verification": {
+        "status": "verified",
+        "at": 1791653909791,
+        "files": [
+          "validation/dot-bridge/task-a.json"
+        ],
+        "verifiedHead": "202c38735cb1a7403ce6ed3c5dd6d3af5136b836",
+        "coversLatest": true,
+        "updateId": "a-delivered-cloud-20261010T1738",
+        "headSha": "202c38735cb1a7403ce6ed3c5dd6d3af5136b836"
+      }
+    },
+    {
+      "taskId": "cd57e852-9179-45b8-a753-9d305cd2f0af",
+      "roundId": "bd400f82-bf35-4c50-b223-a196b5576a1c",
+      "branch": "dot/cd57e852-9179-45b8-a753-9d305cd2f0af",
+      "status": "completed",
+      "claimedAt": 1791652648924,
+      "progress": [
+        {
+          "updateId": "paseo-b-environment-blocked-20261010T1717",
+          "kind": "waiting_user",
+          "processedThroughSeq": 1,
+          "at": 1791652672945
+        },
+        {
+          "updateId": "b-local-start-20261010T1720",
+          "kind": "running",
+          "processedThroughSeq": 2,
+          "at": 1791652856077
+        },
+        {
+          "updateId": "b-local-committed-auth-blocked-20261010T1721",
+          "kind": "waiting_user",
+          "processedThroughSeq": 3,
+          "at": 1791652910475
+        },
+        {
+          "updateId": "b-plugin-check-20261010T1723",
+          "kind": "waiting_user",
+          "processedThroughSeq": 4,
+          "at": 1791652994995
+        },
+        {
+          "updateId": "b-cloud-start-20261010T1735",
+          "kind": "running",
+          "processedThroughSeq": 6,
+          "at": 1791653746004
+        }
+      ],
+      "resultSubmitted": true,
+      "result": {
+        "baseSha": "2b627271fe4c57e57ea0d5062737ee950df3a2eb",
+        "headSha": "6d895a5a7b3a5b475890b142d0aaaa7e6be1ec34",
+        "branch": "dot/cd57e852-9179-45b8-a753-9d305cd2f0af",
+        "updateId": "b-delivered-cloud-20261010T1738",
+        "reportedAt": 1791653925597,
+        "processedThroughSeq": 7,
+        "coversLatest": true
+      },
+      "verification": {
+        "status": "verified",
+        "at": 1791653925601,
+        "files": [
+          "validation/dot-bridge/task-b.json"
+        ],
+        "verifiedHead": "6d895a5a7b3a5b475890b142d0aaaa7e6be1ec34",
+        "coversLatest": true,
+        "updateId": "b-delivered-cloud-20261010T1738",
+        "headSha": "6d895a5a7b3a5b475890b142d0aaaa7e6be1ec34"
+      }
+    }
+  ],
+  "cloudConcurrency": {
+    "observedDate": "2026-10-10",
+    "observedLocalTime": "13:35",
+    "timezone": "America/New_York",
+    "surface": "ChatGPT Work dot conversation",
+    "taskTitles": [
+      "验证并交付 Bridge A",
+      "验证并交付 Bridge B"
+    ],
+    "simultaneousStatuses": [
+      "Working",
+      "Working"
+    ]
+  }
+}

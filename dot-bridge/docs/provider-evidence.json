@@ -1,0 +1,72 @@
+{
+  "checkedAt": "2026-10-11T01:43:18.762Z",
+  "provider": "dot",
+  "agentId": "7de7bb8a-89b2-4c48-a3d1-f3a5d6351238",
+  "taskId": "7d77a46e-a61e-4dda-8ef9-369b95995a58",
+  "workspaceId": "wks_5a327f518211e10a",
+  "agentStatus": "idle",
+  "rounds": [
+    {
+      "id": "5fc8ebc0-ee3a-4860-944c-188ac21fb7c6",
+      "status": "completed",
+      "result": "DOT-PROVIDER-OK\nDOT-PROVIDER-be84aab6-b104-4c06-80ec-b0517cb8b3ae",
+      "coversLatest": true
+    },
+    {
+      "id": "5f2b399e-4598-4919-9a7a-cd8685392b17",
+      "status": "completed",
+      "result": "FOLLOWUP-OK\nDOT-PROVIDER-be84aab6-b104-4c06-80ec-b0517cb8b3ae",
+      "coversLatest": true
+    },
+    {
+      "id": "4ab15841-4141-468a-a397-56e53def0bff",
+      "status": "completed",
+      "result": "PROVIDER-ATTACHMENT-OK",
+      "coversLatest": true
+    },
+    {
+      "id": "2173c6aa-9b57-400d-be91-19bfc722629c",
+      "status": "completed",
+      "result": "FINAL-UI-OK",
+      "coversLatest": true
+    }
+  ],
+  "attachments": [
+    {
+      "id": "9dc1b1db-9dd1-458d-ac4d-928c2d7546b0",
+      "roundId": "4ab15841-4141-468a-a397-56e53def0bff",
+      "name": "provider-input.txt",
+      "mediaType": "text/plain",
+      "size": 50,
+      "sha256": "f42d056dbfb3f2996d6e9703b4dc52fd6daec3e9b8994e245fb71553a4256f9f",
+      "author": "user",
+      "createdAt": 1791682420383
+    },
+    {
+      "id": "b18fad07-d030-42de-8a4e-ff619dcfa501",
+      "roundId": "4ab15841-4141-468a-a397-56e53def0bff",
+      "name": "provider-reply.txt",
+      "mediaType": "text/plain",
+      "size": 54,
+      "sha256": "4f36492ab8b359a0376db6619bce4415f3fe586cc3cf95dc9b7ff4aa25061c0f",
+      "author": "dot",
+      "createdAt": 1791682473271
+    }
+  ],
+  "exactReplyBytesVerified": true,
+  "reply": "ACK:PROVIDER-FILE-f8d82c53-3b62-4336-8086-cacbf2c0b843",
+  "pluginReloadAndSessionRefreshVerified": true,
+  "nativeTimelineVerified": true,
+  "webUiObserved": true,
+  "webComposerSendVerified": true,
+  "responsiveWebViewport": {
+    "width": 390,
+    "height": 844
+  },
+  "browserSaveToDiskVerified": false,
+  "futureTaskSubscriptionApprovalPending": false,
+  "futureTaskSubscriptionUpdateConfirmedByDot": true,
+  "futureTaskAutomaticHandlingEvidence": "provider-autostart-evidence.json",
+  "nativeDesktopUiVerified": false,
+  "nativeMobileUiVerified": false
+}

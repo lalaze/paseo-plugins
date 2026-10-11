@@ -1,0 +1,41 @@
+{
+  "capturedAt": "2026-10-10T17:40:36.911613+00:00",
+  "repository": "lalaze/paseo-plugins",
+  "ready": true,
+  "trials": [
+    {
+      "marker": "A",
+      "taskId": "b6c40a47-a866-45e3-8d0e-933981cfbe38",
+      "roundId": "51f44385-8405-44b1-b4b7-fe1145c48087",
+      "branch": "dot/b6c40a47-a866-45e3-8d0e-933981cfbe38",
+      "baseSha": "2b627271fe4c57e57ea0d5062737ee950df3a2eb",
+      "headSha": "202c38735cb1a7403ce6ed3c5dd6d3af5136b836",
+      "file": "validation/dot-bridge/task-a.json",
+      "parentEqualsBase": true,
+      "baseIsAncestor": true,
+      "onlyExpectedFileAdded": true,
+      "diffCheckPassed": true,
+      "exactJsonPassed": true,
+      "bridgeVerified": true,
+      "processedThroughSeq": 7,
+      "latestUserMessageSeq": 6
+    },
+    {
+      "marker": "B",
+      "taskId": "cd57e852-9179-45b8-a753-9d305cd2f0af",
+      "roundId": "bd400f82-bf35-4c50-b223-a196b5576a1c",
+      "branch": "dot/cd57e852-9179-45b8-a753-9d305cd2f0af",
+      "baseSha": "2b627271fe4c57e57ea0d5062737ee950df3a2eb",
+      "headSha": "6d895a5a7b3a5b475890b142d0aaaa7e6be1ec34",
+      "file": "validation/dot-bridge/task-b.json",
+      "parentEqualsBase": true,
+      "baseIsAncestor": true,
+      "onlyExpectedFileAdded": true,
+      "diffCheckPassed": true,
+      "exactJsonPassed": true,
+      "bridgeVerified": true,
+      "processedThroughSeq": 7,
+      "latestUserMessageSeq": 6
+    }
+  ]
+}

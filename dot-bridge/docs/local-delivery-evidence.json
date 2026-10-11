@@ -1,0 +1,43 @@
+{
+  "checkedAt": "2026-10-11T02:29:59.313Z",
+  "agentId": "ad2d5e46-0eb0-4006-b7f7-1f9b4d37e695",
+  "taskId": "8a36f3ce-4235-4776-9e21-7824e30be3d7",
+  "workspaceId": "wks_5a327f518211e10a",
+  "workspaceRoot": "/Volumes/data/code/paseo-plugins",
+  "taskMode": "text",
+  "repository": null,
+  "branch": null,
+  "sourcePath": "dot-bridge/docs/fixtures/local-delivery-534fe260-f906-4627-9b10-b2073d3d03cc.mjs",
+  "original": "// LOCAL-42e7ce96-5cbb-4133-b84c-7e6aaf8a693a\nexport function multiply(a, b) { return a + b; }\n",
+  "delivered": "// LOCAL-42e7ce96-5cbb-4133-b84c-7e6aaf8a693a\nexport function multiply(a, b) { return a * b; }\n",
+  "changes": [
+    {
+      "operationId": "89300b6d-907e-4b9d-becb-9f3c89331a11",
+      "roundId": "b24f74fe-c0a7-4396-9eab-81e65a1e02d5",
+      "status": "applied",
+      "files": [
+        {
+          "path": "dot-bridge/docs/fixtures/local-delivery-534fe260-f906-4627-9b10-b2073d3d03cc.mjs",
+          "action": "update",
+          "beforeSha256": "c014bd0771380755cda440a4c7bd34bf32f9ca4f3cb82eb87dd0d96fbfdcbf6b",
+          "afterSha256": "522c3201f8972cc1ff7e2dd36dd39912089e5fdc253a2dd095f13f4532890e74"
+        }
+      ],
+      "conflicts": [],
+      "at": 1791685659708
+    }
+  ],
+  "result": "已通过 apply_dot_changes 实际修复本地文件 dot-bridge/docs/fixtures/local-delivery-534fe260-f906-4627-9b10-b2073d3d03cc.mjs。\nmultiply(a, b) 现返回 a * b。首行随机标记注释保持原样，文件仅包含原注释和指定函数。\n写入结果为 applied、无冲突；已回读确认内容及 SHA-256 一致。仅修改这个文件，未执行命令或运行测试，未进行 Git 操作。",
+  "coversLatest": true,
+  "nativeTimelineVerified": true,
+  "localChecks": [
+    "multiply(6, 7) === 42",
+    "multiply(-2, 3) === -6"
+  ],
+  "testRunner": "Local validation script after exact source inspection; not Dot shell execution.",
+  "webTaskEditorHasNoGitFields": true,
+  "webAppliedFileReceiptObserved": true,
+  "pluginReloadAndSessionRestoreVerified": true,
+  "repositoryHeadUnchanged": "2b627271fe4c57e57ea0d5062737ee950df3a2eb",
+  "testsPassed": 153
+}

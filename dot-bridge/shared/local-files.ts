@@ -1,0 +1,26 @@
+import { z } from 'zod';
+
+export const MAX_SOURCE_BYTES = 256 * 1024;
+export const MAX_CHANGE_BYTES = 1024 * 1024;
+export const localPathSchema = z.string().min(1).max(1000);
+export const fileHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
+export const localChangeSchema = z.object({
+  path: localPathSchema,
+  /** null means create only if the path does not exist. Always use the hash from read_dot_file. */
+  expectedSha256: fileHashSchema.nullable(),
+  /** Full UTF-8 replacement, or null to delete one regular file. */
+  content: z.string().max(MAX_SOURCE_BYTES).nullable(),
+}).strict();
+export const localChangesSchema = z.array(localChangeSchema).min(1).max(32)
+  .refine(changes => new Set(changes.map(change => change.path)).size === changes.length, 'Duplicate file path');
+export const localReceiptSchema = z.object({
+  operationId: z.string().uuid(), roundId: z.string().uuid(),
+  status: z.enum(['applied', 'conflict', 'partial']),
+  files: z.array(z.object({ path: z.string(), action: z.enum(['create', 'update', 'delete']), beforeSha256: fileHashSchema.nullable(), afterSha256: fileHashSchema.nullable() }).strict()),
+  conflicts: z.array(z.string()),
+  at: z.number().int().nonnegative(),
+}).strict();
+export type LocalChange = z.infer<typeof localChangeSchema>;
+export type LocalReceipt = z.infer<typeof localReceiptSchema>;
+
+export const LOCAL_FILE_INSTRUCTIONS = 'Code changes are applied directly to this task\'s local workspace. Do not create a Git branch, cloud coding checkout, commit, push or PR. Use list_dot_files and read_dot_file to inspect relevant source files (including uncommitted changes). Follow workspace AGENTS.md instructions. Before editing each path, read it and keep its sha256 (null means absent). Use apply_dot_changes with the current userMessageSeq and a fresh operationId; send full UTF-8 file contents and expectedSha256 for each path. A null content deletes one file. Only make changes requested by the user. A stale hash or newer user message blocks the write: re-read and reconcile, never overwrite blindly. Retry uncertain requests using the identical operationId and payload. Inspect the returned applied files and conflicts; partial/conflict is not success. There is no shell execution tool, so do not claim local tests were run. Report the actual applied files and any remaining checks, then finish with submit_dot_text_result. New permissions or unrelated/destructive work still require waiting_user.';

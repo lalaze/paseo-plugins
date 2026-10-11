@@ -1,0 +1,20 @@
+{
+  "checkedAt": "2026-10-11T01:49:15.873Z",
+  "provider": "dot",
+  "connectionId": "fe7e5a96a1da6b326aedcff10ee35f1a",
+  "agentId": "1ad72c04-9ae4-4d78-ba83-3415bc7091b7",
+  "taskId": "494fac1b-f7e0-4b84-b135-d58a4dd47fac",
+  "workspaceId": "wks_5a327f518211e10a",
+  "taskMode": "text",
+  "providerBindingPresent": true,
+  "agentStatus": "idle",
+  "taskStatus": "completed",
+  "roundId": "cf8eac67-2369-4078-a855-fa8a82a762da",
+  "result": "AUTO-START-OK\nAUTO-780b39cb-1862-4acd-8765-82fa5f036911",
+  "coversLatest": true,
+  "nativeTimelineVerified": true,
+  "newConversationAutomaticallyHandled": true,
+  "taskSpecificStartConfirmationSent": false,
+  "futureTaskSubscriptionApprovalPending": false,
+  "permissionScope": "User-submitted native-provider text conversations, attachments and follow-ups; new permissions or high-risk actions still require waiting_user; Git task rules unchanged."
+}
