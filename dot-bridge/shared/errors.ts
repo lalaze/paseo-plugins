@@ -3,7 +3,7 @@ import { ui, type UiLocale } from './i18n';
 
 const messages = {
   'attachment-invalid': ['The attachment is invalid or failed integrity checks.', '附件格式不合法或完整性检查失败。'],
-  'attachment-too-large': ['The maximum attachment size is 1 MiB.', '单个附件最大 1 MiB。'],
+  'attachment-too-large': ['Use chunks for files over 1 MiB; maximum file size is 20 MiB.', '超过 1 MiB 请使用分块传输，单文件最大 20 MiB。'],
   'attachment-limit': ['A task can hold at most 16 attachments.', '每个任务最多保存 16 个附件。'],
   'attachment-missing': ['This attachment does not belong to the task.', '该附件不属于当前任务。'],
   'store-invalid': ['The saved dot-bridge file failed validation and was left untouched.', 'dot-bridge 存档校验失败，原文件未改动。'],

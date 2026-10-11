@@ -1,8 +1,9 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { AttachmentStore, decodeAttachment } from './attachments';
+import { clearTransfer, decodeChunk, receiveChunk, saveDeliveredFile } from './attachment-transfers';
 import { applyLocalChanges, listSources, readSource } from './local-files';
 import type { LocalChange, LocalReceipt } from '../shared/local-files';
-import { MAX_TASK_ATTACHMENTS, type Attachment, type AttachmentContent } from '../shared/attachments';
+import { ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, MAX_TASK_ATTACHMENTS, type Attachment, type AttachmentContent, type AttachmentChunk } from '../shared/attachments';
 import { dotBridgeError } from '../shared/errors';
 import {
   CALLBACK_ENDPOINT_ERROR,
@@ -649,12 +650,48 @@ export class BridgeEngine {
     actor: 'user' | 'dot'; revision?: number; connectionId?: string;
   }): Promise<{ attachment: Attachment }> {
     const bytes = decodeAttachment(input);
+    return this.publishAttachment(input, bytes);
+  }
+
+  private validateDotUpload(task: Task, roundId: string, connectionId?: string): void {
+    this.requireActiveDelivery(task);
+    if (task.connectionId !== connectionId) throw dotBridgeError('connection-invalid');
+    if (task.currentRoundId !== roundId) throw dotBridgeError('round-stale');
+    const round = currentRound(task);
+    if (round.stop.requested) throw dotBridgeError('task-rejected', 'stop requested');
+    if (!round.claim || !['claimed', 'running', 'waiting_user'].includes(round.remoteStatus)) throw dotBridgeError('claim-required');
+    if (task.attachments.length >= MAX_TASK_ATTACHMENTS) throw dotBridgeError('attachment-limit');
+  }
+
+  async uploadAttachmentChunk(input: AttachmentChunk & { taskId: string; roundId: string; connectionId: string; operationId: string }): Promise<{ complete: boolean; received: number[]; attachment?: Attachment }> {
+    const bytes = decodeChunk(input);
+    const task = this.task(input.taskId);
+    if (task.connectionId !== input.connectionId) throw dotBridgeError('connection-invalid');
+    const existing = task.attachments.find(file => file.id === input.operationId);
+    if (existing) {
+      if (existing.author !== 'dot' || existing.roundId !== input.roundId || existing.name !== input.name || existing.mediaType !== input.mediaType || existing.size !== input.size || existing.sha256 !== input.sha256) throw dotBridgeError('duplicate-mismatch', 'upload manifest');
+      const blob = await new AttachmentStore(this.deps.store.dir).get(existing);
+      if (!blob.subarray(input.index * ATTACHMENT_CHUNK_BYTES, (input.index + 1) * ATTACHMENT_CHUNK_BYTES).equals(bytes)) throw dotBridgeError('duplicate-mismatch', 'upload chunk');
+      return { complete: true, received: Array.from({ length: Math.ceil(input.size / ATTACHMENT_CHUNK_BYTES) }, (_, i) => i), attachment: existing };
+    }
+    if (this.deps.store.read().dedup.operations[input.operationId]) throw dotBridgeError('duplicate-mismatch', 'operationId');
+    this.validateDotUpload(task, input.roundId, input.connectionId);
+    const staged = receiveChunk(this.deps.store.dir, input, this.now());
+    if (!staged.bytes) return { complete: false, received: staged.received };
+    const result = await this.publishAttachment({ ...input, id: input.taskId, actor: 'dot' }, staged.bytes);
+    clearTransfer(this.deps.store.dir, input.taskId, input.operationId);
+    return { complete: true, received: staged.received, ...result };
+  }
+
+  private async publishAttachment(input: Pick<AttachmentContent, 'name' | 'mediaType'> & {
+    operationId: string; id: string; roundId: string; actor: 'user' | 'dot'; revision?: number; connectionId?: string;
+  }, bytes: Buffer): Promise<{ attachment: Attachment }> {
     const sha256 = createHash('sha256').update(bytes).digest('hex');
     const content = { kind: 'attachment', id: input.id, roundId: input.roundId, actor: input.actor,
       revision: input.revision, connectionId: input.connectionId, name: input.name, mediaType: input.mediaType, sha256 };
     const validate = (task: Task) => {
       this.requireActiveDelivery(task);
-      if (input.actor === 'dot' && task.connectionId !== input.connectionId) throw dotBridgeError('connection-invalid');
+      if (input.actor === 'dot') this.validateDotUpload(task, input.roundId, input.connectionId);
       if (task.currentRoundId !== input.roundId) throw dotBridgeError('round-stale');
       if (input.actor === 'user' && task.revision !== input.revision) throw dotBridgeError('revision-conflict');
       const round = currentRound(task);
@@ -686,6 +723,7 @@ export class BridgeEngine {
       validate(current);
       const at = this.now();
       const attachment: Attachment = { id: input.operationId, roundId: input.roundId, name: input.name, mediaType: input.mediaType, size: bytes.length, sha256, author: input.actor, createdAt: at };
+      if (input.actor === 'dot') attachment.localPath = saveDeliveredFile(this.deps.store.dir, input.id, input.operationId, input.name, bytes);
       const note = `Attachment: ${attachment.name} (${attachment.size} bytes; id: ${attachment.id})`;
       let next = input.actor === 'user'
         ? appendUserMessage(current, note, 'requirement', at)
@@ -704,12 +742,24 @@ export class BridgeEngine {
     if (connectionId !== undefined && task.connectionId !== connectionId) throw dotBridgeError('connection-invalid');
     const attachment = task.attachments.find(item => item.id === attachmentId);
     if (!attachment) throw dotBridgeError('attachment-missing');
+    if (attachment.size > MAX_ATTACHMENT_BYTES) throw dotBridgeError('attachment-too-large', 'use read_dot_attachment_chunk for large files');
     const bytes = await new AttachmentStore(this.deps.store.dir).get(attachment);
     if (attachment.mediaType.startsWith('text/') || attachment.mediaType === 'application/json') {
       try { return { attachment, encoding: 'utf8', content: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }; }
       catch { /* Preserve arbitrary bytes even when a MIME type incorrectly claims UTF-8. */ }
     }
     return { attachment, encoding: 'base64', content: bytes.toString('base64') };
+  }
+
+  async readAttachmentChunk(id: string, attachmentId: string, index: number, connectionId?: string): Promise<{ attachment: Attachment; content: string; done: boolean }> {
+    const task = this.task(id);
+    if (connectionId !== undefined && task.connectionId !== connectionId) throw dotBridgeError('connection-invalid');
+    const attachment = task.attachments.find(item => item.id === attachmentId);
+    if (!attachment) throw dotBridgeError('attachment-missing');
+    if (!Number.isInteger(index) || index < 0 || index >= Math.max(1, Math.ceil(attachment.size / ATTACHMENT_CHUNK_BYTES))) throw dotBridgeError('attachment-invalid', 'chunk index');
+    const bytes = await new AttachmentStore(this.deps.store.dir).get(attachment);
+    const end = (index + 1) * ATTACHMENT_CHUNK_BYTES;
+    return { attachment, content: bytes.subarray(index * ATTACHMENT_CHUNK_BYTES, end).toString('base64'), done: end >= bytes.length };
   }
 
   async addMessage(input: { id: string; revision: number; operationId: string; body: string; kind: 'requirement' | 'answer' }): Promise<Task> {

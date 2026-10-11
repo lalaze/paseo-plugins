@@ -1,0 +1,41 @@
+{
+  "checkedAt": "2026-10-11T06:02:11.129Z",
+  "agentId": "1d6c1847-16bf-456c-8cc2-b6ea9d175da6",
+  "taskId": "25a698dd-1673-47c7-9c1c-38d6d242c05a",
+  "roundId": "a911ddbd-a4d0-47b0-9eb8-77f31bc4cd8e",
+  "status": "completed",
+  "files": [
+    {
+      "id": "8cb59b52-09df-4241-9f38-f887c45ea8dd",
+      "roundId": "a911ddbd-a4d0-47b0-9eb8-77f31bc4cd8e",
+      "name": "blue-dot-orange-square.png",
+      "mediaType": "image/png",
+      "size": 1000089,
+      "sha256": "0f0c18cabb9685822b7231a9616dfa09bb1e398444747b2efa925af1e8a6cc67",
+      "author": "dot",
+      "createdAt": 1791693828301,
+      "localPath": "/Users/lalaze/.paseo/paseo-dot-bridge/files/25a698dd-1673-47c7-9c1c-38d6d242c05a/8cb59b52-09df-4241-9f38-f887c45ea8dd/blue-dot-orange-square.png",
+      "localBytesVerified": true,
+      "clientChunkReadVerified": true,
+      "chunks": 3
+    },
+    {
+      "id": "e6f7a6e9-f95c-4b5c-a8b3-8c0525747971",
+      "roundId": "a911ddbd-a4d0-47b0-9eb8-77f31bc4cd8e",
+      "name": "synthetic-download-2MiB.txt",
+      "mediaType": "text/plain",
+      "size": 2097152,
+      "sha256": "c0090a84d014fc746e0e58dfaa03178fa0619291ba04c4a9f4eee47e99a73e0c",
+      "author": "dot",
+      "createdAt": 1791694076968,
+      "localPath": "/Users/lalaze/.paseo/paseo-dot-bridge/files/25a698dd-1673-47c7-9c1c-38d6d242c05a/e6f7a6e9-f95c-4b5c-a8b3-8c0525747971/synthetic-download-2MiB.txt",
+      "localBytesVerified": true,
+      "clientChunkReadVerified": true,
+      "chunks": 6
+    }
+  ],
+  "nativeTimelineVerified": true,
+  "transport": "Dot upload_dot_attachment_chunk through Secure MCP Tunnel; automatic server save; no browser download or Library in this round.",
+  "uiVisualValidation": "Not completed: desktop UI automation timed out. Client chunk RPC and timeline attachment metadata were verified.",
+  "tests": 158
+}

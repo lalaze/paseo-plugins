@@ -1,9 +1,9 @@
-import { useRef, useState } from 'react';
-import { Platform, Text, TextInput, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Image, Platform, Text, TextInput, View } from 'react-native';
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { copyText, useToast } from '@getpaseo/plugin/client/react-native';
-import { attachmentContentSchema, MAX_ATTACHMENT_BYTES, MAX_TASK_ATTACHMENTS, type Attachment, type AttachmentContent } from '../shared/attachments';
-import { taskAttachmentRead, taskAttachmentUpload } from '../shared/rpc';
+import { ATTACHMENT_CHUNK_BYTES, attachmentContentSchema, MAX_ATTACHMENT_BYTES, MAX_TASK_ATTACHMENTS, type Attachment, type AttachmentContent } from '../shared/attachments';
+import { taskAttachmentChunkRead, taskAttachmentRead, taskAttachmentUpload } from '../shared/rpc';
 import type { Task } from '../shared/schema';
 import { isExplicitRejection, parseDotBridgeError, ui } from './i18n';
 import { Button, outline, SectionTitle, type Colors } from './kit';
@@ -15,6 +15,39 @@ function encode(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
+}
+
+async function readBase64(rpc: PluginClientContext['rpc'], taskId: string, attachment: Attachment, cancelled = () => false): Promise<string> {
+  const chunks: string[] = [];
+  const count = Math.max(1, Math.ceil(attachment.size / ATTACHMENT_CHUNK_BYTES));
+  for (let index = 0; index < count; index++) {
+    if (cancelled()) throw new Error('Cancelled');
+    const result = await rpc(taskAttachmentChunkRead, { id: taskId, attachmentId: attachment.id, index });
+    if (result.attachment.sha256 !== attachment.sha256 || result.done !== (index === count - 1)) throw new Error('Attachment changed');
+    chunks.push(result.content);
+  }
+  return chunks.join('');
+}
+
+function ImagePreview({ rpc, taskId, attachment, colors }: { rpc: PluginClientContext['rpc']; taskId: string; attachment: Attachment; colors: Colors }) {
+  const [uri, setUri] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  // Avoid automatically loading up to 320 MiB across a task's sixteen attachments.
+  const [requested, setRequested] = useState(attachment.size <= 8 * 1024 * 1024);
+  useEffect(() => {
+    if (!requested) return;
+    let cancelled = false;
+    setError(null); setUri(null);
+    void readBase64(rpc, taskId, attachment, () => cancelled).then(content => {
+      if (!cancelled) setUri(`data:${attachment.mediaType};base64,${content}`);
+    }).catch(cause => { if (!cancelled) setError(parseDotBridgeError(cause)); });
+    return () => { cancelled = true; };
+  }, [rpc, taskId, attachment.id, attachment.sha256, requested, attempt]);
+  if (!requested) return <Button colors={colors} label={ui('Preview image', '预览图片')} variant="outline" onPress={() => setRequested(true)} />;
+  if (error) return <View><Text style={{ color: colors.foregroundMuted }}>{error}</Text><Button colors={colors} label={ui('Retry preview', '重新加载图片')} variant="outline" onPress={() => setAttempt(value => value + 1)} /></View>;
+  return uri ? <Image accessibilityLabel={attachment.name} source={{ uri }} style={{ width: '100%', height: 280, maxWidth: 640, borderRadius: 8 }} resizeMode="contain" onError={() => setError(ui('Image could not be decoded. The original file is still saved.', '无法解码图片，原文件仍已保存。'))} />
+    : <Text style={{ color: colors.foregroundMuted }}>{ui('Loading image…', '正在加载图片…')}</Text>;
 }
 
 export function AttachmentPanel(props: { colors: Colors; rpc: PluginClientContext['rpc']; task: Pick<Task, 'id' | 'currentRoundId' | 'revision' | 'attachments'>; refresh(): Promise<void>; readOnly?: boolean }) {
@@ -67,14 +100,15 @@ export function AttachmentPanel(props: { colors: Colors; rpc: PluginClientContex
     if (busy) return;
     setBusy(true);
     try {
-      const result = await props.rpc(taskAttachmentRead, { id: task.id, attachmentId: attachment.id });
       if (!web) {
+        const result = await props.rpc(taskAttachmentRead, { id: task.id, attachmentId: attachment.id });
         if (result.encoding !== 'utf8') { toast.error(ui('Download binary files from Paseo desktop or web.', '请在 Paseo 桌面端或网页下载二进制文件。')); return; }
         await copyText(result.content);
         toast.show(ui('Attachment text copied', '附件文字已复制'));
         return;
       }
-      const bytes = result.encoding === 'utf8' ? new TextEncoder().encode(result.content) : Uint8Array.from(atob(result.content), char => char.charCodeAt(0));
+      const content = await readBase64(props.rpc, task.id, attachment);
+      const bytes = Uint8Array.from(atob(content), char => char.charCodeAt(0));
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
       const anchor = document.createElement('a');
       anchor.href = url; anchor.download = attachment.name;
@@ -87,12 +121,15 @@ export function AttachmentPanel(props: { colors: Colors; rpc: PluginClientContex
 
   return <View style={{ gap: 8 }}>
     <SectionTitle colors={colors}>{ui('Attachments', '附件')}{props.readOnly ? '' : ` (${task.attachments.length}/${MAX_TASK_ATTACHMENTS})`}</SectionTitle>
-    <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{ui('Up to 1 MiB per file. Attachments stay with this task; they do not modify your workspace.', '单文件最大 1 MiB。附件保存在任务中，不会修改工作区。')}</Text>
+    <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{ui('Dot files are saved automatically on the Paseo host (up to 20 MiB). Project files are unchanged.', 'Dot 回传文件自动保存到 Paseo 主机（最大 20 MiB），无需手动下载，不改动项目文件。')}</Text>
     {task.attachments.map(attachment => <View key={attachment.id} style={{ gap: 4 }}>
       <Text style={{ color: colors.foreground, fontSize: 12 }}>{attachment.name} · {attachment.size.toLocaleString()} B · {attachment.author === 'user' ? ui('You', '你') : 'Dot'}</Text>
-      <Button colors={colors} label={web ? ui('Download', '下载') : ui('Copy text', '复制文字')} variant="outline" size="sm" onPress={() => void download(attachment)} disabled={busy || (!web && !attachment.mediaType.startsWith('text/') && attachment.mediaType !== 'application/json')} />
+      {/^image\/(png|jpeg|webp|gif)$/.test(attachment.mediaType) ? <ImagePreview rpc={props.rpc} taskId={task.id} attachment={attachment} colors={colors} /> : null}
+      {attachment.localPath ? <View style={{ gap: 4 }}><Text selectable style={{ color: colors.foregroundMuted, fontSize: 11 }}>{ui('Saved on host: ', '已保存到主机：')}{attachment.localPath}</Text><Button colors={colors} label={ui('Copy path', '复制路径')} variant="outline" size="sm" onPress={() => void copyText(attachment.localPath!).catch(error => toast.error(parseDotBridgeError(error)))} /></View> : null}
+      <Button colors={colors} label={web ? ui('Save another copy', '另存一份') : ui('Copy text', '复制文字')} variant="outline" size="sm" onPress={() => void download(attachment)} disabled={busy || (!web && (attachment.size > MAX_ATTACHMENT_BYTES || (!attachment.mediaType.startsWith('text/') && attachment.mediaType !== 'application/json')))} />
     </View>)}
     {!props.readOnly ? <View style={{ gap: 8 }}>
+    <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{ui('User uploads: up to 1 MiB per file.', '手动上传：单文件最大 1 MiB。')}</Text>
     {web ? <input aria-label={ui('Upload attachment', '上传附件')} type="file" disabled={busy || pending !== null || task.attachments.length >= MAX_TASK_ATTACHMENTS} style={{ color: colors.foreground, maxWidth: '100%' }} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void pick(file); }} /> : <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{ui('Upload files from desktop/web, or paste a text attachment below.', '文件上传请使用桌面端或网页；也可在下方粘贴文字附件。')}</Text>}
     <TextInput value={name} onChangeText={setName} placeholder={ui('Text file name', '文字附件文件名')} style={style} editable={!busy && !pending} />
     <TextInput value={body} onChangeText={setBody} placeholder={ui('Paste text or a log', '粘贴文字或日志')} multiline style={[style, { minHeight: 60 }]} editable={!busy && !pending} />

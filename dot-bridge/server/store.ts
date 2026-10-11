@@ -35,7 +35,7 @@ function isFailure(error: unknown, code: string): error is DotBridgeFailure {
 }
 
 function emptyState(): StoreFile {
-  return { version: 7, connection: null, tasks: [], events: [], dedup: { eventIds: {}, updateIds: {}, operations: {} } };
+  return { version: 8, connection: null, tasks: [], events: [], dedup: { eventIds: {}, updateIds: {}, operations: {} } };
 }
 
 /**

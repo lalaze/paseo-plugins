@@ -6,6 +6,7 @@ import {
   EVENT_DEFINITIONS,
   MCP_EVENT_PROTOCOL_VERSION,
   PROVIDER_CONVERSATION_INSTRUCTIONS,
+  ATTACHMENT_DELIVERY_INSTRUCTIONS,
   SUPPORTED_PROTOCOL_VERSIONS,
   subscribeInputSchema,
   toolInputSchemas,
@@ -165,7 +166,7 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
       case 'get_dot_task': {
         const args = input as z.infer<typeof toolInputSchemas.get_dot_task>;
         const task = options.engine.getForConnection(args.connectionId, args.taskId);
-        return { task, ...(task.mode === 'text' ? { ...(task.provider ? { conversationInstructions: PROVIDER_CONVERSATION_INSTRUCTIONS } : {}), localFileInstructions: LOCAL_FILE_INSTRUCTIONS, localFilesAvailable: task.workspaceRoot !== null } : { legacyReadOnly: true }) };
+        return { task, ...(task.mode === 'text' ? { ...(task.provider ? { conversationInstructions: PROVIDER_CONVERSATION_INSTRUCTIONS } : {}), attachmentInstructions: ATTACHMENT_DELIVERY_INSTRUCTIONS, localFileInstructions: LOCAL_FILE_INSTRUCTIONS, localFilesAvailable: task.workspaceRoot !== null } : { legacyReadOnly: true }) };
       }
       case 'claim_dot_task': {
         const args = input as z.infer<typeof toolInputSchemas.claim_dot_task>;
@@ -182,6 +183,11 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
       case 'upload_dot_attachment': {
         const { taskId, ...args } = input as z.infer<typeof toolInputSchemas.upload_dot_attachment>;
         return options.engine.uploadAttachment({ ...args, id: taskId, actor: 'dot' });
+      }
+      case 'upload_dot_attachment_chunk': return options.engine.uploadAttachmentChunk(input as z.infer<typeof toolInputSchemas.upload_dot_attachment_chunk>);
+      case 'read_dot_attachment_chunk': {
+        const args = input as z.infer<typeof toolInputSchemas.read_dot_attachment_chunk>;
+        return options.engine.readAttachmentChunk(args.taskId, args.attachmentId, args.index, args.connectionId);
       }
       case 'read_dot_attachment': {
         const args = input as z.infer<typeof toolInputSchemas.read_dot_attachment>;

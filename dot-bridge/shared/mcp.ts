@@ -6,7 +6,7 @@
  * this plugin, not by OpenAI.
  */
 import { z } from 'zod';
-import { attachmentContentSchema } from './attachments';
+import { attachmentContentSchema, attachmentChunkSchema } from './attachments';
 import { connectionIdSchema, uuidSchema } from './schema';
 import { localChangesSchema, localPathSchema, LOCAL_FILE_INSTRUCTIONS } from './local-files';
 
@@ -190,6 +190,8 @@ export const toolInputSchemas = {
     connectionId: connectionIdSchema, taskId: uuidSchema, roundId: uuidSchema, operationId: uuidSchema,
   }),
   read_dot_attachment: z.object({ connectionId: connectionIdSchema, taskId: uuidSchema, attachmentId: uuidSchema }).strict(),
+  upload_dot_attachment_chunk: attachmentChunkSchema.extend({ connectionId: connectionIdSchema, taskId: uuidSchema, roundId: uuidSchema, operationId: uuidSchema }),
+  read_dot_attachment_chunk: z.object({ connectionId: connectionIdSchema, taskId: uuidSchema, attachmentId: uuidSchema, index: z.number().int().nonnegative() }).strict(),
   submit_dot_text_result: z.object({
     connectionId: connectionIdSchema,
     taskId: uuidSchema,
@@ -250,6 +252,16 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     readOnlyHint: true,
   },
   {
+    name: 'upload_dot_attachment_chunk',
+    description: 'Return a file up to 20 MiB directly to Paseo without ChatGPT Library or browser downloads. Split original bytes into 393216-byte chunks (last may be smaller), encode each as canonical base64. Send each index starting at 0 with SAME operationId, name, mediaType, total size and whole-file sha256. Received indices allow retries/resume for 24h. Once all chunks arrive, the hash is checked, the attachment is published and saved automatically to localPath on the Paseo host. Wait for complete:true before final text result. Never invent bytes or change file content to fit. Requires a claimed active round. A duplicate chunk must have identical bytes.',
+    readOnlyHint: false,
+  },
+  {
+    name: 'read_dot_attachment_chunk',
+    description: 'Read attachment bytes as base64 in chunks of 393216 bytes, index starting at 0, until done:true. Use for files over 1 MiB. Task/connection authorization applies.',
+    readOnlyHint: true,
+  },
+  {
     name: 'submit_dot_text_result',
     description: 'Finish a text-mode task with a written answer; no repository or commit is needed. Requires a claimed round. Use a new updateId for a revised answer.',
     readOnlyHint: false,
@@ -264,6 +276,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 /** Included on every native task read, so existing conversations receive current delivery guidance. */
 export const PROVIDER_CONVERSATION_INSTRUCTIONS = 'This is a live Paseo conversation. After claiming, if the request needs more than a quick answer, send a brief user-facing acknowledgment through report_dot_progress(kind=running, note=...) before doing the work. Report concrete findings or useful partial answers at meaningful milestones; during long work aim for an update about every 30–60 seconds when possible. These notes appear directly in the chat, so use the user\'s language and avoid empty "working" messages, internal tool chatter, or private reasoning. Only describe work actually performed; do not invent progress or delay a quick answer to create updates. Messages written only in the Dot home conversation are not delivered to Paseo. Progress must use report_dot_progress and must not use submit_dot_text_result, which ends the turn. Ask questions with waiting_user and send the complete final answer with submit_dot_text_result. Keep existing permission boundaries.';
 
+export const ATTACHMENT_DELIVERY_INSTRUCTIONS = 'Return generated images and requested files directly to Paseo: upload_dot_attachment for files up to 1 MiB, or upload_dot_attachment_chunk for files up to 20 MiB (393216 bytes per chunk, max 16 attachments per task). Read large files with read_dot_attachment_chunk. Successful delivery automatically saves a named file on the Paseo host and returns localPath; raster images appear in the conversation. Do not require users to open ChatGPT, Library, or click a download to receive files. Use the actual generated file bytes, wait for successful upload / complete:true, then submit the final text answer with the returned saved path. If generation/export is unavailable, report it instead of inventing a file. Files are saved outside the project; this does not modify workspace files.';
+
 /** Instructions copied to the user's dot. Generated from the connection id, not a dot identity. */
 export function connectionInstructions(connectionId: string, baseUrl: string): string {
   return [
@@ -276,7 +290,7 @@ export function connectionInstructions(connectionId: string, baseUrl: string): s
     'Carry taskId and roundId on every message, status and result.',
     LOCAL_FILE_INSTRUCTIONS,
     'Historical Git tasks are read-only. All new requests use text conversations with optional local file changes.',
-    'Task attachments can be read with read_dot_attachment. Return files using upload_dot_attachment (1 MiB each, max 16 per task), then submit the final text answer. Attachments alone do not modify the workspace.',
+    ATTACHMENT_DELIVERY_INSTRUCTIONS,
     'Read the latest messages before executing, and report the actual local changes and validation limits when done.',
     'Ask the task a question before acting on anything that needs new permission or a user decision.',
     'On a stop request, try to stop that task and say which work stopped and which still needs the user in ChatGPT.',

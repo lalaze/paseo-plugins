@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { attachmentContentSchema, MAX_ATTACHMENT_BYTES, type Attachment, type AttachmentContent } from '../shared/attachments';
+import { attachmentContentSchema, MAX_ATTACHMENT_BYTES, MAX_FILE_BYTES, type Attachment, type AttachmentContent } from '../shared/attachments';
 import { dotBridgeError } from '../shared/errors';
 
 export function decodeAttachment(input: AttachmentContent): Buffer {
@@ -21,7 +21,7 @@ export class AttachmentStore {
   constructor(dataDir: string) { this.root = join(dataDir, 'attachments'); }
 
   async put(bytes: Buffer): Promise<string> {
-    if (bytes.length > MAX_ATTACHMENT_BYTES) throw dotBridgeError('attachment-too-large');
+    if (bytes.length > MAX_FILE_BYTES) throw dotBridgeError('attachment-too-large');
     const hash = createHash('sha256').update(bytes).digest('hex');
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const temporary = join(this.root, `${hash}.${randomUUID()}.tmp`);

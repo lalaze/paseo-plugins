@@ -156,3 +156,8 @@ export const taskAttachmentRead = defineRpc({
   input: z.object({ id: uuidSchema, attachmentId: uuidSchema }).strict(),
   output: z.object({ attachment: attachmentSchema, encoding: z.enum(['utf8', 'base64']), content: z.string() }).strict(),
 });
+export const taskAttachmentChunkRead = defineRpc({
+  name: 'task-attachment-chunk-read',
+  input: z.object({ id: uuidSchema, attachmentId: uuidSchema, index: z.number().int().nonnegative() }).strict(),
+  output: z.object({ attachment: attachmentSchema, content: z.string(), done: z.boolean() }).strict(),
+});

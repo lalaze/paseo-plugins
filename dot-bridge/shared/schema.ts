@@ -334,7 +334,8 @@ export const dedupSchema = z
  * results; existing records default to Git.
  */
 // v5: attachments; v6: native-provider bindings; v7: pinned local workspace and file-operation receipts.
-export const STORE_VERSION = 7;
+// v8: chunked attachments up to 20 MiB and named local delivery paths.
+export const STORE_VERSION = 8;
 
 export const storeFileSchema = z
   .object({

@@ -7,6 +7,7 @@ import {
   connectionTest,
   connectionTokenReveal,
   taskAttachmentRead,
+  taskAttachmentChunkRead,
   taskAttachmentUpload,
   taskCancelRequest,
   taskCreate,
@@ -196,6 +197,7 @@ export default function contribute(server: PluginServerContext) {
     return result;
   });
   server.handle(taskAttachmentRead, async input => (await useEngine()).readAttachment(input.id, input.attachmentId));
+  server.handle(taskAttachmentChunkRead, async input => (await useEngine()).readAttachmentChunk(input.id, input.attachmentId, input.index));
   server.handle(taskCancelRequest, async input => {
     const task = await (await useEngine()).cancelRequest(input);
     void tick();
