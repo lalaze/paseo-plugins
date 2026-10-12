@@ -1,0 +1,99 @@
+{
+  "checkedAt": "2026-10-12T09:16:31.066Z",
+  "originalRuleId": "6aca7214e240819183720274095440e8",
+  "originalSurface": "https://chatgpt.com/dots/home",
+  "ordinaryReplacementRulePaused": "6acc94ef416881918e222ac169f4fbd0",
+  "longTermMemory": "Dot reports persistent project memory saved and read back; not independently inspected",
+  "subscriptions": [
+    {
+      "id": "ff2921de9f47fa1c5eebd0ee0eacc50e",
+      "name": "paseo.dot.connection_test",
+      "createdAt": 1791795536465,
+      "verifiedAt": 1791795536465,
+      "expiresAt": 1791881936465
+    },
+    {
+      "id": "cabce5ce18820eb689bdaf8049701e67",
+      "name": "paseo.dot.task_changed",
+      "createdAt": 1791795538296,
+      "verifiedAt": 1791795538296,
+      "expiresAt": 1791881938296
+    }
+  ],
+  "agentId": "4de13acc-0be2-492b-9830-e41c793b66db",
+  "taskId": "92703a7c-52e7-44a2-8a32-749cef4c7820",
+  "rounds": [
+    {
+      "roundId": "3dc9194c-907f-4cc6-8796-c5aeb9585593",
+      "status": "completed",
+      "createdAt": 1791795563794,
+      "claimedAt": 1791795726487,
+      "result": {
+        "summary": "DOT-RESTORE-a673cd51",
+        "reportedAt": 1791795743006,
+        "coversLatest": true
+      },
+      "claimWaitMs": 162693,
+      "replyAfterClaimMs": 16519
+    },
+    {
+      "roundId": "b62b6794-f008-4850-a951-6c9bde9894b6",
+      "status": "stopped",
+      "createdAt": 1791795782714,
+      "claimedAt": null,
+      "result": null,
+      "claimWaitMs": null,
+      "replyAfterClaimMs": null
+    },
+    {
+      "roundId": "215bf088-f00b-4b50-8488-9721b0b0f42e",
+      "status": "completed",
+      "createdAt": 1791796319341,
+      "claimedAt": 1791796470521,
+      "result": {
+        "summary": "DOT-RESTORE-a673cd51/FOLLOWUP-3",
+        "reportedAt": 1791796481442,
+        "coversLatest": true
+      },
+      "claimWaitMs": 151180,
+      "replyAfterClaimMs": 10921
+    },
+    {
+      "roundId": "e6eeecb0-ce52-4549-a173-7f02287650c3",
+      "status": "completed",
+      "createdAt": 1791796530842,
+      "claimedAt": 1791796576833,
+      "result": {
+        "summary": "DOT-RESTORE-a673cd51/FOLLOWUP-4",
+        "reportedAt": 1791796590417,
+        "coversLatest": true
+      },
+      "claimWaitMs": 45991,
+      "replyAfterClaimMs": 13584
+    }
+  ],
+  "followUpError": {
+    "roundId": "b62b6794-f008-4850-a951-6c9bde9894b6",
+    "failedTool": "list_dot_tasks",
+    "source": "Dot reported existing call record",
+    "eventAt": "2026-10-12T09:03:02.714Z",
+    "seenByDotApproximately": "2026-10-12T09:03:31Z",
+    "scriptWallSeconds": 8.4,
+    "error": "SyntaxError: Unexpected token u, user cance... is not valid JSON at JSON.parse at exec_main.mjs:1:134",
+    "originalRawResponseRetained": false,
+    "subsequentlyStoppedByDiagnostic": true
+  },
+  "directReadProbe": {
+    "caller": "Codex diagnostic, not Dot automatic execution",
+    "elapsedMs": 3841,
+    "ok": true
+  },
+  "complete": true,
+  "ruleChangeVerified": {
+    "readByEventTaskId": true,
+    "guardJsonParsing": true,
+    "respectExplicitCancellationAndPermissionDenial": true,
+    "persistentRuleText": true,
+    "verifiedBy": "UI saved, closed and reopened to read back"
+  }
+}

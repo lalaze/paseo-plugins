@@ -147,3 +147,13 @@ HERMES_BIN=/path/to/hermes node usage-glance/scripts/check-consumption-hermes.mj
 ```
 
 检查动态加载后的统计入口、后台同步、主机注册和卸载清理；实际手机的页面布局和触控仍需在设备上验证。
+
+## dot 可见文本估算
+
+启用 dot Provider 时，统计数字账本 `paseo-dot-bridge/usage-estimates.json`（目录与 dot-bridge 共用 `PASEO_DOT_BRIDGE_DATA_DIR` 或 `$PASEO_HOME/paseo-dot-bridge`）。需同时更新、构建并重新加载 dot-bridge 与 usage-glance。
+
+该来源标为「dot（估算）」，计入今日、日期范围、Workspace 和热力图；包含估算的合计显示 `≈`，汇总拆出已记录值与 dot 估算值。关闭 dot Provider 即排除。Workspace 优先使用账本工作区 ID，其次目录匹配。
+
+算法 `visible-text-v1` 按每条新增可见消息的 ASCII 字符数 / 4 加非 ASCII Unicode 码点数后向上取整，分别估算用户输入和 dot 的回复、提问、进度文字。不计重复历史、图片、附件正文、工具、上下文重传或隐藏推理，也不猜测实际模型。它可能显著低于实际用量，只用于趋势，不能推算费用或剩余额度。缓存计数不包含未观测部分，推理细分为未提供。
+
+账本由 bridge 的保留消息重建，使用稳定 ID 去重；没有聊天正文或凭证。尚未生成或读取失败会提示，不能把缺失记录解释为零。历史是否能恢复取决于 bridge 是否仍保留原消息。

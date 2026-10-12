@@ -6,6 +6,7 @@ import {
   EVENT_DEFINITIONS,
   MCP_EVENT_PROTOCOL_VERSION,
   PROVIDER_CONVERSATION_INSTRUCTIONS,
+  PERMISSION_HANDOFF_INSTRUCTIONS,
   ATTACHMENT_DELIVERY_INSTRUCTIONS,
   SUPPORTED_PROTOCOL_VERSIONS,
   subscribeInputSchema,
@@ -186,13 +187,15 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
       case 'get_dot_task': {
         const args = input as z.infer<typeof toolInputSchemas.get_dot_task>;
         const task = options.engine.getForConnection(args.connectionId, args.taskId);
-        return { task, ...(task.mode === 'text' ? { ...(task.provider ? { conversationInstructions: PROVIDER_CONVERSATION_INSTRUCTIONS } : {}), attachmentInstructions: ATTACHMENT_DELIVERY_INSTRUCTIONS, localFileInstructions: LOCAL_FILE_INSTRUCTIONS, localFilesAvailable: task.workspaceRoot !== null } : { legacyReadOnly: true }) };
+        return { task, ...(task.mode === 'text' ? { ...(task.provider ? { conversationInstructions: PROVIDER_CONVERSATION_INSTRUCTIONS } : {}), permissionInstructions: PERMISSION_HANDOFF_INSTRUCTIONS, attachmentInstructions: ATTACHMENT_DELIVERY_INSTRUCTIONS, localFileInstructions: LOCAL_FILE_INSTRUCTIONS, localFilesAvailable: task.workspaceRoot !== null } : { legacyReadOnly: true }) };
       }
       case 'claim_dot_task': {
         const args = input as z.infer<typeof toolInputSchemas.claim_dot_task>;
         const claim = await options.engine.claimTask(args);
         return { claim };
       }
+      case 'request_dot_permission': return { permission: await options.engine.requestPermission(input as z.infer<typeof toolInputSchemas.request_dot_permission>) };
+      case 'report_dot_permission_blocked': return { permission: await options.engine.reportPermissionBlocked(input as z.infer<typeof toolInputSchemas.report_dot_permission_blocked>) };
       case 'report_dot_progress': {
         const args = input as z.infer<typeof toolInputSchemas.report_dot_progress>;
         return options.engine.reportProgress(args);

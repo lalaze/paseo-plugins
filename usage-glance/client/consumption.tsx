@@ -13,13 +13,14 @@ import { localizeHostLabel, localizeModelLabel, ui } from './i18n';
 type Theme = PluginHostProps['theme'];
 function GroupCard({ group, total, theme, compact, byModel }: { group: ConsumptionGroup; total: number; theme: Theme; compact: boolean; byModel: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const estimated = group.models.some(model => model.source === 'dot' && totalTokens(model) > 0);
   const value = totalTokens(group), share = total > 0 ? value / total * 100 : 0;
   return <View>
     <Pressable accessibilityRole="button" accessibilityLabel={`${expanded ? ui('Collapse', '收起') : ui('Expand', '展开')} ${group.label} ${byModel ? ui('source', '来源') : ui('model', '模型')} ${ui('details', '明细')}`} aria-expanded={expanded} accessibilityState={{ expanded }} onPress={() => setExpanded(value => !value)} style={({ pressed }) => ({ paddingVertical: 12, paddingHorizontal: 2, gap: 8, minHeight: compact ? 64 : 60, opacity: pressed ? 0.65 : 1 })}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
         <Text style={{ color: theme.colors.foreground, fontWeight: '600', fontSize: 14, flexShrink: 1 }}>{group.label}</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: '600', fontVariant: ['tabular-nums'] }}>{compactTokens(value)}</Text>
+          <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: '600', fontVariant: ['tabular-nums'] }}>{estimated ? '≈ ' : ''}{compactTokens(value)}</Text>
           <Text style={{ color: theme.colors.foregroundMuted, fontSize: 14 }}>{expanded ? '−' : '+'}</Text>
         </View>
       </View>
@@ -34,10 +35,10 @@ function GroupCard({ group, total, theme, compact, byModel }: { group: Consumpti
     </Pressable>
     {expanded ? <View style={{ padding: 12, marginBottom: 8, borderRadius: 12, backgroundColor: theme.colors.surface0, gap: 14 }}>
       <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{ui(`${group.models.length} ${byModel ? '' : 'model '}sources`, `${group.models.length} 项${byModel ? '' : '模型'}来源`)}</Text>
-      <Breakdown tokens={group} theme={theme} />
+      <Breakdown tokens={group} theme={theme} estimated={estimated} />
       {group.models.map(model => <View key={`${model.host?.id ?? "local"}:${model.source}:${model.model}`} style={{ paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.border, gap: 5 }}>
         <Text selectable style={{ color: theme.colors.foreground, fontWeight: '500', fontSize: 12, lineHeight: 18, flexShrink: 1 }}>{byModel ? `${model.host ? `${localizeHostLabel(model.host.label)} · ` : ''}${sourceNames[model.source]}` : localizeModelLabel(model.model)}{model.inferredModel ? ui(' · Model inferred', ' · 模型推定') : ''}</Text>
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{byModel ? '' : `${model.host ? `${localizeHostLabel(model.host.label)} · ` : ''}${sourceNames[model.source]} · `}{ui(`Total ${formatTokens(totalTokens(model))} tokens`, `共 ${formatTokens(totalTokens(model))} token`)}</Text>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{byModel ? '' : `${model.host ? `${localizeHostLabel(model.host.label)} · ` : ''}${sourceNames[model.source]} · `}{model.source === 'dot' ? '≈ ' : ''}{ui(`Total ${formatTokens(totalTokens(model))} tokens`, `共 ${formatTokens(totalTokens(model))} token`)}</Text>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 18 }}>{ui(`Input ${formatTokens(model.input)} · Output ${formatTokens(model.output)}${model.cacheRead ? ` · Cache read ${formatTokens(model.cacheRead)}` : ''}${model.cacheWrite ? ` · Cache write ${formatTokens(model.cacheWrite)}` : ''}${model.reasoning !== null ? ` · Reasoning ${formatTokens(model.reasoning)}` : ''}`, `输入 ${formatTokens(model.input)} · 输出 ${formatTokens(model.output)}${model.cacheRead ? ` · 缓存读取 ${formatTokens(model.cacheRead)}` : ''}${model.cacheWrite ? ` · 缓存写入 ${formatTokens(model.cacheWrite)}` : ''}${model.reasoning !== null ? ` · 推理 ${formatTokens(model.reasoning)}` : ''}`)}</Text>
         {model.workspaceNote ? <Text style={{ color: theme.colors.statusWarning, fontSize: 11, lineHeight: 18 }}>{model.workspaceNote}</Text> : null}
       </View>)}
@@ -71,6 +72,8 @@ function ConsumptionSummary({ theme, layout, query, workspaceQuery, timezone, sc
   const report = result.data, sources = report?.sources ?? [];
   const groups = groupConsumption(sources, by), totals = emptyTokens();
   for (const group of groups) addTokens(totals, group);
+  const dotEstimate = sources.filter(source => source.source === 'dot').reduce((sum, source) => sum + (by === 'workspace' ? source.workspaceRows ?? source.rows : source.rows).reduce((sum, row) => sum + totalTokens(row), 0), 0);
+  const estimated = dotEstimate > 0;
   const pending = result.isPending || (report?.scanning === true && !hasConsumptionReading(report));
   const incomplete = !!report?.unsupportedProviders?.length || report?.hosts?.some(host => host.status !== 'ready') || sources.some(source => ['partial', 'error', 'loading'].includes(source.status));
   const latest = sources.map(source => source.updatedAt).filter((date): date is string => date !== null).sort()[0];
@@ -95,13 +98,14 @@ function ConsumptionSummary({ theme, layout, query, workspaceQuery, timezone, sc
       <Pressable accessibilityRole="button" accessibilityLabel={ui('Apply usage dates', '应用消耗日期')} disabled={!validation.success} onPress={() => { if (validation.success) setCustom(validation.data); }} style={{ minHeight: layout.compact ? 44 : 36, padding: 8, borderRadius: 6, backgroundColor: theme.colors.surface2, alignItems: 'center', justifyContent: 'center', opacity: validation.success ? 1 : 0.5 }}><Text style={{ color: theme.colors.accent, fontSize: 12 }}>{ui('Apply Dates', '应用日期')}</Text></Pressable>
     </View> : null}
     {result.isError || refreshError ? <Text accessibilityRole="alert" style={{ color: theme.colors.statusWarning, fontSize: 12 }}>{ui('Read failed; try again.', '读取失败，请重试。')}{report ? ui(' Showing data from the previous read.', '以下为上次读取的数据。') : ''}</Text> : null}
-    {groups.length ? <TotalCard label={ui('Recorded Usage', '已记录消耗')} total={totalTokens(totals)} accessibilityLabel={ui(`Recorded usage ${formatTokens(totalTokens(totals))} tokens`, `已记录消耗 ${formatTokens(totalTokens(totals))} token`)} partial={incomplete || pending} theme={theme}>
-      <SmallStat label={ui('Input · Includes cache', '输入 · 含缓存')} value={compactTokens(totals.input)} theme={theme} />
-      <SmallStat label={ui('Output · Includes reasoning', '输出 · 含推理')} value={compactTokens(totals.output)} theme={theme} />
+    {groups.length ? <TotalCard estimated={estimated} label={estimated ? ui('Usage including dot estimate', '消耗合计 · 含 dot 估算') : ui('Recorded Usage', '已记录消耗')} total={totalTokens(totals)} accessibilityLabel={ui(`Recorded usage ${formatTokens(totalTokens(totals))} tokens`, `已记录消耗 ${formatTokens(totalTokens(totals))} token`)} partial={incomplete || pending} theme={theme}>
+      <SmallStat label={estimated ? ui('Input · estimate included', '输入 · 含估算') : ui('Input · Includes cache', '输入 · 含缓存')} value={compactTokens(totals.input)} theme={theme} />
+      <SmallStat label={estimated ? ui('Output · estimate included', '输出 · 含估算') : ui('Output · Includes reasoning', '输出 · 含推理')} value={compactTokens(totals.output)} theme={theme} />
     </TotalCard> : <View style={{ padding: 16, borderRadius: 16, backgroundColor: theme.colors.surface0, gap: 6 }}>
       <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: '600' }}>{pending ? ui('Loading usage', '正在读取消耗') : ui('No usage records', '暂无消耗记录')}</Text>
       <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 19 }}>{pending ? ui('Organizing records from enabled sources…', '正在整理已启用来源的记录…') : report ? report.hosts?.some(host => host.status !== 'ready') ? ui('The selected hosts have not returned records yet. Check the host status below.', '所选主机暂未返回记录，请查看下方主机状态。') : !sources.length ? ui('No Provider that supports usage tracking is currently enabled.', '当前未启用支持消耗统计的 Provider。') : incomplete ? ui('No usage can be displayed yet. Check the data-source status below.', '尚无可显示的消耗，请查看下方数据来源状态。') : ui('There is no recorded usage in this date range.', '该时间范围没有已记录的消耗。') : ui('Temporarily unable to read usage; refresh later.', '暂时无法读取，请稍后刷新。')}</Text>
     </View>}
+    {estimated ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 18 }}>{ui(`Recorded: ${formatTokens(totalTokens(totals) - dotEstimate)} + dot estimate: ≈ ${formatTokens(dotEstimate)} tokens. Only visible text is estimated; context replay, tools, images and hidden reasoning are excluded.`, `已记录 ${formatTokens(totalTokens(totals) - dotEstimate)} + dot 估算约 ${formatTokens(dotEstimate)} token。仅估算可见文本，不含上下文重传、工具、图片和隐藏推理。`)}</Text> : null}
     <Text style={{ color: theme.colors.foregroundMuted, fontSize: 10, textAlign: 'center' }}>{range.since === range.until ? range.since : `${range.since} — ${range.until}`} · {timezone}</Text>
     <View style={{ gap: 2 }}>
       <Segments quiet wrap={layout.compact} theme={theme} options={[

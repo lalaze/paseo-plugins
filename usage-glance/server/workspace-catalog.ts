@@ -32,7 +32,8 @@ export function workspaceResolver(workspaces: WorkspaceIdentity[], bindings: Wor
     const matches = workspaces.filter(item => item.directory.replace(/[^a-zA-Z0-9]/g, '-') === project);
     return matches.length === 1 ? matches[0] : undefined;
   }
-  return { directory, session, claudeProject };
+  function byId(id: string): WorkspaceIdentity | undefined { return workspaces.find(workspace => workspace.id === id); }
+  return { directory, session, claudeProject, byId };
 }
 export type WorkspaceResolver = ReturnType<typeof workspaceResolver>;
 

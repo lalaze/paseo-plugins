@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import { localReceiptSchema } from './local-files';
 import { attachmentSchema, MAX_TASK_ATTACHMENTS } from './attachments';
+import { permissionSchema } from './permissions';
 
 export const shaSchema = z.string().regex(/^[0-9a-f]{40,64}$/);
 export const branchSchema = z
@@ -187,6 +188,7 @@ export const taskSchema = z
     environmentHint: z.string().max(2000).default(''),
     workspaceRoot: z.string().nullable().default(null),
     localChanges: z.array(localReceiptSchema).default([]),
+    permissions: z.array(permissionSchema).default([]),
     provider: z.object({ cwd: z.string(), clientMessageIds: z.record(z.string(), z.string()) }).strict().nullable().default(null),
     currentRoundId: uuidSchema,
     rounds: z.array(roundSchema).min(1),
@@ -335,7 +337,8 @@ export const dedupSchema = z
  */
 // v5: attachments; v6: native-provider bindings; v7: pinned local workspace and file-operation receipts.
 // v8: chunked attachments up to 20 MiB and named local delivery paths.
-export const STORE_VERSION = 8;
+// v9: durable, round/message-bound local permission decisions.
+export const STORE_VERSION = 9;
 
 export const storeFileSchema = z
   .object({

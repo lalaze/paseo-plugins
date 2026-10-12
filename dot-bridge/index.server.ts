@@ -15,6 +15,7 @@ import {
   taskHistory,
   taskList,
   taskMessageAdd,
+  taskPermissionRespond,
   taskRoundCreate,
   taskRoundRetry,
 } from './shared/rpc';
@@ -185,6 +186,11 @@ export default function contribute(server: PluginServerContext) {
     return { tasks, dataDir: store?.dir ?? '', loadError: store?.loadError ?? null };
   });
   server.handle(taskGet, async ({ id }) => ({ task: (await useEngine()).task(id) }));
+  server.handle(taskPermissionRespond, async input => {
+    const permission = await (await useEngine()).respondPermission(input);
+    void tick();
+    return { permission };
+  });
   server.handle(taskHistory, async ({ id, cursor }) => (await useEngine()).historyForTask(id, cursor));
   server.handle(taskMessageAdd, async input => {
     const task = await (await useEngine()).addMessage(input);

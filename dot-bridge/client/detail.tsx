@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { AttachmentPanel } from './attachments';
+import { PermissionPanel } from './permissions';
 import type { PluginClientContext, PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { copyText, Icon, useToast } from '@getpaseo/plugin/client/react-native';
 import { Pressable, Text, TextInput, View } from 'react-native';
@@ -255,6 +256,8 @@ export function TaskDetail(props: TaskDetailProps) {
         <Icon name="ChevronLeft" size={16} color={colors.foregroundMuted} />
         <Text style={{ color: colors.foregroundMuted, fontSize: 13 }}>{ui('All tasks', '全部任务')}</Text>
       </Pressable>
+
+      <PermissionPanel task={task} roundId={selected.roundId} colors={colors} rpc={props.rpc} refresh={refresh} open={openPr} />
 
       <View style={{ gap: 6 }}>
         <Text style={{ color: colors.foreground, fontSize: 16, fontWeight: '700' }}>{task.title}</Text>

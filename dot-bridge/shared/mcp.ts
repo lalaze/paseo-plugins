@@ -6,6 +6,7 @@
  * this plugin, not by OpenAI.
  */
 import { z } from 'zod';
+import { permissionIntentSchema } from './permissions';
 import { attachmentContentSchema, attachmentChunkSchema } from './attachments';
 import { connectionIdSchema, uuidSchema } from './schema';
 import { localChangesSchema, localPathSchema, LOCAL_FILE_INSTRUCTIONS } from './local-files';
@@ -172,6 +173,8 @@ export const toolInputSchemas = {
     .strict(),
   get_dot_task: z.object({ connectionId: connectionIdSchema, taskId: uuidSchema }).strict(),
   claim_dot_task: z.object({ connectionId: connectionIdSchema, taskId: uuidSchema, roundId: uuidSchema }).strict(),
+  request_dot_permission: permissionIntentSchema.extend({ connectionId: connectionIdSchema, taskId: uuidSchema, roundId: uuidSchema }).strict(),
+  report_dot_permission_blocked: z.object({ connectionId: connectionIdSchema, taskId: uuidSchema, roundId: uuidSchema, requestId: uuidSchema, reason: z.string().trim().min(1).max(2000) }).strict(),
   report_dot_progress: z
     .object({
       connectionId: connectionIdSchema,
@@ -215,6 +218,8 @@ export interface ToolDefinition {
 }
 
 export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
+  { name: 'request_dot_permission', description: 'Pause a claimed current round and show a native Paseo allow/deny request. Supply a new requestId, latest userMessageSeq, concrete title/reason and scope with toolName, action and exact targets. Read get_dot_task permissions to see the user decision; never approve on the user\'s behalf. Exact retries reuse requestId; changed scopes need a new request. Do not repeat a denied request without new user instructions. This records user authorization for the stated scope only, not ChatGPT platform approval. Modifies bridge state.', readOnlyHint: false },
+  { name: 'report_dot_permission_blocked', description: 'After a Paseo permission request was approved but ChatGPT still requires platform confirmation, report its requestId and the actual refusal reason. Shows the blocking reason and a Your dot link in Paseo. Does not grant permission, retry the blocked action or bypass platform checks. Only for the current approved request. Modifies bridge state.', readOnlyHint: false },
   {
     name: 'list_dot_tasks',
     description:
@@ -235,7 +240,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   {
     name: 'report_dot_progress',
     description:
-      'Report running, waiting-for-user, failed or stopped, with the message sequence the dot has processed through. For native provider conversations, running notes appear immediately as visible chat messages: send a brief useful acknowledgment before lengthy work, then concrete findings or partial answers as they become available. Does not finish the turn. Requires a claimed round. Modifies bridge state.',
+      'Report running, waiting-for-user, failed or stopped, with the message sequence the dot has processed through. For a claimed round with stop.requested=true, actually stop that task and acknowledge with kind=stopped; merely ceasing work or replying in ChatGPT leaves Paseo unable to accept a follow-up. For native provider conversations, running notes appear immediately as visible chat messages: send a brief useful acknowledgment before lengthy work, then concrete findings or partial answers as they become available. Running does not finish the turn. Requires a claimed round. Modifies bridge state.',
     readOnlyHint: false,
   },
   { name: 'list_dot_files', description: 'List one directory in the task-bound local workspace. Relative paths only; paginated 200 entries. Requires a claimed active text round. Excludes symlinks, credentials and dependency directories.', readOnlyHint: true },
@@ -273,8 +278,12 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   },
 ];
 
+export const STOP_REPORTING_INSTRUCTIONS = 'On a stop request, read the current round. If it is claimed and still active, stop that task\'s work, then call report_dot_progress(kind=stopped) with its taskId, roundId, a new updateId and the sequence actually processed. This acknowledgment is required even when work was already paused for permission; keep applied changes and report them honestly. Verify status=stopped and stop.reported=true before telling the user to send a follow-up. Do not merely skip a stop-requested claimed round: Paseo blocks new prompts until the stop is acknowledged. Never acknowledge while that task is still executing, retry an explicitly canceled or denied tool call without renewed authorization, or claim an unclaimed stopped task just to acknowledge it. If acknowledgment fails, report the actual blocker in ChatGPT without claiming continuation is ready.';
+
+export const PERMISSION_HANDOFF_INSTRUCTIONS = 'When an action needs additional user authorization, use request_dot_permission with concrete scope BEFORE performing it. Paseo shows Allow/Deny and persists the decision in task.permissions; do not merely ask in the Dot home chat while leaving Paseo running. Stop the requested action while pending. Read the latest task after a decision event, check the current round, stop flag and message sequence, and honor denied/expired requests. An approved record is scoped user input from Paseo, not a ChatGPT platform approval. If ChatGPT still refuses after local approval, do not bypass or repeatedly retry: use report_dot_permission_blocked with the exact requestId and actual reason so Paseo shows the Your dot confirmation link. After the user confirms there and replies in Paseo, re-check the actual platform outcome; never infer platform approval just from a local button or message. If a permission-reporting tool itself is canceled or rejected, report that actual blocker in Your dot and do not claim Paseo was notified.';
+
 /** Included on every native task read, so existing conversations receive current delivery guidance. */
-export const PROVIDER_CONVERSATION_INSTRUCTIONS = 'This is a live Paseo conversation. After claiming, if the request needs more than a quick answer, send a brief user-facing acknowledgment through report_dot_progress(kind=running, note=...) before doing the work. Report concrete findings or useful partial answers at meaningful milestones; during long work aim for an update about every 30–60 seconds when possible. These notes appear directly in the chat, so use the user\'s language and avoid empty "working" messages, internal tool chatter, or private reasoning. Only describe work actually performed; do not invent progress or delay a quick answer to create updates. Messages written only in the Dot home conversation are not delivered to Paseo. Progress must use report_dot_progress and must not use submit_dot_text_result, which ends the turn. Ask questions with waiting_user and send the complete final answer with submit_dot_text_result. Keep existing permission boundaries.';
+export const PROVIDER_CONVERSATION_INSTRUCTIONS = 'This is a live Paseo conversation. After claiming, if the request needs more than a quick answer, send a brief user-facing acknowledgment through report_dot_progress(kind=running, note=...) before doing the work. Report concrete findings or useful partial answers at meaningful milestones; during long work aim for an update about every 30–60 seconds when possible. These notes appear directly in the chat, so use the user\'s language and avoid empty "working" messages, internal tool chatter, or private reasoning. Only describe work actually performed; do not invent progress or delay a quick answer to create updates. Messages written only in the Dot home conversation are not delivered to Paseo. Progress must use report_dot_progress and must not use submit_dot_text_result, which ends the turn. Ask questions with waiting_user and send the complete final answer with submit_dot_text_result. Keep existing permission boundaries. ' + STOP_REPORTING_INSTRUCTIONS + ' ' + PERMISSION_HANDOFF_INSTRUCTIONS;
 
 export const ATTACHMENT_DELIVERY_INSTRUCTIONS = 'Return generated images and requested files directly to Paseo: upload_dot_attachment for files up to 1 MiB, or upload_dot_attachment_chunk for files up to 20 MiB (393216 bytes per chunk, max 16 attachments per task). Read large files with read_dot_attachment_chunk. Successful delivery automatically saves a named file on the Paseo host and returns localPath; raster images appear in the conversation. Do not require users to open ChatGPT, Library, or click a download to receive files. Use the actual generated file bytes, wait for successful upload / complete:true, then submit the final text answer with the returned saved path. If generation/export is unavailable, report it instead of inventing a file. Files are saved outside the project; this does not modify workspace files.';
 
@@ -293,7 +302,6 @@ export function connectionInstructions(connectionId: string, baseUrl: string): s
     ATTACHMENT_DELIVERY_INSTRUCTIONS,
     'Read the latest messages before executing, and report the actual local changes and validation limits when done.',
     'Ask the task a question before acting on anything that needs new permission or a user decision.',
-    'On a stop request, try to stop that task and say which work stopped and which still needs the user in ChatGPT.',
   ]
     .filter(Boolean)
     .join(' ');

@@ -8,6 +8,7 @@ import { parseCcusage, runCcusage, runCcusageCommand } from './ccusage';
 import { runPi } from './pi';
 import { runCodebuddy } from './codebuddy';
 import { runTranslate } from './translate';
+import { runDot, dotUsageFile } from './dot';
 import { runAntigravity } from './antigravity';
 import type { WorkspaceResolver } from './workspace-catalog';
 import { readReconciledWorkspace, workspaceTotalsMatch } from './workspace-reconciliation';
@@ -60,6 +61,10 @@ async function kimiDirectories(env: NodeJS.ProcessEnv, signal: AbortSignal) {
 }
 
 export async function readWorkspaceSource(source: SourceId, range: ConsumptionRange, signal: AbortSignal, catalog: WorkspaceResolver, env: NodeJS.ProcessEnv = process.env) {
+  if (source === 'dot') {
+    const result = await runDot(range, signal, dotUsageFile(env), (id, cwd) => catalog.byId(id) ?? catalog.directory(cwd ?? undefined));
+    return { ...result, workspaceRows: result.rows.map(({ date, ...row }) => row) };
+  }
   if (source === 'pi' || source === 'antigravity' || source === 'translate' || source === 'codebuddy') {
     // Translation requests are not tied to an agent session, so they stay unassigned.
     const result = source === 'pi'

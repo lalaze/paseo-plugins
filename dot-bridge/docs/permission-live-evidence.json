@@ -1,0 +1,91 @@
+{
+  "validatedAt": "2026-10-12T10:46:02.731127+00:00",
+  "agentId": "a0ac4c3c-4dba-4df4-b7af-49796ff235a2",
+  "taskId": "0bcca5db-837d-4605-b4b4-6d7c39b8a667",
+  "permissions": [
+    {
+      "requestId": "9724497b-84e6-4f6c-a901-f51a17db1c02",
+      "userMessageSeq": 1,
+      "title": "合成验收：回复固定文字",
+      "description": "仅验证 Paseo 的允许/拒绝卡片；只回传固定测试标记",
+      "scope": {
+        "toolName": "submit_dot_text_result",
+        "action": "向当前 Paseo 测试会话回复固定文字 PERMISSION-ALLOW-OK",
+        "targets": [
+          "当前合成验收会话"
+        ]
+      },
+      "roundId": "a5bea48c-45e2-400c-a9d3-561c11b07643",
+      "status": "approved",
+      "requestedAt": 1791801588943,
+      "resolvedAt": 1791801612750,
+      "decisionMessageSeq": 4,
+      "platformBlock": null
+    },
+    {
+      "requestId": "1618cb18-59c9-42f1-b00f-9b12609eb8e7",
+      "userMessageSeq": 5,
+      "title": "合成验收：拒绝分支",
+      "description": "仅验证 Paseo 的允许/拒绝卡片；只回传固定测试标记",
+      "scope": {
+        "toolName": "submit_dot_text_result",
+        "action": "向当前 Paseo 测试会话回复固定文字 PERMISSION-ALLOW-OK",
+        "targets": [
+          "当前合成验收会话"
+        ]
+      },
+      "roundId": "1f78bd6a-23d0-4cbf-9f4b-4f153ad6ee27",
+      "status": "denied",
+      "requestedAt": 1791801792813,
+      "resolvedAt": 1791801813647,
+      "decisionMessageSeq": 8,
+      "platformBlock": null
+    }
+  ],
+  "rounds": [
+    {
+      "roundId": "a5bea48c-45e2-400c-a9d3-561c11b07643",
+      "createdAt": 1791801505046,
+      "claim": {
+        "claimedAt": 1791801552875,
+        "taskId": "0bcca5db-837d-4605-b4b4-6d7c39b8a667"
+      },
+      "status": "completed",
+      "result": {
+        "summary": "PERMISSION-ALLOW-OK",
+        "checks": [],
+        "reportedAt": 1791801669279,
+        "updateId": "f88a25b0-dde5-467c-9f40-c4c3e8a9197f",
+        "processedThroughSeq": 4,
+        "coversLatest": true,
+        "kind": "text",
+        "baseSha": null,
+        "headSha": null,
+        "branch": null,
+        "prUrl": null
+      }
+    },
+    {
+      "roundId": "1f78bd6a-23d0-4cbf-9f4b-4f153ad6ee27",
+      "createdAt": 1791801735160,
+      "claim": {
+        "claimedAt": 1791801770505,
+        "taskId": "0bcca5db-837d-4605-b4b4-6d7c39b8a667"
+      },
+      "status": "completed",
+      "result": {
+        "summary": "PERMISSION-DENIED-OK",
+        "checks": [],
+        "reportedAt": 1791801931728,
+        "updateId": "8a547915-180f-4fef-9179-cd06c13a2ca9",
+        "processedThroughSeq": 8,
+        "coversLatest": true,
+        "kind": "text",
+        "baseSha": null,
+        "headSha": null,
+        "branch": null,
+        "prUrl": null
+      }
+    }
+  ]
+}

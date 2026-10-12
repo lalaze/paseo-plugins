@@ -18,7 +18,7 @@ The original contents and exact outcome are retained in a private durable operat
 
 The Bridge serializes its own writes. It cannot lock every external editor or process: the final filesystem check and rename/unlink are not an OS-level multi-file transaction. Avoid concurrently editing the same file while Dot applies a change. Routine stale-content conflicts are detected; failures and interrupted operations remain visible with backups in the journal.
 
-Activity shows operations that pass through the Bridge. Dot's own text still arrives through progress/final-answer calls. Read/list/upload activity keeps the latest 200 cards per task in the plugin process; a process restart does not replay that transient history. Edit cards replay from durable receipts and the original change journal, even after later user edits. Large rewrites or missing/invalid journals show the file path without a diff. See [activity feed validation](docs/activity-feed-validation.md) for coverage and limits.
+Activity shows operations that pass through the Bridge. Dot's own text still arrives through progress/final-answer calls. Read/list/upload activity keeps the latest 200 cards per task in the plugin process; a process restart does not replay that transient history. Edit cards replay from durable receipts and the original change journal, even after later user edits. Large rewrites or missing/invalid journals show the file path without a diff. See [Paseo permission validation](docs/permission-validation.md), [activity feed validation](docs/activity-feed-validation.md) for coverage and limits.
 
 ## Architecture
 
@@ -62,13 +62,67 @@ Dot returns files directly through the Bridge, without asking the user to open C
 
 Use `read_dot_attachment_chunk` to read larger files. PNG/JPEG/WebP/GIF attachments preview in the conversation; images up to 8 MiB load automatically, larger ones have a preview button to bound memory use. SVG/HTML attachments are never rendered as active content. The web client can save another copy; native clients can copy the host path or small UTF-8 attachments. User-initiated uploads remain limited to 1 MiB. Existing attachments remain readable; only newly delivered Dot files receive named local copies.
 
+## Confirmations inside Paseo
+
+When additional authorization is needed, Dot calls `request_dot_permission` with the current
+round/message sequence, a stable request UUID, the reason, tool name, action and exact targets.
+Paseo displays native **Allow this operation / Deny** controls; the same request is also available
+in **Dot tasks** details. Either choice is saved atomically with a scoped user message and a wake-up
+event. Dot must read the latest task before continuing. There is deliberately no MCP approval tool.
+
+Pending requests survive reconnects/restarts. Stop, new user instructions or a finished round expire
+pending buttons. Duplicate decisions do not duplicate messages; conflicting decisions are refused.
+Pending, denied and platform-blocked current requests block Bridge file writes/uploads. An approved
+request constrains those mutations to its tool and exact paths or attachment names. These controls
+cover Bridge mutations, not unrelated tools available to Dot. They do not grant permanent access.
+
+Paseo approval is **not ChatGPT platform approval**. If the platform still refuses an approved action,
+Dot calls `report_dot_permission_blocked` with the actual reason. The conversation and task details
+show the reason and an **Open Your dot** link. The user confirms the specific operation there, then
+returns to the conversation. If even the reporting tool is rejected, Dot must disclose that blocker
+in Your dot; the Bridge cannot observe remote failures that never reach it.
+
+After upgrading, refresh the ChatGPT plugin tools so `request_dot_permission` and
+`report_dot_permission_blocked` are available, and update the existing Dot event rule with the
+permission instructions returned by `get_dot_task`. Older clients without native permission support
+can use the task-details buttons. Automated coverage is in `tests/permissions.test.ts`.
+
 ## Persistence and compatibility
 
 Data lives in `PASEO_DOT_BRIDGE_DATA_DIR`, or `$PASEO_HOME/paseo-dot-bridge`; startup refuses to guess a fallback. State, private credentials and SHA-addressed attachments remain separate. `local-changes/<operationId>.json` holds original file contents, change intent and the durable receipt with mode 0600. Back up this directory with the state and attachments. Journals currently have no automatic pruning and may contain source code.
 
-Store **v8** adds larger attachment metadata and local delivery paths; v7 added the pinned workspace root and local code-change receipts. Older files are migrated with their original bytes backed up as `state.v<version>.json`. Older native conversations gain their local binding on the next message through Paseo. Older panel-only text tasks without a local binding should be recreated to edit files. Settings v3 removes repository, branch and cloud-environment defaults.
+Store **v9** adds durable scoped permission requests and decisions; v8 added larger attachment metadata and local delivery paths; v7 added the pinned workspace root and local code-change receipts. Older files are migrated with their original bytes backed up as `state.v<version>.json`. Older native conversations gain their local binding on the next message through Paseo. Older panel-only text tasks without a local binding should be recreated to edit files. Settings v3 removes repository, branch and cloud-environment defaults.
 
 Historical Git tasks and verified results remain readable. The installed plugin has no Git adapter, does not dispatch/claim/continue those tasks, and exposes no Git result-submission or re-verification tool. Historical state schemas and compatibility tests are retained so upgrading does not erase prior deliveries. No Git fetch, commit, push, PR or merge is part of current task execution.
+
+## Visible-text usage estimates
+
+The Bridge exports `usage-estimates.json` beside `state.json` for usage-glance. This is a derived,
+numeric-only ledger (plus record identity, epoch-millisecond time, task ID, workspace ID and cwd);
+it contains no message bodies or credentials. Its contract is
+`{version:1, algorithm:"visible-text-v1", entries:[{id,at,taskId,workspaceId,cwd,input,output}]}`.
+`cwd` is the native provider's cwd, then the bound workspace root, or null.
+
+The fixed v1 heuristic is `ceil(ASCII code points / 4 + non-ASCII code points)` per visible message.
+It counts each stored user message once and Dot's visible progress, questions, errors and result
+summaries. Stable output update IDs replace prior estimates; repeated result-history snapshots
+and progress mirrors are not counted twice. A different result ID is a distinct visible result.
+Generated tool receipts, notes, images, attachment bodies, tool inputs/outputs, hidden reasoning,
+system instructions and repeated context are excluded. This is a trend estimate that can be
+substantially below actual usage, not billing usage, cost or remaining account quota.
+
+Opening the store backfills estimates from retained tasks; committed mutations rebuild the
+snapshot using temporary-file + rename with mode 0600. Replaying an operation or restarting does
+not accumulate duplicates. State remains authoritative: a crash between state and snapshot writes
+is repaired at next open. A snapshot write failure records `usageEstimateError` and attempts to
+remove stale estimates without rejecting an already committed conversation update; the next
+mutation/open retries. Snapshot and state are not a multi-file transaction. Existing history is
+included after upgrade, but deleted/unretained tasks cannot be recovered. No state migration or
+credentials access is needed for the export.
+
+Tests in `tests/usage-estimates.test.ts` cover the heuristic, stable-ID replacement, history/mirror
+deduplication, tool receipt exclusion, workspace attribution, persistence/rebuild, lock isolation
+and write-failure behavior.
 
 ## Validation and current limits
 
@@ -76,6 +130,6 @@ Run `npm run check` for typecheck, tests and bundles. HTTP tests need permission
 
 Local file coverage includes real filesystem creation/update/deletion, stale hashes, original-content journals, unchanged user edits, path traversal, symlinks, hardlinks, UTF-8 bounds, duplicate calls, interrupted batches, failed state writes after file application, authorization/round/stop checks, and authenticated MCP reads/writes. Historical engine, persistence, callback and attachment tests remain in the suite.
 
-See [activity feed validation](docs/activity-feed-validation.md), [automatic file delivery validation](docs/automatic-files-validation.md) and [local code delivery validation](docs/local-delivery-validation.md). Earlier [provider](docs/provider-validation.md), [text/attachment](docs/text-attachments-validation.md) and [Git delivery](docs/phase-0-validation.md) records describe the versions tested at those times.
+See [Paseo permission validation](docs/permission-validation.md), [activity feed validation](docs/activity-feed-validation.md), [automatic file delivery validation](docs/automatic-files-validation.md) and [local code delivery validation](docs/local-delivery-validation.md). Earlier [provider](docs/provider-validation.md), [text/attachment](docs/text-attachments-validation.md) and [Git delivery](docs/phase-0-validation.md) records describe the versions tested at those times.
 
-Current limits: one host and connected Dot; no token streaming, model switching, usage accounting, arbitrary shell execution, injected MCP tools, automatic local tests, binary saving to a remote phone or rewind. Cloud wake-up and long remote tool calls can delay progress. The web client has been exercised; native mobile and desktop UI automation remain unverified.
+Current limits: one host and connected Dot; no token streaming, model switching, actual provider usage accounting, arbitrary shell execution, injected MCP tools, automatic local tests, binary saving to a remote phone or rewind. Cloud wake-up and long remote tool calls can delay progress. The web client has been exercised; native mobile and desktop UI automation remain unverified.

@@ -38,7 +38,7 @@ test('translate is listed only once its ledger exists and never through Provider
   assert.deepEqual(enabledConsumptionSources([{ provider: 'codex', enabled: true }], ['translate']), ['codex', 'translate']);
   assert.deepEqual(enabledConsumptionSources([], ['translate']), ['translate']);
   assert.deepEqual(enabledConsumptionSources([{ provider: 'codex', enabled: true }], ['codex']), ['codex']);
-  assert.equal(sourceIds.at(-1), 'translate');
+  assert.ok(sourceIds.includes('translate'));
 });
 
 test('translate sums ledger calls per day and model in the requested zone and reports gaps', async () => {

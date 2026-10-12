@@ -15,6 +15,8 @@ const messages = {
   'challenge-missing': ['There is no pending connection challenge.', '当前没有待确认的连接随机值。'],
   'task-missing': ['The task no longer exists.', '任务不存在。'],
   'task-rejected': ['This task cannot be changed right now.', '当前不能修改这个任务。'],
+  'permission-required': ['This action needs a current permission decision for its exact scope.', '该操作需要当前轮次、当前范围的有效授权。'],
+  'permission-stale': ['This permission request is no longer actionable. Read the latest task.', '该授权请求已失效，请读取任务最新状态。'],
   'round-missing': ['The round no longer exists.', '轮次不存在。'],
   'round-stale': ['A report arrived for an older round; it is kept in history and does not change the current round.', '收到旧轮次的回报；已保留在历史中，不改变当前轮次。'],
   'round-open': ['The current round is still working, so a new round cannot start.', '当前轮次仍在进行，不能开始新一轮。'],

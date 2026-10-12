@@ -7,15 +7,17 @@ import type { LocalReceipt } from '../shared/local-files';
 import { currentRound, uuidSchema, type Task } from '../shared/schema';
 import type { DotActivity } from './activity';
 import { unifiedDiff } from './diff';
+import { pendingPermissions, permissionDescription, permissionPromptId } from '../shared/permissions';
+import { canonicalJson } from '../shared/mcp';
 import type { BridgeEngine } from './engine';
 
 export const DOT_PROVIDER_ID = 'dot';
 export const WORKSPACE_ENV = 'PASEO_DOT_WORKSPACE_ID';
-const supported = ['prompt.message', 'prompt.image', 'session.persistence', 'timeline.plugin'];
+const supported = ['prompt.message', 'prompt.image', 'session.persistence', 'timeline.plugin', 'permission'];
 const bindingSchema = z.object({ taskId: uuidSchema, cwd: z.string(), workspaceId: z.string().min(1), taskCreated: z.boolean().default(false) }).strict();
 type Binding = z.infer<typeof bindingSchema>;
 /** `changes` lists receipts whose edit cards this session already handled; receipts never change. */
-type Session = { id: string; binding: Binding; systemPrompt: string; seen: Map<string, string>; changes: Set<string>; turn: string | null; busy: boolean };
+type Session = { id: string; binding: Binding; systemPrompt: string; seen: Map<string, string>; changes: Set<string>; permissions: Set<string>; turn: string | null; busy: boolean };
 
 /** Stable across process restarts; a redelivered client message cannot execute twice. */
 export function promptOperationId(taskId: string, clientMessageId: string): string {
@@ -55,7 +57,7 @@ export async function promptContents(prompt: ProviderPrompt): Promise<{ body: st
 
 function waitingForDot(task: Task): boolean {
   const round = currentRound(task);
-  return ['queued', 'dispatched', 'claimed', 'running'].includes(task.status)
+  return pendingPermissions(task).length > 0 || ['queued', 'dispatched', 'claimed', 'running'].includes(task.status)
     || (task.status === 'waiting_user' && round.processedThroughSeq < task.userMessageSeq)
     || (task.status === 'completed' && !round.result?.coversLatest);
 }
@@ -116,6 +118,25 @@ export function createDotProvider(options: { engine(): Promise<BridgeEngine>; ti
       };
       const refresh = (session: Session, task: Task, skip = false) => {
         const activity = engine.activity.list(task.id);
+        const permissions = pendingPermissions(task);
+        if (capabilities.includes('permission')) {
+          const current = new Set(permissions.map(p => permissionPromptId(task.id, p.requestId)));
+          for (const id of session.permissions) if (!current.has(id)) {
+            emit({ type: 'session.permission_resolved', sessionId: session.id, permissionId: id });
+            session.permissions.delete(id);
+          }
+          for (const p of permissions) {
+            const id = permissionPromptId(task.id, p.requestId);
+            if (session.permissions.has(id)) continue;
+            emit({ type: 'session.permission', sessionId: session.id, request: {
+              id, name: p.scope.toolName, kind: 'tool', title: `需要你确认：${p.title}`, description: permissionDescription(p),
+              input: { taskId: task.id, roundId: p.roundId, userMessageSeq: p.userMessageSeq, scope: p.scope },
+              actions: [{ id: 'allow', label: '允许本次操作', behavior: 'allow', variant: 'primary' }, { id: 'deny', label: '拒绝', behavior: 'deny', variant: 'danger' }],
+              metadata: { localApprovalOnly: true, requestId: p.requestId },
+            } });
+            session.permissions.add(id);
+          }
+        }
         for (const round of task.rounds) {
           // A round replays in time order, as it happened live; equal times keep this order.
           const entries: Array<[number, ProviderTimelineItem]> = [], built: string[] = [];
@@ -123,6 +144,7 @@ export function createDotProvider(options: { engine(): Promise<BridgeEngine>; ti
             const clientMessageId = task.provider?.clientMessageIds[String(message.seq)];
             const receipt = message.author === 'dot' ? task.localChanges.find(change => change.operationId === message.updateId) : undefined;
             if (message.author === 'user' && clientMessageId) entries.push([message.at, { type: 'user_message', id: `${task.id}:m:${message.seq}`, text: message.body, clientMessageId }]);
+            else if (message.author === 'user' && task.permissions.some(p => p.decisionMessageSeq === message.seq)) entries.push([message.at, { type: 'notification', id: `${task.id}:m:${message.seq}`, level: 'info', message: message.body }]);
             else if (receipt) {
               // Journal reads and diffs happen once per session, not on every poll.
               if (!session.changes.has(receipt.operationId)) for (const card of changeCards(task, receipt)) entries.push([message.at, card]);
@@ -146,14 +168,14 @@ export function createDotProvider(options: { engine(): Promise<BridgeEngine>; ti
           ? '已请求 Dot 停止，等待远端确认。'
           : ({ queued: engine.readyToDispatch() ? '等待发送给 Dot。' : '等待 Dot Bridge 连接就绪；请在插件中检查连接。', dispatched: '已发送，等待 Dot 接单。', claimed: 'Dot 已接单。', running: 'Dot 正在处理。', waiting_user: 'Dot 等待你的回复。', completed: round.result?.coversLatest ? 'Dot 已完成。' : 'Dot 的回复尚未覆盖最新消息，等待补充回复。', failed: 'Dot 处理失败，可发消息重试。', stopped: 'Dot 已停止。' }[task.status]);
         const statusId = `${task.id}:status:${task.currentRoundId}:${task.userMessageSeq}`;
-        const progress = task.status === 'running' && !round.stop.requested && round.lastProgress?.kind === 'running'
+        const progress = ['running', 'waiting_user'].includes(task.status) && !round.stop.requested && round.lastProgress?.kind === task.status
           && round.lastProgress.processedThroughSeq >= task.userMessageSeq ? round.lastProgress.note.trim() : '';
         const progressLabel = progress.replace(/\s+/g, ' ');
         const detail = { type: 'plain_text' as const, label: progressLabel ? (progressLabel.length > 100 ? `${progressLabel.slice(0, 100)}…` : progressLabel) : label, text: progress || label, icon: 'bot' as const };
         item(session, task.status === 'failed'
           ? { type: 'tool_call', id: statusId, callId: statusId, name: 'Dot', detail, status: 'failed', error: round.lastProgress?.note || label }
           : { type: 'tool_call', id: statusId, callId: statusId, name: 'Dot', detail, status: task.status === 'stopped' ? 'canceled' : waitingForDot(task) ? 'running' : 'completed', error: null }, undefined, skip);
-        if (task.status === 'waiting_user' && round.processedThroughSeq >= task.userMessageSeq) finish(session, 'completed');
+        if (task.status === 'waiting_user' && !permissions.length && round.processedThroughSeq >= task.userMessageSeq) finish(session, 'completed');
         else if (task.status === 'completed' && round.result?.coversLatest) finish(session, 'completed');
         else if (task.status === 'failed') finish(session, 'failed', round.lastProgress?.note || 'Dot failed');
         else if (task.status === 'stopped') finish(session, 'canceled');
@@ -190,7 +212,7 @@ export function createDotProvider(options: { engine(): Promise<BridgeEngine>; ti
               const task = engine.tasks().find(task => task.id === binding.taskId);
               if (binding.taskCreated && !task) throw new Error('The saved Dot task is missing; restore the Bridge data before continuing.');
               if (task && (task.provider?.cwd !== binding.cwd || task.workspaceId !== binding.workspaceId)) throw new Error('Dot task binding mismatch');
-              const session: Session = { id: input.sessionId, binding, systemPrompt: input.config.systemPrompt ?? '', seen: new Map(), changes: new Set(), turn: null, busy: false };
+              const session: Session = { id: input.sessionId, binding, systemPrompt: input.config.systemPrompt ?? '', seen: new Map(), changes: new Set(), permissions: new Set(), turn: null, busy: false };
               sessions.set(session.id, session);
               emit({ type: 'session.opened', requestId: input.requestId, sessionId: session.id, capabilities, restoration: 'core', persistence: { version: 1, data: binding }, cwd: binding.cwd });
               if (task) refresh(session, task, input.history === 'skip');
@@ -204,6 +226,27 @@ export function createDotProvider(options: { engine(): Promise<BridgeEngine>; ti
             if (!('sessionId' in input)) throw new Error(`Unsupported Dot request: ${input.type}`);
             const session = sessions.get(input.sessionId);
             if (!session) throw new Error('Dot session is not open');
+            if (input.type === 'session.permission') {
+              if (!capabilities.includes('permission')) throw new Error('Permission responses are not supported by this connection');
+              const task = engine.task(session.binding.taskId);
+              const p = task.permissions.find(p => permissionPromptId(task.id, p.requestId) === input.permissionId);
+              if (!p) throw new Error('Permission does not belong to this conversation');
+              const response = input.response;
+              if (response.selectedActionId && response.selectedActionId !== response.behavior) throw new Error('Permission action mismatch');
+              if (response.behavior === 'allow') {
+                const original = { taskId: task.id, roundId: p.roundId, userMessageSeq: p.userMessageSeq, scope: p.scope };
+                if ((response.updatedPermissions?.length ?? 0) > 0 || (response.updatedInput && canonicalJson(response.updatedInput) !== canonicalJson(original))) throw new Error('Permission scope cannot be changed or made permanent');
+              }
+              await engine.respondPermission({ taskId: task.id, requestId: p.requestId, decision: response.behavior === 'allow' ? 'approved' : 'denied' });
+              if (response.behavior === 'deny' && response.interrupt) {
+                const latest = engine.task(task.id);
+                await engine.cancelRequest({ id: latest.id, revision: latest.revision, operationId: randomUUID() });
+                finish(session, 'canceled', 'Stop requested.');
+              }
+              refresh(session, engine.task(task.id));
+              void options.tick();
+              return;
+            }
             if (input.type === 'session.prompt') {
               if (session.busy || session.turn) throw new Error('Dot is still handling the previous message');
               session.busy = true;

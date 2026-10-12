@@ -57,6 +57,7 @@ import type { GitPort } from './git';
 import { checkCallbackUrl, postSigned, type FetchLike, type Lookup } from './http';
 import { signPayloadMulti } from './signing';
 import type { BridgeStore } from './store';
+import { DOT_CONFIRMATION_URL, permissionCurrent, permissionDescription, permissionIntentSchema, pendingPermissions, type DotPermission, type PermissionIntent } from '../shared/permissions';
 
 const CHALLENGE_TTL = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 8;
@@ -257,6 +258,7 @@ export class BridgeEngine {
         return JSON.parse(prior.receipt) as LocalReceipt;
       }
       this.localTask(input, task);
+      this.assertPermissionMutation(task, 'apply_dot_changes', input.changes.map(change => change.path));
       if (input.userMessageSeq !== task.userMessageSeq) throw dotBridgeError('revision-conflict', 'A newer user message arrived; read the task again before editing files');
       const receipt = applyLocalChanges({ ...input, dataDir: this.deps.store.dir, root: task.workspaceRoot!, at: this.now() });
       const note = receipt.status === 'applied'
@@ -661,12 +663,13 @@ export class BridgeEngine {
     return this.publishAttachment(input, bytes);
   }
 
-  private validateDotUpload(task: Task, roundId: string, connectionId?: string): void {
+  private validateDotUpload(task: Task, roundId: string, connectionId: string | undefined, toolName: string, name: string): void {
     this.requireActiveDelivery(task);
     if (task.connectionId !== connectionId) throw dotBridgeError('connection-invalid');
     if (task.currentRoundId !== roundId) throw dotBridgeError('round-stale');
     const round = currentRound(task);
     if (round.stop.requested) throw dotBridgeError('task-rejected', 'stop requested');
+    this.assertPermissionMutation(task, toolName, [name]);
     if (!round.claim || !['claimed', 'running', 'waiting_user'].includes(round.remoteStatus)) throw dotBridgeError('claim-required');
     if (task.attachments.length >= MAX_TASK_ATTACHMENTS) throw dotBridgeError('attachment-limit');
   }
@@ -683,23 +686,23 @@ export class BridgeEngine {
       return { complete: true, received: Array.from({ length: Math.ceil(input.size / ATTACHMENT_CHUNK_BYTES) }, (_, i) => i), attachment: existing };
     }
     if (this.deps.store.read().dedup.operations[input.operationId]) throw dotBridgeError('duplicate-mismatch', 'operationId');
-    this.validateDotUpload(task, input.roundId, input.connectionId);
+    this.validateDotUpload(task, input.roundId, input.connectionId, 'upload_dot_attachment_chunk', input.name);
     const staged = receiveChunk(this.deps.store.dir, input, this.now());
     if (!staged.bytes) return { complete: false, received: staged.received };
-    const result = await this.publishAttachment({ ...input, id: input.taskId, actor: 'dot' }, staged.bytes);
+    const result = await this.publishAttachment({ ...input, id: input.taskId, actor: 'dot', permissionTool: 'upload_dot_attachment_chunk' }, staged.bytes);
     clearTransfer(this.deps.store.dir, input.taskId, input.operationId);
     return { complete: true, received: staged.received, ...result };
   }
 
   private async publishAttachment(input: Pick<AttachmentContent, 'name' | 'mediaType'> & {
-    operationId: string; id: string; roundId: string; actor: 'user' | 'dot'; revision?: number; connectionId?: string;
+    operationId: string; id: string; roundId: string; actor: 'user' | 'dot'; revision?: number; connectionId?: string; permissionTool?: string;
   }, bytes: Buffer): Promise<{ attachment: Attachment }> {
     const sha256 = createHash('sha256').update(bytes).digest('hex');
     const content = { kind: 'attachment', id: input.id, roundId: input.roundId, actor: input.actor,
       revision: input.revision, connectionId: input.connectionId, name: input.name, mediaType: input.mediaType, sha256 };
     const validate = (task: Task) => {
       this.requireActiveDelivery(task);
-      if (input.actor === 'dot') this.validateDotUpload(task, input.roundId, input.connectionId);
+      if (input.actor === 'dot') this.validateDotUpload(task, input.roundId, input.connectionId, input.permissionTool ?? 'upload_dot_attachment', input.name);
       if (task.currentRoundId !== input.roundId) throw dotBridgeError('round-stale');
       if (input.actor === 'user' && task.revision !== input.revision) throw dotBridgeError('revision-conflict');
       const round = currentRound(task);
@@ -1152,6 +1155,90 @@ export class BridgeEngine {
     });
   }
 
+  /** Dot asks; only the authenticated local UI/provider can resolve this request. */
+  async requestPermission(input: PermissionIntent & { connectionId: string; taskId: string; roundId: string }): Promise<DotPermission> {
+    const { connectionId, taskId, roundId, ...raw } = input;
+    const intent = permissionIntentSchema.parse(raw);
+    return this.deps.store.mutate(draft => {
+      const task = this.requireTask(draft, taskId);
+      if (task.connectionId !== connectionId) throw dotBridgeError('connection-invalid');
+      const prior = task.permissions.find(p => p.requestId === intent.requestId);
+      if (prior) {
+        const previous = { requestId: prior.requestId, userMessageSeq: prior.userMessageSeq, title: prior.title, description: prior.description, scope: prior.scope };
+        if (prior.roundId !== roundId || stableHash(previous) !== stableHash(intent)) throw dotBridgeError('duplicate-mismatch');
+        return structuredClone(prior);
+      }
+      this.requirePermissionRound(task, roundId);
+      if (task.userMessageSeq !== intent.userMessageSeq) throw dotBridgeError('permission-stale', 'A newer user message arrived');
+      if (pendingPermissions(task).length) throw dotBridgeError('permission-required', 'Resolve the pending request first');
+      if (task.permissions.some(p => permissionCurrent(task, p) && (p.status === 'denied' || p.platformBlock))) {
+        throw dotBridgeError('permission-required', 'Do not repeat a denied request without new user input');
+      }
+      const at = this.now();
+      const permission: DotPermission = { ...intent, roundId, status: 'pending', requestedAt: at, resolvedAt: null, decisionMessageSeq: null, platformBlock: null };
+      const next = reduceProgress({ ...task, permissions: [...task.permissions, permission] }, {
+        roundId, updateId: `permission:${intent.requestId}`, kind: 'waiting_user',
+        processedThroughSeq: intent.userMessageSeq, note: `需要你确认：${intent.title}\n${permissionDescription(intent)}\n请在 Paseo 的授权卡片选择允许或拒绝，也可在 Dot tasks 详情中处理。`, at,
+      }).task;
+      this.replace(draft, next);
+      return structuredClone(permission);
+    });
+  }
+
+  /** Not exposed as an MCP tool: a Dot tool call cannot manufacture a local approval. */
+  async respondPermission(input: { taskId: string; requestId: string; decision: 'approved' | 'denied' }): Promise<DotPermission> {
+    return this.deps.store.mutate(draft => {
+      const task = this.requireTask(draft, input.taskId);
+      const permission = task.permissions.find(p => p.requestId === input.requestId);
+      if (!permission) throw dotBridgeError('permission-stale');
+      if (permission.status === input.decision) return structuredClone(permission);
+      if (permission.status !== 'pending' || !permissionCurrent(task, permission)) throw dotBridgeError('permission-stale');
+      const at = this.now();
+      const verb = input.decision === 'approved' ? '允许' : '拒绝';
+      const next = appendUserMessage(task, `用户在 Paseo ${verb}本次请求「${permission.title}」（${permission.requestId}）。\n${permissionDescription(permission)}\n${input.decision === 'approved' ? '请核对最新任务，仅在上述范围内继续；如 ChatGPT 平台仍拒绝，回报平台阻塞，不得绕过。' : '不要执行被拒绝的操作。请说明未完成部分或提供不需要该操作的答复。'}`, 'answer', at);
+      const result: DotPermission = { ...permission, status: input.decision, resolvedAt: at, decisionMessageSeq: next.userMessageSeq };
+      next.permissions = next.permissions.map(p => p.requestId === permission.requestId ? result : p);
+      this.replace(draft, next);
+      this.emitTaskChanged(draft, next, 'message_added');
+      return structuredClone(result);
+    });
+  }
+
+  async reportPermissionBlocked(input: { connectionId: string; taskId: string; roundId: string; requestId: string; reason: string }): Promise<DotPermission> {
+    if (!input.reason.trim() || input.reason.length > 2000) throw dotBridgeError('task-rejected', 'Invalid platform refusal reason');
+    return this.deps.store.mutate(draft => {
+      const task = this.requireTask(draft, input.taskId);
+      if (task.connectionId !== input.connectionId) throw dotBridgeError('connection-invalid');
+      const permission = task.permissions.find(p => p.requestId === input.requestId);
+      if (!permission || permission.roundId !== input.roundId || permission.status !== 'approved') throw dotBridgeError('permission-required');
+      if (permission.platformBlock) {
+        if (permission.platformBlock.reason !== input.reason) throw dotBridgeError('duplicate-mismatch');
+        return structuredClone(permission);
+      }
+      if (!permissionCurrent(task, permission)) throw dotBridgeError('permission-stale');
+      const at = this.now(), blocked = { ...permission, platformBlock: { reason: input.reason, at } };
+      const next = reduceProgress({ ...task, permissions: task.permissions.map(p => p.requestId === input.requestId ? blocked : p) }, {
+        roundId: input.roundId, updateId: `permission-block:${input.requestId}`, kind: 'waiting_user', processedThroughSeq: task.userMessageSeq, at,
+        note: `仍需在 Your dot 确认：${permission.title}\nPaseo 已记录你的允许，但 ChatGPT 平台尚未批准。\n${input.reason}\n\n操作：${permission.scope.action}\n范围：${permission.scope.targets.join('、')}\n请打开 ${DOT_CONFIRMATION_URL} 核对并确认具体操作；完成后回到本会话告知 Dot。不要重复点击本地允许来绕过平台检查。`,
+      }).task;
+      this.replace(draft, next);
+      return structuredClone(blocked);
+    });
+  }
+
+  private requirePermissionRound(task: Task, roundId: string): void {
+    if (task.mode !== 'text' || task.currentRoundId !== roundId) throw dotBridgeError('permission-stale');
+    const round = currentRound(task);
+    if (!round.claim || round.stop.requested || !['claimed', 'running', 'waiting_user'].includes(task.status)) throw dotBridgeError('permission-stale');
+  }
+
+  private assertPermissionMutation(task: Task, toolName?: string, targets: string[] = []): void {
+    const current = task.permissions.filter(p => permissionCurrent(task, p));
+    if (current.some(p => p.status === 'pending' || p.status === 'denied' || p.platformBlock)) throw dotBridgeError('permission-required');
+    const approved = current.filter(p => p.status === 'approved');
+    if (approved.length && (!approved.some(p => p.scope.toolName === toolName) || targets.some(target => !approved.some(p => p.scope.toolName === toolName && p.scope.targets.includes(target))))) throw dotBridgeError('permission-required', 'Outside the approved tool or targets');
+  }
+
   listForConnection(connectionId: string, cursor: string | null, limit = 20): { tasks: TaskSummary[]; cursor: string | null } {
     const connection = this.connection();
     if (connection.id !== connectionId) throw dotBridgeError('connection-invalid');
@@ -1566,7 +1653,10 @@ export class BridgeEngine {
   private replace(draft: StoreFile, task: Task): void {
     const index = draft.tasks.findIndex(item => item.id === task.id);
     if (index < 0) throw dotBridgeError('task-missing');
-    draft.tasks[index] = recomputeCoverage(task);
+    const next = recomputeCoverage(task);
+    next.permissions = next.permissions.map(p => p.status === 'pending' && !permissionCurrent(next, p)
+      ? { ...p, status: 'expired', resolvedAt: this.now() } : p);
+    draft.tasks[index] = next;
   }
 
   slotsUsed(): number {

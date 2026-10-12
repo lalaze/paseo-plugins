@@ -3,9 +3,17 @@ import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
 import { attachmentContentSchema, attachmentSchema } from './attachments';
 import { connectionSchema, resultSchema, taskSchema, uuidSchema, verificationSchema } from './schema';
+import { permissionSchema } from './permissions';
 
 const operationIdSchema = z.string().uuid();
 const revisionSchema = z.number().int().nonnegative();
+
+/** Local authenticated UI only; there is deliberately no approval-granting MCP tool. */
+export const taskPermissionRespond = defineRpc({
+  name: 'task-permission-respond',
+  input: z.object({ taskId: uuidSchema, requestId: uuidSchema, decision: z.enum(['approved', 'denied']) }).strict(),
+  output: z.object({ permission: permissionSchema }).strict(),
+});
 
 export const connectionFactsSchema = z
   .object({
