@@ -13,7 +13,7 @@ const report = (input: number): ConsumptionReport => ({ range, scanning: false, 
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
 test('fixed consumption colors include exact boundaries and distinguish missing readings from zero', () => {
-  assert.deepEqual([null, 0, 9_999_999, 10_000_000, 99_999_999, 100_000_000].map(consumptionTone), ['unknown', 'success', 'success', 'warning', 'warning', 'danger']);
+  assert.deepEqual([null, 0, 999_999_999, 1_000_000_000, 4_999_999_999, 5_000_000_000].map(consumptionTone), ['unknown', 'success', 'success', 'warning', 'warning', 'danger']);
   const missing: ConsumptionReport = { range, scanning: true, sources: [] };
   assert.equal(consumptionHeaderSummary(missing).total, null);
   assert.equal(consumptionHeaderSummary({ ...missing, scanning: false }).total, 0);
@@ -46,10 +46,10 @@ test('workspace headers follow fleet updates, daily projections, errors, midnigh
     assert.match(headers.get('chat').label, /5M/); assert.equal(dot(), 'green');
     assert.match(headers.get('chat').title, /5,000,100|5\.000\.100/);
     headers.get('chat').behavior.onPress(); assert.equal(opened, 'consumption');
-    addHost('linux', 5_000_000); assert.match(headers.get('chat').label, /10M/); assert.equal(dot(), 'yellow');
-    mac.seed(report(100_000_000)); assert.equal(dot(), 'red');
-    mac.seed({ ...report(100_000_000), sources: [{ ...report(100_000_000).sources[0], status: 'partial' }] }); assert.match(headers.get('chat').label, /\*/);
-    mac.registration.dispose(); assert.match(headers.get('chat').label, /105M.*\*/); assert.equal(dot(), 'red');
+    addHost('linux', 1_000_000_000); assert.match(headers.get('chat').label, /1\.01B|10\.05亿/); assert.equal(dot(), 'yellow');
+    mac.seed(report(5_000_000_000)); assert.equal(dot(), 'red');
+    mac.seed({ ...report(5_000_000_000), sources: [{ ...report(5_000_000_000).sources[0], status: 'partial' }] }); assert.match(headers.get('chat').label, /\*/);
+    mac.registration.dispose(); assert.match(headers.get('chat').label, /6B.*\*|60亿.*\*/); assert.equal(dot(), 'red');
     clock = new Date('2026-10-13T00:01:00Z'); t.mock.timers.tick(30000);
     assert.match(headers.get('chat').label, /0M/); assert.equal(dot(), 'green');
     clock = new Date('2026-11-01T00:01:00Z'); t.mock.timers.tick(30000);
