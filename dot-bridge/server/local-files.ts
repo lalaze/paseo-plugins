@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, closeSync, fchmodSync, fsyncSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { localChangesSchema, localReceiptSchema, MAX_CHANGE_BYTES, MAX_SOURCE_BYTES, type LocalChange, type LocalReceipt } from '../shared/local-files';
+import { z } from 'zod';
+import { localChangesSchema, localPathSchema, localReceiptSchema, MAX_CHANGE_BYTES, MAX_SOURCE_BYTES, type LocalChange, type LocalReceipt } from '../shared/local-files';
 
 const blocked = new Set(['.git', '.paseo', '.codex', '.agents', '.aws', '.ssh', '.gnupg', '.config', '.npmrc', '.netrc', '.pypirc', 'credentials.json', 'secrets.json', 'id_rsa', 'id_ed25519']);
 const hiddenFromListing = new Set(['node_modules', '.venv', '.cache']);
@@ -88,6 +89,19 @@ function persist(path: string, journal: Journal) {
   try { writeFileSync(fd, JSON.stringify(journal)); fsyncSync(fd); } finally { closeSync(fd); }
   renameSync(temp, path);
   const dir = openSync(dirname(path), 'r'); try { fsyncSync(dir); } finally { closeSync(dir); }
+}
+
+const displayJournalSchema = z.object({
+  changes: localChangesSchema,
+  before: z.array(z.object({ path: localPathSchema, content: z.string().max(MAX_SOURCE_BYTES).nullable() })).max(32),
+});
+
+/** Original and requested contents of one operation, for display. Invalid journals omit the diff. */
+export function readChangeJournal(dataDir: string, operationId: string): { changes: LocalChange[]; before: Array<{ path: string; content: string | null }> } | null {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operationId)) return null;
+  try {
+    return displayJournalSchema.parse(JSON.parse(readFileSync(join(dataDir, 'local-changes', `${operationId}.json`), 'utf8')));
+  } catch { return null; }
 }
 
 /** A durable journal makes lost responses safe to replay, without reapplying after later edits.

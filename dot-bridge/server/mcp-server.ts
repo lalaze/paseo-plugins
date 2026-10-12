@@ -14,6 +14,7 @@ import {
   unsubscribeInputSchema,
   type ToolName,
 } from '../shared/mcp';
+import { describeToolCall } from './activity';
 import type { BridgeEngine } from './engine';
 import { LOCAL_FILE_INSTRUCTIONS } from '../shared/local-files';
 
@@ -153,8 +154,27 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
     if (!definition) throw dotBridgeError('readonly-rejected', `unknown tool ${parsed.name}`);
     const name = definition.name;
     const input = toolInputSchemas[name].parse(parsed.arguments);
-    const result = await invoke(name, input);
+    let result: unknown;
+    try {
+      result = await invoke(name, input);
+    } catch (error) {
+      observe(name, input, { error });
+      throw error;
+    }
+    observe(name, input, { result });
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  }
+
+  /** Mirrors Dot's call into the live native conversation. It never changes the tool's outcome. */
+  function observe(name: ToolName, input: unknown, outcome: { result?: unknown; error?: unknown }): void {
+    try {
+      const args = input as Record<string, unknown>;
+      const task = options.engine.tasks().find(item => item.id === args.taskId && item.connectionId === args.connectionId);
+      const entry = task ? describeToolCall(name, args, outcome, task, Date.now()) : null;
+      if (entry) options.engine.activity.record(entry);
+    } catch (error) {
+      console.error('[paseo-dot-bridge] activity', error);
+    }
   }
 
   async function invoke(name: ToolName, input: unknown): Promise<unknown> {

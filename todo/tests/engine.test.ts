@@ -275,7 +275,7 @@ describe('engine rounds', () => {
     }
   });
 
-  it('drops the saved review when a new turn starts before any file change', async () => {
+  it('keeps the saved review through a chat-only round and still merges it', async () => {
     const box = harness();
     const dir = await mkdtemp(join(tmpdir(), 'todo-engine-'));
     try {
@@ -286,15 +286,51 @@ describe('engine rounds', () => {
       await engine.onTurnStarted({ agentId: box.created[0] ?? '', turnId: 'turn-1' });
       await engine.onTurnEnded({ agentId: box.created[0] ?? '', turnId: 'turn-1', outcome: { kind: 'completed' } });
       const saved = reviewOf(engine.list().tasks[0] as Task);
+      // Asking the session a question starts a round but changes nothing, so the binding survives.
       await engine.onTurnStarted({ agentId: box.created[0] ?? '', turnId: 'turn-2' });
-      assert.equal(engine.list().tasks[0]?.status, 'needs_check');
-      assert.equal(engine.list().tasks[0]?.review, null);
-      await assert.rejects(() => engine.accept(task.id, saved), /accept-rejected|agent-busy|stale-client-review/);
-      assert.equal(box.prepares.length, 0);
-      assert.equal(engine.list().tasks[0]?.review, null);
+      assert.equal(engine.list().tasks[0]?.status, 'awaiting_review');
+      assert.deepEqual(engine.list().tasks[0]?.review, saved);
+      await engine.onTurnEnded({ agentId: box.created[0] ?? '', turnId: 'turn-2', outcome: { kind: 'completed' } });
+      assert.equal(engine.list().tasks[0]?.status, 'awaiting_review');
+      assert.deepEqual(engine.list().tasks[0]?.review, saved);
+      const merged = await engine.accept(task.id, saved);
+      assert.equal(merged.status, 'merged');
+      assert.equal(box.prepares.length, 1);
       await engine.dispose();
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('drops the saved review when a later round changes the result, dirties the worktree, or the target moves', async () => {
+    for (const changed of [
+      { head: OTHER, tree: T, clean: true, targetHead: H },
+      { head: R, tree: OTHER, clean: true, targetHead: H },
+      { head: R, tree: T, clean: false, targetHead: H },
+      { head: R, tree: T, clean: true, targetHead: OTHER },
+    ]) {
+      const box = harness();
+      const dir = await mkdtemp(join(tmpdir(), 'todo-engine-'));
+      try {
+        const engine = await box.open(dir);
+        const task = await draft(engine, 'follow');
+        await engine.startQueue(null);
+        await waitFor(() => engine.list().tasks[0]?.status === 'running');
+        await engine.onTurnStarted({ agentId: box.created[0] ?? '', turnId: 'turn-1' });
+        await engine.onTurnEnded({ agentId: box.created[0] ?? '', turnId: 'turn-1', outcome: { kind: 'completed' } });
+        const saved = reviewOf(engine.list().tasks[0] as Task);
+        box.git.snapshot = async () => changed;
+        await engine.onTurnStarted({ agentId: box.created[0] ?? '', turnId: 'turn-2' });
+        await engine.onTurnEnded({ agentId: box.created[0] ?? '', turnId: 'turn-2', outcome: { kind: 'completed' } });
+        assert.equal(engine.list().tasks[0]?.status, 'needs_check');
+        assert.equal(engine.list().tasks[0]?.review, null);
+        assert.equal(engine.list().tasks[0]?.errorCode, 'binding-stale');
+        await assert.rejects(() => engine.accept(task.id, saved), /accept-rejected/);
+        assert.equal(box.prepares.length, 0);
+        await engine.dispose();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
     }
   });
 

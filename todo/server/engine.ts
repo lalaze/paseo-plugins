@@ -491,26 +491,13 @@ export class TodoEngine {
     }
   }
 
-  /** A new turn on a finished single-agent session invalidates its review binding. Collaboration does not use this. */
+  /** Record the newest turn per agent for turn-event ordering. A turn that starts after the review binding does not void it here; its end is checked against the worktree first. */
   async onTurnStarted(event: TurnStartedEvent): Promise<void> {
     if (this.disposed) return;
     // Re-insert so the map stays in recency order: the front is the agent idle longest, never one mid-turn.
     this.startedTurn.delete(event.agentId);
     this.startedTurn.set(event.agentId, event.turnId);
     while (this.startedTurn.size > this.startedTurnLimit) this.startedTurn.delete(this.startedTurn.keys().next().value as string);
-    const task = this.options.store.findByAgent(event.agentId);
-    if (!task || task.collaboration) return;
-    if (task.status !== 'awaiting_review' && task.status !== 'merge_failed') return;
-    await this.lockTask(task.id, async () => {
-      const current = this.options.store.get(task.id);
-      if (current.agentId !== event.agentId) return;
-      if ((current.status !== 'awaiting_review' && current.status !== 'merge_failed') || !current.review) return;
-      if (event.turnId && event.turnId === current.review.turnId) return;
-      await this.write({
-        ...current, status: 'needs_check', review: null, errorCode: 'binding-stale',
-        errorDetail: '会话又开始了一轮，旧的验收绑定已失效',
-      });
-    });
   }
 
   /** Record the turn, then advance the task. A collaboration run is advanced by the host poll, not by this event alone. */
@@ -586,10 +573,8 @@ export class TodoEngine {
     if (!canAccept(task.status) || !task.review || !task.worktree || !task.branch) throw todoError('accept-rejected');
     if (task.collaboration && task.collaborationAcceptance !== 'accepted') throw todoError('collaboration-acceptance-pending');
     if (!reviewsMatch(task.review, displayed)) throw todoError('stale-client-review');
-    if (!task.collaboration) {
-      const started = task.agentId ? this.startedTurn.get(task.agentId) : undefined;
-      if (started && started !== task.review.turnId) throw todoError('agent-busy');
-    }
+    // A later chat-only round keeps the binding, so a newer started turn no longer blocks the merge:
+    // liveness is checked by assertAgentIdle, and the git state by prepareMerge.
     const binding = task.review;
     await this.write({ ...task, status: 'merging', pendingMergeCommit: null, errorCode: null, errorDetail: null });
     try {
@@ -1049,9 +1034,28 @@ export class TodoEngine {
             consume = true;
             return;
           }
+          // A later turn ends the binding only when the result, the worktree, or the target actually
+          // moved; a chat-only round leaves the saved review acceptable.
+          const binding = task.review;
+          let intact: boolean;
+          try {
+            intact = await this.bindingIntact(task, binding);
+          } catch (error) {
+            await this.write({
+              ...task, status: 'needs_check', review: null, lastOutcome: outcome,
+              errorCode: failureCode(error) ?? 'binding-stale', errorDetail: errorText(error).slice(0, 4000),
+            });
+            consume = true;
+            return;
+          }
+          if (intact) {
+            await this.write({ ...task, lastOutcome: outcome });
+            consume = true;
+            return;
+          }
           await this.write({
             ...task, status: 'needs_check', review: null, lastOutcome: outcome,
-            errorCode: 'binding-stale', errorDetail: '会话在绑定之后又结束了一轮',
+            errorCode: 'binding-stale', errorDetail: '会话在绑定之后又结束了一轮，成果或目标分支已变化',
           });
           consume = true;
           return;
@@ -1131,14 +1135,21 @@ export class TodoEngine {
     }
   }
 
+  /** The binding holds only while the worktree is clean and the result commit/tree and the target HEAD still match it. */
+  private async bindingIntact(task: Task, binding: ReviewBinding): Promise<boolean> {
+    if (!task.worktree || !task.branch) return false;
+    const snap = await this.options.git.snapshot({
+      root: task.repository, worktree: task.worktree, branch: task.branch, targetBranch: binding.targetBranch,
+    });
+    return snap.clean && snap.head === binding.resultCommit && snap.tree === binding.resultTree && snap.targetHead === binding.targetHead;
+  }
+
   private async reconcile(id: string): Promise<void> {
     await this.lockTask(id, async () => {
       const task = this.options.store.tryGet(id);
       if (!task || task.status !== 'awaiting_review' || !task.review || !task.worktree || !task.branch) return;
       try {
-        const snap = await this.options.git.snapshot({ root: task.repository, worktree: task.worktree, branch: task.branch, targetBranch: task.targetBranch });
-        const review = task.review;
-        if (snap.clean && snap.head === review.resultCommit && snap.tree === review.resultTree && snap.targetHead === review.targetHead) return;
+        if (await this.bindingIntact(task, task.review)) return;
         const latest = this.options.store.get(id);
         if (latest.status !== 'awaiting_review') return;
         await this.write({ ...latest, status: 'needs_check', review: null, errorCode: 'binding-stale', errorDetail: '任务成果或目标分支在等待验收时发生了变化' });

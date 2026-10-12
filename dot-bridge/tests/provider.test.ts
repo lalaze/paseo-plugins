@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
@@ -10,12 +10,17 @@ import { BridgeEngine } from '../server/engine';
 import { createGit } from '../server/git';
 import { BridgeStore } from '../server/store';
 import { createDotProvider, promptContents, WORKSPACE_ENV } from '../server/provider';
+import { applyLocalChanges, canonicalWorkspace } from '../server/local-files';
+import { createMcpServer } from '../server/mcp-server';
+import { ATTACHMENT_CHUNK_BYTES } from '../shared/attachments';
 import { withDispatch } from '../shared/machine';
 
 const config: ProviderSessionConfig = { cwd: '/repo', env: { [WORKSPACE_ENV]: 'ws-test' }, mcpServers: {}, settings: {}, persist: true };
 const prompt = (text: string, id: string = randomUUID()): ProviderPrompt => ({ clientMessageId: id, delivery: 'auto', input: { type: 'message', content: [{ type: 'text', text }] } });
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, workspace = false) {
   const dir = await mkdtemp(join(tmpdir(), 'dot-provider-'));
+  if (workspace) await mkdir(join(dir, 'workspace'));
+  const cwd = workspace ? canonicalWorkspace(join(dir, 'workspace')) : config.cwd;
   const store = await BridgeStore.open(dir);
   const engine = new BridgeEngine({ store, git: createGit({ cacheRoot: join(dir, 'git') }), getMaxInFlight: () => 2 });
   await engine.init();
@@ -30,7 +35,7 @@ async function fixture(t: TestContext) {
   t.after(async () => { lifecycle.abort(); engine.dispose(); await store.dispose(); await rm(dir, { recursive: true, force: true }); });
   const connection = await connect();
   const openSession = async (sid = 'chat', persistence?: ProviderPersistence) => {
-    await connection.send({ type: 'session.open', requestId: randomUUID(), sessionId: sid, config, history: 'replay', persistence });
+    await connection.send({ type: 'session.open', requestId: randomUUID(), sessionId: sid, config: { ...config, cwd }, history: 'replay', persistence });
   };
   const claim = async () => {
     let task = engine.tasks()[0]!;
@@ -47,8 +52,212 @@ async function fixture(t: TestContext) {
     for (let i = 0; i < 100 && !predicate(); i++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.ok(predicate(), 'Expected provider event did not arrive');
   };
-  return { dir, store, engine, connection, connect, openSession, claim, result, events, wait };
+  return { dir, cwd, store, engine, connection, connect, openSession, claim, result, events, wait };
 }
+
+/** Calls Bridge tools the way Dot does, over authenticated MCP HTTP. */
+async function bridge(t: TestContext, engine: BridgeEngine) {
+  const server = createMcpServer({ engine, host: '127.0.0.1', port: 0, getToken: () => engine.mcpToken() });
+  const { endpoint } = await server.start(); t.after(() => server.stop());
+  return async (name: string, args: Record<string, unknown>) => {
+    const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${engine.mcpToken()}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) });
+    const body = await response.json() as { error?: unknown; result?: { content: Array<{ text: string }> } };
+    return body.result ? JSON.parse(body.result.content[0]!.text) : { error: body.error };
+  };
+}
+
+const cards = (events: ProviderEvent[]) => events.flatMap(e => (e.type === 'timeline.item' && e.item.type === 'tool_call' ? [e.item] : []));
+const label = (item: { detail: { type: string; label?: string } } | undefined) => (item?.detail.type === 'plain_text' ? item.detail.label : undefined);
+
+test('MCP reads appear live, deduplicate task reads, and keep refused reads out of other connections', async t => {
+  const h = await fixture(t, true); await h.openSession();
+  await writeFile(join(h.cwd, 'main.ts'), 'export const n = 1;\n'); await mkdir(join(h.cwd, 'src'));
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Read the project') });
+  const task = h.engine.tasks()[0]!, call = await bridge(t, h.engine);
+  const identity = { taskId: task.id, connectionId: task.connectionId };
+  await call('get_dot_task', identity); await call('get_dot_task', identity);
+  await h.wait(() => cards(h.events).some(card => label(card) === '已读取你的消息'));
+  assert.equal(cards(h.events).filter(card => label(card) === '已读取你的消息').length, 1);
+  await h.claim();
+  const args = { ...identity, roundId: task.currentRoundId };
+  assert.ok((await call('read_dot_file', { ...args, path: '.env' })).error);
+  assert.ok((await call('read_dot_file', { ...args, path: 'main.ts', connectionId: '0'.repeat(32) })).error);
+  await call('list_dot_files', args); await call('read_dot_file', { ...args, path: 'main.ts' });
+  await h.wait(() => cards(h.events).filter(card => card.name === 'Read').length === 2);
+  const reads = cards(h.events).filter(card => card.name === 'Read');
+  assert.deepEqual(reads.map(card => card.status), ['failed', 'completed']);
+  assert.match(String(reads[0]!.error), /protected path/);
+  assert.deepEqual(reads[1]!.detail, { type: 'read', filePath: 'main.ts' });
+  const listing = cards(h.events).find(card => card.name === 'List');
+  assert.deepEqual(listing?.detail, { type: 'plain_text', label: '.', text: 'main.ts\nsrc/', icon: 'search' });
+  assert.equal(h.engine.task(task.id).messages.length, 1, 'Activity does not add stored chat messages');
+  assert.ok(!h.events.some(e => e.type === 'session.turn' && e.state === 'completed'));
+});
+
+test('applied create/update/delete cards replay journal diffs after restart and later user edits', async t => {
+  const h = await fixture(t, true); await h.openSession();
+  await writeFile(join(h.cwd, 'main.ts'), 'old\n'); await writeFile(join(h.cwd, 'obsolete.ts'), 'remove\n');
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Update the project') });
+  const task = await h.claim(), call = await bridge(t, h.engine);
+  const args = { taskId: task.id, connectionId: task.connectionId, roundId: task.currentRoundId };
+  const main = await call('read_dot_file', { ...args, path: 'main.ts' });
+  const obsolete = await call('read_dot_file', { ...args, path: 'obsolete.ts' });
+  const apply = { ...args, operationId: randomUUID(), userMessageSeq: task.userMessageSeq, changes: [
+    { path: 'main.ts', expectedSha256: main.sha256, content: 'new\n' },
+    { path: 'created.ts', expectedSha256: null, content: 'added\n' },
+    { path: 'obsolete.ts', expectedSha256: obsolete.sha256, content: null },
+  ] };
+  assert.equal((await call('apply_dot_changes', apply)).status, 'applied');
+  await h.wait(() => cards(h.events).filter(card => card.name === 'Edit').length === 3);
+  const edits = cards(h.events).filter(card => card.name === 'Edit');
+  assert.deepEqual(edits.map(card => card.detail), [
+    { type: 'edit', filePath: 'main.ts', unifiedDiff: '@@ -1,1 +1,1 @@\n-old\n+new' },
+    { type: 'edit', filePath: 'created.ts', unifiedDiff: '@@ -0,0 +1,1 @@\n+added' },
+    { type: 'edit', filePath: 'obsolete.ts', unifiedDiff: '@@ -1,1 +0,0 @@\n-remove' },
+  ]);
+  await writeFile(join(h.cwd, 'main.ts'), 'later user edit\n');
+  assert.equal((await call('apply_dot_changes', apply)).status, 'applied');
+  assert.equal(await readFile(join(h.cwd, 'main.ts'), 'utf8'), 'later user edit\n');
+  await h.result('Updated the project');
+  await h.wait(() => h.events.some(e => e.type === 'session.turn' && e.state === 'completed'));
+  assert.equal(cards(h.events).filter(card => card.name === 'Edit').length, 3);
+  assert.ok(!h.events.some(e => e.type === 'timeline.item' && e.item.type === 'assistant_message' && e.item.text.includes('已应用到本地工作区')));
+  const saved = h.events.find(e => e.type === 'session.persistence'); assert.ok(saved?.type === 'session.persistence');
+  await h.connection.close(); h.engine.dispose(); await h.store.dispose();
+  const store = await BridgeStore.open(h.dir), engine = new BridgeEngine({ store, getMaxInFlight: () => 2 }); await engine.init();
+  const lifecycle = new AbortController();
+  const provider = createDotProvider({ engine: async () => engine, tick: async () => {}, signal: lifecycle.signal, pollMs: 5 });
+  const connection = await provider.connect({ versions: [1], capabilities: ['session.persistence', 'timeline.plugin'] });
+  t.after(async () => { lifecycle.abort(); engine.dispose(); await store.dispose(); });
+  const replay: ProviderEvent[] = []; connection.onEvent(event => { ProviderEventSchema.parse(event); replay.push(event); });
+  await connection.send({ type: 'session.open', sessionId: 'replay', requestId: randomUUID(), config: { ...config, cwd: h.cwd }, history: 'replay', persistence: saved.persistence });
+  assert.deepEqual(cards(replay).filter(card => card.name === 'Edit'), edits);
+  assert.equal(store.read().tasks[0]!.localChanges.length, 1);
+});
+
+test('conflicts and refused changes stay failed, while partial receipts show only files actually applied', async t => {
+  const h = await fixture(t, true); await h.openSession();
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Create files') });
+  const task = await h.claim(), call = await bridge(t, h.engine);
+  const args = { taskId: task.id, connectionId: task.connectionId, roundId: task.currentRoundId, userMessageSeq: task.userMessageSeq };
+  await writeFile(join(h.cwd, 'existing.ts'), 'user content');
+  const conflictId = randomUUID();
+  assert.equal((await call('apply_dot_changes', { ...args, operationId: conflictId, changes: [{ path: 'existing.ts', expectedSha256: null, content: 'replacement' }] })).status, 'conflict');
+  const refusedId = randomUUID();
+  assert.ok((await call('apply_dot_changes', { ...args, operationId: refusedId, changes: [{ path: '.env', expectedSha256: null, content: 'secret' }] })).error);
+  const partial = { ...args, operationId: randomUUID(), changes: [
+    { path: 'a.ts', expectedSha256: null, content: 'a\n' }, { path: 'b.ts', expectedSha256: null, content: 'b\n' },
+  ] };
+  // Simulate a crash after the first file was applied, before a receipt reached the engine.
+  applyLocalChanges({ ...partial, dataDir: h.dir, root: h.cwd, at: Date.now() });
+  const path = join(h.dir, 'local-changes', `${partial.operationId}.json`);
+  const journal = JSON.parse(await readFile(path, 'utf8'));
+  journal.finished = false; journal.receipt.files = journal.receipt.files.slice(0, 1);
+  await writeFile(path, JSON.stringify(journal)); await rm(join(h.cwd, 'b.ts'));
+  assert.equal((await call('apply_dot_changes', partial)).status, 'partial');
+  await h.wait(() => cards(h.events).some(card => label(card) === '部分修改未应用'));
+  const edits = cards(h.events).filter(card => card.name === 'Edit');
+  assert.deepEqual(edits.map(card => card.detail), [{ type: 'edit', filePath: 'a.ts', unifiedDiff: '@@ -0,0 +1,1 @@\n+a' }]);
+  const failed = cards(h.events).filter(card => card.status === 'failed');
+  assert.equal(failed.length, 3);
+  assert.match(String(failed.find(card => card.id.includes(conflictId))?.error), /File changed since read/);
+  assert.match(String(failed.find(card => card.id.includes(refusedId))?.error), /protected path/);
+  assert.match(String(failed.find(card => label(card) === '部分修改未应用')?.error), /Interrupted file operation/);
+  assert.equal(await readFile(join(h.cwd, 'existing.ts'), 'utf8'), 'user content');
+  await assert.rejects(readFile(join(h.cwd, 'b.ts')), { code: 'ENOENT' });
+});
+
+test('chunk uploads update one card, deduplicate chunks, finish with an attachment, and replay in order', async t => {
+  const h = await fixture(t); await h.openSession();
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Send a file') });
+  const task = await h.claim(), call = await bridge(t, h.engine);
+  const bytes = Buffer.alloc(ATTACHMENT_CHUNK_BYTES + 1, 42), operationId = randomUUID();
+  const args = { taskId: task.id, connectionId: task.connectionId, roundId: task.currentRoundId, operationId,
+    name: 'sample.bin', mediaType: 'application/octet-stream', size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+  const chunk = (index: number) => ({ ...args, index, content: bytes.subarray(index * ATTACHMENT_CHUNK_BYTES, (index + 1) * ATTACHMENT_CHUNK_BYTES).toString('base64') });
+  await call('get_dot_task', { taskId: task.id, connectionId: task.connectionId });
+  const first = await call('upload_dot_attachment_chunk', chunk(1)); assert.equal(first.complete, false);
+  await h.wait(() => cards(h.events).some(card => label(card) === '正在接收 sample.bin（1/2）'));
+  const running = cards(h.events).find(card => label(card) === '正在接收 sample.bin（1/2）')!;
+  assert.equal(running.status, 'running');
+  assert.deepEqual(await call('upload_dot_attachment_chunk', chunk(1)), first);
+  assert.equal((await call('upload_dot_attachment_chunk', chunk(0))).complete, true);
+  await h.wait(() => cards(h.events).some(card => card.id === running.id && card.status === 'completed'));
+  assert.equal((await call('upload_dot_attachment_chunk', chunk(0))).complete, true);
+  await call('read_dot_attachment_chunk', { taskId: task.id, connectionId: task.connectionId, attachmentId: operationId, index: 0 });
+  await h.result('Here is your file');
+  await h.wait(() => h.events.some(e => e.type === 'session.turn' && e.state === 'completed'));
+  assert.deepEqual(cards(h.events).filter(card => card.id === running.id).map(card => card.status), ['running', 'completed']);
+  assert.equal(h.events.filter(e => e.type === 'timeline.item' && e.item.type === 'plugin').length, 1);
+  const saved = h.events.find(e => e.type === 'session.persistence'); assert.ok(saved?.type === 'session.persistence');
+  await h.connection.close(); const restored = await h.connect(), start = h.events.length;
+  await restored.send({ type: 'session.open', sessionId: 'replay', requestId: randomUUID(), config, history: 'replay', persistence: saved.persistence });
+  const timeline = h.events.slice(start).flatMap(e => e.type === 'timeline.item' ? [e.item] : []).filter(item => item.type !== 'tool_call' || !item.id.includes(':status:'));
+  assert.deepEqual(timeline.map(item => item.type === 'tool_call' ? label(item) : item.type), [
+    'user_message', '已读取你的消息', '已接收 sample.bin', 'plugin', '读取附件 sample.bin（1/2）', 'assistant_message',
+  ]);
+});
+
+test('incomplete uploads stop spinning on completion or stop request and rejected uploads expose failure', async t => {
+  for (const finish of ['complete', 'stop'] as const) {
+    const h = await fixture(t); await h.openSession();
+    await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Send a file') });
+    const task = await h.claim(), call = await bridge(t, h.engine), operationId = randomUUID();
+    const bytes = Buffer.alloc(ATTACHMENT_CHUNK_BYTES + 1, 42);
+    const args = { taskId: task.id, connectionId: task.connectionId, roundId: task.currentRoundId, operationId,
+      name: 'unfinished.bin', mediaType: 'application/octet-stream', size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), index: 0, content: bytes.subarray(0, ATTACHMENT_CHUNK_BYTES).toString('base64') };
+    await call('upload_dot_attachment_chunk', args);
+    await h.wait(() => cards(h.events).some(card => label(card) === '正在接收 unfinished.bin（1/2）'));
+    if (finish === 'complete') await h.result('Finished without the file');
+    else await h.connection.send({ type: 'session.interrupt', sessionId: 'chat', requestId: randomUUID() });
+    await h.wait(() => cards(h.events).some(card => card.id.includes(operationId) && card.status === 'canceled'));
+    assert.ok((await call('upload_dot_attachment', { taskId: task.id, connectionId: task.connectionId, roundId: task.currentRoundId, operationId: randomUUID(), name: 'rejected.txt', mediaType: 'text/plain', encoding: 'utf8', content: 'too late' })).error);
+    await h.wait(() => cards(h.events).some(card => label(card) === '接收 rejected.txt 失败' && card.status === 'failed'));
+    assert.equal(h.engine.task(task.id).attachments.length, 0);
+  }
+});
+
+test('missing or malformed journals omit diffs and activity observer failures preserve MCP results', async t => {
+  const h = await fixture(t, true); await h.openSession();
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Create files') });
+  const task = await h.claim(), call = await bridge(t, h.engine);
+  const args = { taskId: task.id, connectionId: task.connectionId, roundId: task.currentRoundId };
+  await h.connection.close();
+  const apply = { ...args, operationId: randomUUID(), userMessageSeq: task.userMessageSeq, changes: [{ path: 'a.ts', expectedSha256: null, content: 'a\n' }] };
+  assert.equal((await call('apply_dot_changes', apply)).status, 'applied');
+  const saved = h.events.find(e => e.type === 'session.persistence'); assert.ok(saved?.type === 'session.persistence');
+  const path = join(h.dir, 'local-changes', `${apply.operationId}.json`);
+  await writeFile(path, JSON.stringify({ changes: {}, before: [] }));
+  const restored = await h.connect(), start = h.events.length;
+  await restored.send({ type: 'session.open', sessionId: 'replay', requestId: randomUUID(), config: { ...config, cwd: h.cwd }, history: 'replay', persistence: saved.persistence });
+  const edit = cards(h.events.slice(start)).find(card => card.name === 'Edit');
+  assert.deepEqual(edit?.detail, { type: 'edit', filePath: 'a.ts' });
+  assert.equal(edit?.status, 'completed');
+  await rm(path); assert.equal(h.engine.changeContents(apply.operationId), null);
+  assert.equal(h.engine.changeContents('../state'), null);
+  t.mock.method(h.engine.activity, 'record', () => { throw new Error('observer failed'); });
+  const errors = t.mock.method(console, 'error', () => {});
+  const read = await call('read_dot_file', { ...args, path: 'a.ts' });
+  assert.equal(read.content, 'a\n'); assert.equal(read.error, undefined);
+  assert.ok((await call('read_dot_file', { ...args, path: '.env' })).error);
+  assert.equal(errors.mock.calls.length, 2);
+});
+
+test('edit cards read the change journal once per session, not on every poll', async t => {
+  const h = await fixture(t, true); await h.openSession();
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Create a file') });
+  const task = await h.claim(), call = await bridge(t, h.engine);
+  const journalReads = t.mock.method(h.engine, 'changeContents');
+  await call('apply_dot_changes', { taskId: task.id, connectionId: task.connectionId, roundId: task.currentRoundId, operationId: randomUUID(), userMessageSeq: task.userMessageSeq, changes: [{ path: 'a.ts', expectedSha256: null, content: 'a\n' }] });
+  await h.wait(() => cards(h.events).some(card => card.name === 'Edit'));
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(journalReads.mock.callCount(), 1);
+  const saved = h.events.find(e => e.type === 'session.persistence'); assert.ok(saved?.type === 'session.persistence');
+  const start = h.events.length;
+  await h.connection.send({ type: 'session.open', sessionId: 'second', requestId: randomUUID(), config: { ...config, cwd: h.cwd }, history: 'replay', persistence: saved.persistence });
+  assert.deepEqual(cards(h.events.slice(start)).filter(card => card.name === 'Edit').map(card => card.detail), [{ type: 'edit', filePath: 'a.ts', unifiedDiff: '@@ -0,0 +1,1 @@\n+a' }]);
+  assert.equal(journalReads.mock.callCount(), 2);
+});
 
 test('native chat replies, automatically advances rounds, and replays without duplicate work', async t => {
   const h = await fixture(t); await h.openSession();

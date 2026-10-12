@@ -1,9 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { open } from 'node:fs/promises';
 import { z } from 'zod';
-import type { ProviderConnection, ProviderEvent, ProviderInput, ProviderPrompt, ProviderRegistration, ProviderTimelineItem } from '@getpaseo/plugin/server/provider';
+import type { ProviderConnection, ProviderEvent, ProviderInput, ProviderPrompt, ProviderRegistration, ProviderTimelineItem, ProviderToolCallDetail } from '@getpaseo/plugin/server/provider';
 import { attachmentContentSchema, MAX_ATTACHMENT_BYTES, type AttachmentContent } from '../shared/attachments';
+import type { LocalReceipt } from '../shared/local-files';
 import { currentRound, uuidSchema, type Task } from '../shared/schema';
+import type { DotActivity } from './activity';
+import { unifiedDiff } from './diff';
 import type { BridgeEngine } from './engine';
 
 export const DOT_PROVIDER_ID = 'dot';
@@ -11,7 +14,8 @@ export const WORKSPACE_ENV = 'PASEO_DOT_WORKSPACE_ID';
 const supported = ['prompt.message', 'prompt.image', 'session.persistence', 'timeline.plugin'];
 const bindingSchema = z.object({ taskId: uuidSchema, cwd: z.string(), workspaceId: z.string().min(1), taskCreated: z.boolean().default(false) }).strict();
 type Binding = z.infer<typeof bindingSchema>;
-type Session = { id: string; binding: Binding; systemPrompt: string; seen: Map<string, string>; turn: string | null; busy: boolean };
+/** `changes` lists receipts whose edit cards this session already handled; receipts never change. */
+type Session = { id: string; binding: Binding; systemPrompt: string; seen: Map<string, string>; changes: Set<string>; turn: string | null; busy: boolean };
 
 /** Stable across process restarts; a redelivered client message cannot execute twice. */
 export function promptOperationId(taskId: string, clientMessageId: string): string {
@@ -56,6 +60,23 @@ function waitingForDot(task: Task): boolean {
     || (task.status === 'completed' && !round.result?.coversLatest);
 }
 
+/** One card per Bridge call Dot made, so the conversation shows work as it happens. */
+function activityCard(task: Task, entry: DotActivity): ProviderTimelineItem {
+  // An upload Dot abandoned stops spinning once its round no longer waits for Dot.
+  const status = entry.status === 'running' && (entry.roundId !== task.currentRoundId || currentRound(task).stop.requested || !waitingForDot(task)) ? 'canceled' : entry.status;
+  const card = (name: string, detail: ProviderToolCallDetail): ProviderTimelineItem => status === 'failed'
+    ? { type: 'tool_call', id: entry.id, callId: entry.id, name, detail, status, error: entry.detail || '失败' }
+    : { type: 'tool_call', id: entry.id, callId: entry.id, name, detail, status, error: null };
+  switch (entry.kind) {
+    case 'read-task': return card('Dot', { type: 'plain_text', label: '已读取你的消息', icon: 'eye' });
+    case 'list': return card('List', { type: 'plain_text', label: entry.target, ...(status === 'failed' ? {} : { text: entry.detail }), icon: 'search' });
+    case 'read': return card('Read', { type: 'read', filePath: entry.target });
+    case 'read-attachment': return card('Dot', { type: 'plain_text', label: `读取附件 ${entry.target}${entry.detail ? `（${entry.detail}）` : ''}`, icon: 'eye' });
+    case 'upload': return card('Dot', { type: 'plain_text', label: { running: `正在接收 ${entry.target}（${entry.detail}）`, completed: `已接收 ${entry.target}`, canceled: `未接收完 ${entry.target}（${entry.detail}）`, failed: `接收 ${entry.target} 失败` }[status], icon: 'bot' });
+    case 'apply-failed': return card('Dot', { type: 'plain_text', label: `修改未应用：${entry.target}`, icon: 'pencil' });
+  }
+}
+
 export function createDotProvider(options: { engine(): Promise<BridgeEngine>; tick(): Promise<void>; signal: AbortSignal; pollMs?: number }): ProviderRegistration {
   return {
     id: DOT_PROVIDER_ID, label: 'Dot', description: 'Chat with your connected Dot through Dot Bridge.',
@@ -77,21 +98,48 @@ export function createDotProvider(options: { engine(): Promise<BridgeEngine>; ti
         emit({ type: 'session.turn', sessionId: session.id, turnId: session.turn, state, ...(message ? { error: { message } } : {}) });
         session.turn = null;
       };
+      /** Applied files as edit cards with diffs from the operation journal, replacing the plain note. */
+      const changeCards = (task: Task, receipt: LocalReceipt): ProviderTimelineItem[] => {
+        const contents = engine.changeContents(receipt.operationId);
+        const cards: ProviderTimelineItem[] = receipt.files.map((file, index) => {
+          const id = `${task.id}:change:${receipt.operationId}:${index}`;
+          const change = contents?.changes.find(entry => entry.path === file.path);
+          const before = file.action === 'create' ? '' : contents?.before.find(entry => entry.path === file.path)?.content;
+          const diff = change && typeof before === 'string' ? unifiedDiff(before, change.content ?? '') : null;
+          return { type: 'tool_call', id, callId: id, name: 'Edit', detail: { type: 'edit', filePath: file.path, ...(diff ? { unifiedDiff: diff } : {}) }, status: 'completed', error: null };
+        });
+        if (receipt.conflicts.length) {
+          const id = `${task.id}:change:${receipt.operationId}:conflicts`;
+          cards.push({ type: 'tool_call', id, callId: id, name: 'Dot', detail: { type: 'plain_text', label: receipt.status === 'partial' ? '部分修改未应用' : '修改未应用', icon: 'pencil' }, status: 'failed', error: receipt.conflicts.join('\n') });
+        }
+        return cards;
+      };
       const refresh = (session: Session, task: Task, skip = false) => {
+        const activity = engine.activity.list(task.id);
         for (const round of task.rounds) {
+          // A round replays in time order, as it happened live; equal times keep this order.
+          const entries: Array<[number, ProviderTimelineItem]> = [], built: string[] = [];
           for (const message of task.messages.filter(message => message.roundId === round.roundId)) {
             const clientMessageId = task.provider?.clientMessageIds[String(message.seq)];
-            if (message.author === 'user' && clientMessageId) item(session, { type: 'user_message', id: `${task.id}:m:${message.seq}`, text: message.body, clientMessageId }, message.at, skip);
-            else if (message.author === 'dot' && !task.attachments.some(attachment => attachment.id === message.updateId)) item(session, message.kind === 'result' || message.kind === 'question' || message.kind === 'progress'
+            const receipt = message.author === 'dot' ? task.localChanges.find(change => change.operationId === message.updateId) : undefined;
+            if (message.author === 'user' && clientMessageId) entries.push([message.at, { type: 'user_message', id: `${task.id}:m:${message.seq}`, text: message.body, clientMessageId }]);
+            else if (receipt) {
+              // Journal reads and diffs happen once per session, not on every poll.
+              if (!session.changes.has(receipt.operationId)) for (const card of changeCards(task, receipt)) entries.push([message.at, card]);
+              built.push(receipt.operationId);
+            } else if (message.author === 'dot' && !task.attachments.some(attachment => attachment.id === message.updateId)) entries.push([message.at, message.kind === 'result' || message.kind === 'question' || message.kind === 'progress'
               ? { type: 'assistant_message', id: `${task.id}:m:${message.seq}`, text: message.body }
-              : { type: 'notification', id: `${task.id}:m:${message.seq}`, level: message.kind === 'error' ? 'error' : 'info', message: message.body }, message.at, skip);
+              : { type: 'notification', id: `${task.id}:m:${message.seq}`, level: message.kind === 'error' ? 'error' : 'info', message: message.body }]);
           }
           for (const result of [...round.resultHistory.map(record => record.result), ...(round.result ? [round.result] : [])]) {
-            item(session, { type: 'assistant_message', id: `${task.id}:result:${result.updateId}`, text: result.summary }, result.reportedAt, skip);
+            entries.push([result.reportedAt, { type: 'assistant_message', id: `${task.id}:result:${result.updateId}`, text: result.summary }]);
           }
           for (const attachment of task.attachments.filter(attachment => attachment.roundId === round.roundId)) {
-            if (capabilities.includes('timeline.plugin')) item(session, { type: 'plugin', id: `attachment:${attachment.id}`, pluginId: 'paseo-dot-bridge', kind: 'dot-attachment', version: 1, data: { taskId: task.id, attachment } }, attachment.createdAt, skip);
+            if (capabilities.includes('timeline.plugin')) entries.push([attachment.createdAt, { type: 'plugin', id: `attachment:${attachment.id}`, pluginId: 'paseo-dot-bridge', kind: 'dot-attachment', version: 1, data: { taskId: task.id, attachment } }]);
           }
+          for (const entry of activity) if (entry.roundId === round.roundId) entries.push([entry.at, activityCard(task, entry)]);
+          for (const [at, value] of entries.sort((left, right) => left[0] - right[0])) item(session, value, at, skip);
+          for (const operationId of built) session.changes.add(operationId);
         }
         const round = currentRound(task);
         const label = round.stop.requested && !['stopped', 'completed', 'failed'].includes(task.status)
@@ -142,7 +190,7 @@ export function createDotProvider(options: { engine(): Promise<BridgeEngine>; ti
               const task = engine.tasks().find(task => task.id === binding.taskId);
               if (binding.taskCreated && !task) throw new Error('The saved Dot task is missing; restore the Bridge data before continuing.');
               if (task && (task.provider?.cwd !== binding.cwd || task.workspaceId !== binding.workspaceId)) throw new Error('Dot task binding mismatch');
-              const session: Session = { id: input.sessionId, binding, systemPrompt: input.config.systemPrompt ?? '', seen: new Map(), turn: null, busy: false };
+              const session: Session = { id: input.sessionId, binding, systemPrompt: input.config.systemPrompt ?? '', seen: new Map(), changes: new Set(), turn: null, busy: false };
               sessions.set(session.id, session);
               emit({ type: 'session.opened', requestId: input.requestId, sessionId: session.id, capabilities, restoration: 'core', persistence: { version: 1, data: binding }, cwd: binding.cwd });
               if (task) refresh(session, task, input.history === 'skip');

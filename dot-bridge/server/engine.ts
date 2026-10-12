@@ -1,7 +1,8 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { AttachmentStore, decodeAttachment } from './attachments';
 import { clearTransfer, decodeChunk, receiveChunk, saveDeliveredFile } from './attachment-transfers';
-import { applyLocalChanges, listSources, readSource } from './local-files';
+import { ActivityLog } from './activity';
+import { applyLocalChanges, listSources, readChangeJournal, readSource } from './local-files';
 import type { LocalChange, LocalReceipt } from '../shared/local-files';
 import { ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, MAX_TASK_ATTACHMENTS, type Attachment, type AttachmentContent, type AttachmentChunk } from '../shared/attachments';
 import { dotBridgeError } from '../shared/errors';
@@ -159,6 +160,8 @@ export class BridgeEngine {
    * outcome instead of one reading a half-finished record.
    */
   private readonly processing = new Map<string, Promise<ResultOutcome>>();
+  /** What Dot did through the Bridge, for the live native conversation. In memory only. */
+  readonly activity = new ActivityLog();
 
   constructor(private readonly deps: EngineDeps) {
     this.now = deps.now ?? (() => Date.now());
@@ -265,6 +268,11 @@ export class BridgeEngine {
       draft.dedup.operations[input.operationId] = { hash, taskId: task.id, receipt: JSON.stringify(receipt), replayable: true, at: this.now() };
       return receipt;
     });
+  }
+
+  /** Original and requested contents of a local change, for its edit cards. */
+  changeContents(operationId: string) {
+    return readChangeJournal(this.deps.store.dir, operationId);
   }
 
   private activeSubscriptions(connection: Connection): Subscription[] {
