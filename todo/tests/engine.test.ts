@@ -1814,7 +1814,7 @@ describe('draft editing', () => {
   });
 
   it('rejects a started task and a draft with a saved operation', async () => {
-    for (const status of ['queued', 'running', 'canceled', 'draft'] as const) {
+    for (const status of ['queued', 'running', 'draft'] as const) {
       const dir = await mkdtemp(join(tmpdir(), 'todo-edit-'));
       const box = harness();
       try {
@@ -1827,6 +1827,46 @@ describe('draft editing', () => {
         assert.deepEqual(box.created, []);
       } finally { await box.engine.dispose(); await rm(dir, { recursive: true, force: true }); }
     }
+  });
+
+  it('edits a canceled task in place and the retry runs with the new settings', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'todo-edit-'));
+    const box = harness();
+    try {
+      const engine = await box.open(dir);
+      const task = await draft(engine, 'before');
+      await engine.startTask(task.id);
+      await waitFor(() => engine.list().tasks[0]?.status === 'running');
+      await engine.cancel(task.id);
+      assert.equal(engine.list().tasks[0]?.status, 'canceled');
+      const updated = await engine.updateTask(task.id, { title: 'Edited', prompt: 'New goal', targetBranch: 'next',
+        provider: 'stub/other', modeId: null, thinkingOptionId: 'high', collaboration: null });
+      assert.equal(updated.status, 'canceled');
+      assert.equal(updated.prompt, 'New goal');
+      await engine.retry(task.id);
+      await waitFor(() => engine.list().tasks[0]?.status === 'running');
+      assert.deepEqual(box.prompts, ['do before', 'New goal']);
+      assert.deepEqual(box.thinkings, [null, 'high']);
+      await engine.dispose();
+    } finally { await box.engine.dispose(); await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('updates the collaboration snapshot on a canceled task', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'todo-edit-'));
+    const box = harness();
+    try {
+      const task = await seed(dir, { status: 'canceled' });
+      const engine = await box.open(dir);
+      const collaboration = taskCollaborationSchema.parse({ mode: 'full', settings: {
+        profiles: [{ id: 'worker', label: 'Worker', provider: 'stub/worker' }],
+        directorProfileId: 'worker', workerProfileId: 'worker',
+      } });
+      const updated = await engine.updateCollaboration(task.id, collaboration);
+      assert.equal(updated.status, 'canceled');
+      assert.deepEqual(updated.collaboration, collaboration);
+      assert.deepEqual(box.created, []);
+      await engine.dispose();
+    } finally { await box.engine.dispose(); await rm(dir, { recursive: true, force: true }); }
   });
 
   it('finishes an in-flight edit before starting that task', async () => {

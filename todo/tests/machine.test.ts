@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { canDelete, recoverExecution, reduceCollaboration, reducePermission, reduceTurn, type TurnKind } from '../shared/machine';
+import { canDelete, canEdit, recoverExecution, reduceCollaboration, reducePermission, reduceTurn, type TurnKind } from '../shared/machine';
 import { reviewsMatch, type ReviewBinding } from '../shared/schema';
 
 const review: ReviewBinding = {
@@ -24,6 +24,21 @@ describe('task machine', () => {
     assert.equal(canDelete('needs_attention'), false);
     assert.equal(canDelete('canceling'), false);
     assert.equal(canDelete('merging'), false);
+  });
+
+  it('edits unstarted drafts and canceled tasks, nothing else', () => {
+    assert.equal(canEdit('draft', false), true);
+    assert.equal(canEdit('canceled', true), true);
+    assert.equal(canEdit('canceled', false), true);
+
+    assert.equal(canEdit('draft', true), false);
+    assert.equal(canEdit('queued', false), false);
+    assert.equal(canEdit('running', true), false);
+    assert.equal(canEdit('awaiting_review', true), false);
+    assert.equal(canEdit('needs_check', true), false);
+    assert.equal(canEdit('failed', true), false);
+    assert.equal(canEdit('merged', true), false);
+    assert.equal(canEdit('merge_failed', true), false);
   });
 
   it('ends a turn only from completed, failed, or canceled', () => {

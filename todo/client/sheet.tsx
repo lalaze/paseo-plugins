@@ -3,7 +3,7 @@ import { Icon } from '@getpaseo/plugin/client/react-native';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { diffLineKind, diffStats, pendingCleanup, relativeAge, type CleanupStep } from '../shared/board';
 import { collaborationDraftIssue, collaborationModeLabel, collaborationStatus, draftFromCollaboration, sameCollaborationDraft, snapshotFromDraft, type CollaborationCatalog, type CollaborationDraft, type TaskCollaboration } from '../shared/collaboration';
-import { canAccept, canCancel, canContinue, canDelete, canRetry } from '../shared/machine';
+import { canAccept, canCancel, canContinue, canDelete, canEdit, canRetry } from '../shared/machine';
 import type { Catalog, Task, TaskDiff } from '../shared/schema';
 import { HostTag, projectLabel, StatusChip } from './card';
 import { CollaborationForm, CollaborationSummary, collaborationIssueText } from './collaboration';
@@ -60,7 +60,7 @@ export function TaskSheet(props: SheetHandlers & {
   const { colors, task } = props;
   const stats = diffStats(props.diff.patch);
   const thinking = thinkingLabel(task, props.catalog);
-  const editable = task.status === 'draft' && !task.operationId;
+  const editable = canEdit(task.status, Boolean(task.operationId));
   const [editing, setEditing] = useState(false);
   const [collabDraft, setCollabDraft] = useState<CollaborationDraft>(() => draftFromCollaboration(task.collaboration));
   const [collabError, setCollabError] = useState<string | null>(null);
@@ -182,7 +182,9 @@ export function TaskSheet(props: SheetHandlers & {
         <Section title={ui('Collaboration', '协作')} colors={colors}>
           <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>
             {editable
-              ? ui('This draft keeps its own copy. Changing the machine default does not change it.', '这个草稿保存自己的副本。修改机器默认设置不会改它。')
+              ? task.status === 'canceled'
+                ? ui('Canceled. Changes apply when the task is retried; the kept worktree and branch are reused.', '已取消。修改在重试时生效，保留的工作树和分支会继续使用。')
+                : ui('This draft keeps its own copy. Changing the machine default does not change it.', '这个草稿保存自己的副本。修改机器默认设置不会改它。')
               : ui('Collaboration settings were saved with the task and cannot be changed after it starts.', '协作设置已随任务保存，开始之后不能再改。')}
           </Text>
           {discarded ? <Text style={{ color: colors.statusWarning, fontSize: 12, lineHeight: 18 }}>{ui('Unsaved collaboration edits were not saved.', '未保存的协作修改没有写入。')}</Text> : null}
@@ -237,7 +239,7 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
   const collab = task.collaboration ? collaborationStatus(task) : null;
   const review = !sessionPending && canAccept(task.status) && Boolean(task.review);
   const text = (() => {
-    if (task.status === 'draft' && props.collaborationDirty) return ui('Save or cancel the collaboration edits before starting.', '先保存或取消协作设置的修改，再开始。');
+    if ((task.status === 'draft' || task.status === 'canceled') && props.collaborationDirty) return ui('Save or cancel the collaboration edits before starting.', '先保存或取消协作设置的修改，再开始。');
     if (collab && task.status !== 'draft' && task.status !== 'queued' && task.status !== 'merged' && task.status !== 'canceled' && task.status !== 'canceling') return ui(...collab.detail);
     switch (task.status) {
       case 'draft': return ui('Not started. Start it now, or leave it in To do for the queue.', '还没开始。现在开始，或者留在待办里等队列。');
@@ -267,7 +269,7 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
     : task.status === 'draft'
       ? <Button label={ui('Start', '开始')} icon="Play" onPress={props.onStart} colors={colors} full disabled={props.busy || props.collaborationDirty} />
       : canRetry(task.status)
-        ? <Button label={task.status !== 'canceled' && task.collaboration && task.collaborationControl === 'needs_attention' ? ui('Retry this collaboration', '重试这次协作') : ui('Retry with a new session', '用新会话重试')} icon="RotateCcw" onPress={props.onRetry} colors={colors} full disabled={props.busy} />
+        ? <Button label={task.status !== 'canceled' && task.collaboration && task.collaborationControl === 'needs_attention' ? ui('Retry this collaboration', '重试这次协作') : ui('Retry with a new session', '用新会话重试')} icon="RotateCcw" onPress={props.onRetry} colors={colors} full disabled={props.busy || props.collaborationDirty} />
         : task.status === 'needs_attention' && props.onOpenSession
           ? <Button label={ui('Open session', '打开会话')} icon="MessageSquare" onPress={props.onOpenSession} colors={colors} full />
           : null;

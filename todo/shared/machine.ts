@@ -29,6 +29,14 @@ export function canEnqueue(status: TaskStatus): boolean {
   return status === 'draft';
 }
 
+/**
+ * An unstarted draft edits in place. A canceled task has finished its run and its retry starts a
+ * new session from the saved snapshot, so its settings can be edited too; the kept worktree is reused.
+ */
+export function canEdit(status: TaskStatus, hasOperation: boolean): boolean {
+  return (status === 'draft' && !hasOperation) || status === 'canceled';
+}
+
 export function canCancel(status: TaskStatus): boolean {
   return status === 'draft' || status === 'queued' || status === 'preparing' || status === 'running'
     || status === 'needs_attention' || status === 'awaiting_review' || status === 'needs_check'

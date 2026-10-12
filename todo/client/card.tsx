@@ -3,7 +3,7 @@ import { Icon } from '@getpaseo/plugin/client/react-native';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { relativeAge } from '../shared/board';
 import { collaborationModeLabel } from '../shared/collaboration';
-import { canCancel, canDelete, type TaskStatus } from '../shared/machine';
+import { canCancel, canDelete, canEdit, type TaskStatus } from '../shared/machine';
 import type { Task } from '../shared/schema';
 import { explain, statusLabel, ui } from './i18n';
 import { Button, Dot, MONO, outline, tint, type Colors } from './kit';
@@ -59,7 +59,7 @@ export function TaskCard(props: { task: Task; hostLabel?: string | null; colors:
   const { colors, task } = props;
   const [confirmDelete, setConfirmDelete] = useState(false);
   const failed = Boolean(task.errorCode) && (task.status === 'failed' || task.status === 'needs_check' || task.status === 'merge_failed');
-  const editable = task.status === 'draft' && !task.operationId;
+  const editable = canEdit(task.status, Boolean(task.operationId));
   const stoppable = Boolean(task.collaboration && task.operationId && canCancel(task.status));
   const deletable = Boolean(props.onDelete && canDelete(task.status));
   return <Pressable

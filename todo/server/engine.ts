@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { taskCollaborationSchema, unavailableCatalog, type CollaborationCatalog, type CollaborationState, type TaskCollaboration } from '../shared/collaboration';
 import { explain, todoError, type TodoErrorCode, type TodoFailure } from '../shared/errors';
-import { canAccept, canCancel, canContinue, canDelete, canEnqueue, canRetry, isExecution, recoverExecution, reduceCollaboration, reducePermission, reduceTurn, type CollaborationDecision, type CollaborationObservation, type TurnKind } from '../shared/machine';
+import { canAccept, canCancel, canContinue, canDelete, canEdit, canEnqueue, canRetry, isExecution, recoverExecution, reduceCollaboration, reducePermission, reduceTurn, type CollaborationDecision, type CollaborationObservation, type TurnKind } from '../shared/machine';
 import { reviewBindingSchema, reviewsMatch, taskDraftSchema, taskSchema, type TaskDraft, type ReviewBinding, type Task, type TaskDiff, type TaskOutcome } from '../shared/schema';
 import type { AgentInspection, AgentPort } from './agents';
 import type { CollaborationPort } from './collaboration';
@@ -182,13 +182,13 @@ export class TodoEngine {
     return task;
   }
 
-  /** Edit the saved draft in place under the same lock used by starting the queue. */
+  /** Edit the saved draft in place under the same lock used by starting the queue. A canceled task edits too: its retry starts a new session from this snapshot. */
   async updateTask(id: string, input: TaskDraft): Promise<Task> {
     if (this.disposed) throw todoError('store-invalid');
     this.ensureWritable();
     return this.lockTask(id, async () => {
       const task = this.options.store.get(id);
-      if (task.status !== 'draft' || task.operationId) throw todoError('edit-rejected');
+      if (!canEdit(task.status, Boolean(task.operationId))) throw todoError('edit-rejected');
       const title = input.title.trim();
       const prompt = input.prompt.trim();
       if (!title || !prompt) throw todoError('empty-prompt');
@@ -232,13 +232,13 @@ export class TodoEngine {
     return this.options.store.get(id);
   }
 
-  /** Replace the snapshot on an unstarted draft. A task that already has an operation id is refused. */
+  /** Replace the snapshot on an unstarted draft or a canceled task. Any other started task is refused. */
   async updateCollaboration(id: string, collaboration: TaskCollaboration | null): Promise<Task> {
     if (this.disposed) throw todoError('store-invalid');
     this.ensureWritable();
     return this.lockTask(id, async () => {
       const task = this.options.store.get(id);
-      if (task.status !== 'draft' || task.operationId) throw todoError('collaboration-rejected');
+      if (!canEdit(task.status, Boolean(task.operationId))) throw todoError('collaboration-rejected');
       const next = requireCollaboration(collaboration);
       const clearDeferred = task.errorCode === 'collaboration-deferred';
       return this.write({
