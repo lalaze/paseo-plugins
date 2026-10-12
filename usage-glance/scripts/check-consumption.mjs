@@ -31,6 +31,9 @@ for (const platform of ['android', 'ios', 'web']) {
     paseo: { providers: {
       listUsage: () => assert.fail('Token usage must not query quotas'),
       subscribe: listener => { subscriptions.add(listener); return () => subscriptions.delete(listener); },
+    }, workspaces: {
+      list: async () => ({ entries: [{ id: 'workspace', archivingAt: null }], pageInfo: { hasMore: false } }),
+      subscribe: listener => { subscriptions.add(listener); return () => subscriptions.delete(listener); },
     } },
     rpc: async (contract, input) => {
       calls.push(contract.name);
@@ -39,7 +42,10 @@ for (const platform of ['android', 'ios', 'web']) {
       return { range: input.range, scanning: false, sources: [{ source: 'codex', status: 'ready', updatedAt: new Date().toISOString(), message: null,
         rows: [{ date: new Intl.DateTimeFormat('en-CA', { timeZone: input.range.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()), model: 'gpt-test', input: 1234567, output: 100, cacheRead: 0, cacheWrite: 0, reasoning: 0, inferredModel: false }] }] };
     },
-    addHeaderButton: () => assert.fail('Token usage must not restore quota buttons'),
+    addHeaderButton: contribution => {
+      registrations.set('header', contribution);
+      return { update: patch => { contribution.button = { ...contribution.button, ...patch }; }, remove: () => registrations.delete('header') };
+    },
     addSurface: (id, component) => add('surface', { id, component }),
     addSidebarItem: item => add('sidebar', item),
     addCommandCenterItem: item => add('command', item),
@@ -52,9 +58,18 @@ for (const platform of ['android', 'ios', 'web']) {
     registrations.get('command').onSelect();
     assert.equal(opened, 'consumption');
     const props = {
-      theme: { colors: { foreground: '#fff', foregroundMuted: '#aaa', surface0: '#111111', surface1: '#222222', surface2: '#333333', border: '#444', accent: '#acf' } },
+      theme: { colors: { foreground: '#fff', foregroundMuted: '#aaa', surface0: '#111111', surface1: '#222222', surface2: '#333333', border: '#444', accent: '#acf', statusSuccess: '#0f0', statusWarning: '#ff0', statusDanger: '#f00' } },
       host: { id: 'test-host', label: 'Test host' }, layout: { compact: platform !== 'web', platform },
     };
+    const header = registrations.get('header');
+    assert.equal(header.workspaceId, 'workspace');
+    assert.match(header.button.label, /(?:Today|今日) 1\.23M/);
+    header.button.behavior.onPress();
+    assert.equal(opened, 'consumption');
+    let icon;
+    await act(async () => { icon = create(React.createElement(header.button.icon, { ...props, size: 16 })); });
+    assert.equal(icon.root.findAllByType('view')[1].props.style.backgroundColor, '#0f0');
+    await act(async () => { icon.unmount(); });
     await act(async () => {
       tree = create(React.createElement(registrations.get('surface').component, props));
       await new Promise(resolve => setTimeout(resolve, 50));
@@ -70,7 +85,7 @@ for (const platform of ['android', 'ios', 'web']) {
   }
   assert.equal(registrations.size, 0, 'unload removes all entry points');
   assert.equal(subscriptions.size, 0, 'unload stops provider subscriptions');
-  console.log(`PASS ${platform}: token statistics render without quota integration and clean up`);
+  console.log(`PASS ${platform}: today's usage header and statistics render without quota integration and clean up`);
 }
 const serverSource = await readFile(new URL('../dist/server.js', import.meta.url), 'utf8');
 const handlers = new Map();
