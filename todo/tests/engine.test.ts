@@ -59,6 +59,7 @@ function harness(options: {
   const deleted: Array<{ branch: string; expectedHead: string; targetBranch: string }> = [];
   const forceDeleted: string[] = [];
   const created: string[] = [];
+  const thinkings: Array<string | null> = [];
   const workspaces: string[] = [];
   const workspaceTitles: Array<string | undefined> = [];
   const prompts: string[] = [];
@@ -71,6 +72,7 @@ function harness(options: {
     async create(input) {
       const agentId = `agent-${input.operationId}`;
       created.push(agentId);
+      thinkings.push(input.thinkingOptionId);
       prompts.push(input.prompt);
       return { agentId, workspaceId: 'ws-1' };
     },
@@ -105,7 +107,7 @@ function harness(options: {
   };
   let now = 1;
   return {
-    created, sent, captures, prepares, prompts, cancels, archived, removed, deleted, forceDeleted, workspaces, workspaceTitles, agents, git,
+    created, thinkings, sent, captures, prepares, prompts, cancels, archived, removed, deleted, forceDeleted, workspaces, workspaceTitles, agents, git,
     engine: null as unknown as TodoEngine,
     async open(dir: string) {
       const store = await TaskStore.open(dir);
@@ -126,7 +128,7 @@ async function seed(dir: string, patch: Partial<Task>): Promise<Task> {
   const store = await TaskStore.open(dir);
   const task: Task = {
     id: '00000000-0000-4000-8000-00000000abcd', title: 'seeded', prompt: 'do seeded', pendingPrompt: null, repository: REPO,
-    projectId: null, projectName: null, targetBranch: 'main', provider: 'stub/model', modeId: null, status: 'running',
+    projectId: null, projectName: null, targetBranch: 'main', provider: 'stub/model', modeId: null, thinkingOptionId: null, status: 'running',
     branch: 'paseo-todo/seeded', worktree: '/wt/seeded', baseCommit: B, agentId: 'agent-seeded', workspaceId: 'ws-1',
     operationId: '00000000-0000-4000-8000-00000000beef', operationIds: ['00000000-0000-4000-8000-00000000beef'],
     collaboration: null, collaborationConversationId: null, collaborationRunId: null, review: null,
@@ -542,6 +544,25 @@ describe('engine rounds', () => {
       await waitFor(() => engine.list().tasks.find(task => task.id === mine.id)?.status === 'running');
       assert.equal(engine.list().tasks.find(task => task.id === other.id)?.status, 'draft');
       assert.equal(box.created.length, 1);
+      await engine.dispose();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('stores thinking on a single-agent draft and sends it when the agent is created', async () => {
+    const box = harness();
+    const dir = await mkdtemp(join(tmpdir(), 'todo-engine-'));
+    try {
+      const engine = await box.open(dir);
+      const task = await engine.createTask({
+        title: 'think', prompt: 'do think', repository: REPO, projectId: null, projectName: null,
+        targetBranch: 'main', provider: 'stub/model', modeId: null, thinkingOptionId: 'high',
+      });
+      assert.equal(task.thinkingOptionId, 'high');
+      await engine.startTask(task.id);
+      await waitFor(() => box.created.length === 1 && engine.list().tasks[0]?.status === 'running');
+      assert.deepEqual(box.thinkings, ['high']);
       await engine.dispose();
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1738,10 +1759,10 @@ describe('draft editing', () => {
       } });
       const updated = await engine.updateTask(task.id, {
         title: ' After ', prompt: ' Revised goal ', targetBranch: 'next',
-        provider: 'stub/other', modeId: 'auto-review', collaboration,
+        provider: 'stub/other', modeId: 'auto-review', thinkingOptionId: 'high', collaboration,
       });
       assert.deepEqual(updated, { ...task, title: 'After', prompt: 'Revised goal', targetBranch: 'next',
-        provider: 'stub/other', modeId: 'auto-review', collaboration, updatedAt: 2 });
+        provider: 'stub/other', modeId: 'auto-review', thinkingOptionId: 'high', collaboration, updatedAt: 2 });
       assert.deepEqual(box.created, []);
       assert.deepEqual(box.workspaces, []);
       assert.equal(engine.list().tasks.length, 1);
@@ -1765,7 +1786,7 @@ describe('draft editing', () => {
     try {
       const task = await draft(engine, 'before');
       const disk = await readFile(join(dir, 'state.json'), 'utf8');
-      const changes = { title: 'Edited', prompt: 'New goal', targetBranch: 'next', provider: 'stub/other', modeId: null, collaboration: null };
+      const changes = { title: 'Edited', prompt: 'New goal', targetBranch: 'next', provider: 'stub/other', modeId: null, thinkingOptionId: null, collaboration: null };
       fail = true;
       await assert.rejects(engine.updateTask(task.id, changes), /disk full/);
       assert.deepEqual(engine.list().tasks, [task]);
@@ -1784,7 +1805,7 @@ describe('draft editing', () => {
     try {
       const engine = await box.open(dir);
       const task = await draft(engine, 'before');
-      const changes = { title: 'Edited', prompt: 'New goal', targetBranch: 'next', provider: 'stub/other', modeId: null, collaboration: null };
+      const changes = { title: 'Edited', prompt: 'New goal', targetBranch: 'next', provider: 'stub/other', modeId: null, thinkingOptionId: null, collaboration: null };
       await assert.rejects(engine.updateTask(task.id, { ...changes, prompt: '  ' }), /empty-prompt/);
       box.git.branchExists = async () => false;
       await assert.rejects(engine.updateTask(task.id, changes), /branch-missing/);
@@ -1801,7 +1822,7 @@ describe('draft editing', () => {
         const engine = await box.open(dir);
         const before = engine.list().tasks;
         await assert.rejects(engine.updateTask(task.id, { title: 'Edited', prompt: 'New goal',
-          targetBranch: 'next', provider: 'stub/other', modeId: null, collaboration: null }), /edit-rejected/);
+          targetBranch: 'next', provider: 'stub/other', modeId: null, thinkingOptionId: null, collaboration: null }), /edit-rejected/);
         assert.deepEqual(engine.list().tasks, before);
         assert.deepEqual(box.created, []);
       } finally { await box.engine.dispose(); await rm(dir, { recursive: true, force: true }); }
@@ -1820,7 +1841,7 @@ describe('draft editing', () => {
       const task = await draft(engine, 'before');
       box.git.branchExists = async () => { entered(); return exists; };
       const editing = engine.updateTask(task.id, { title: 'Edited', prompt: 'New goal', targetBranch: 'next',
-        provider: 'stub/other', modeId: null, collaboration: null });
+        provider: 'stub/other', modeId: null, thinkingOptionId: 'high', collaboration: null });
       await checking;
       const starting = engine.startTask(task.id);
       assert.equal(engine.list().tasks[0]?.status, 'draft');
@@ -1832,8 +1853,10 @@ describe('draft editing', () => {
       const started = engine.list().tasks[0];
       assert.equal(started?.targetBranch, 'next');
       assert.equal(started?.provider, 'stub/other');
+      assert.equal(started?.thinkingOptionId, 'high');
+      assert.deepEqual(box.thinkings, ['high']);
       await assert.rejects(engine.updateTask(task.id, { title: 'Too late', prompt: 'Old goal',
-        targetBranch: 'main', provider: 'stub/model', modeId: null, collaboration: null }), /edit-rejected/);
+        targetBranch: 'main', provider: 'stub/model', modeId: null, thinkingOptionId: null, collaboration: null }), /edit-rejected/);
       assert.deepEqual(engine.list().tasks[0], started);
     } finally { release(true); await box.engine.dispose(); await rm(dir, { recursive: true, force: true }); }
   });

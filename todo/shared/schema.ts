@@ -42,6 +42,8 @@ export const taskSchema = z.object({
   targetBranch: branchSchema,
   provider: z.string().regex(/^[^/\s]+\/[^/\s].{0,240}$/),
   modeId: z.string().min(1).max(200).nullable(),
+  /** Single-agent thinking level. Null leaves the provider default. Collaboration roles keep their own. */
+  thinkingOptionId: z.string().min(1).max(200).nullable().default(null),
   collaboration: taskCollaborationSchema.nullable().default(null),
   collaborationConversationId: z.string().min(1).max(200).nullable().default(null),
   collaborationRunId: z.string().min(1).max(200).nullable().default(null),
@@ -73,7 +75,7 @@ export const taskSchema = z.object({
 }).strict();
 
 export const taskDraftSchema = taskSchema.pick({
-  title: true, prompt: true, targetBranch: true, provider: true, modeId: true,
+  title: true, prompt: true, targetBranch: true, provider: true, modeId: true, thinkingOptionId: true,
 }).extend({ collaboration: taskCollaborationSchema.nullable() }).strict();
 export type TaskDraft = z.infer<typeof taskDraftSchema>;
 

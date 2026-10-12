@@ -133,6 +133,7 @@ describe('task store', () => {
       assert.equal(task.collaborationConversationId, null);
       assert.equal(task.collaborationRunId, null);
       assert.equal(task.cleanup, null);
+      assert.equal(task.thinkingOptionId, null);
       await store.dispose();
     } finally {
       await rm(dir, { recursive: true, force: true });

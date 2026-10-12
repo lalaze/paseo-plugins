@@ -77,6 +77,66 @@ describe('model catalog', () => {
   });
 });
 
+function createApi(options: {
+  thinkingOptions?: Array<{ id: string; label: string }>;
+  created?: Array<{ config: Record<string, unknown> }>;
+}) {
+  const created = options.created ?? [];
+  return {
+    providers: { snapshot: async () => ({ entries: [{
+      provider: 'stub', label: 'Stub', status: 'ready', enabled: true, defaultModeId: 'code',
+      models: [{ id: 'model', label: 'Model', thinkingOptions: options.thinkingOptions }],
+      modes: [{ id: 'code', label: 'Code' }],
+    }] }) },
+    workspaces: { open: async () => ({
+      id: 'ws-1',
+      current: () => ({}),
+      setTitle: async () => undefined,
+      agents: { create: async (input: { config: Record<string, unknown> }) => { created.push(input); return { id: 'agent-1' }; } },
+    }) },
+    dispose: async () => undefined,
+  };
+}
+
+const createInput = {
+  operationId: '00000000-0000-4000-8000-000000000001',
+  taskId: '00000000-0000-4000-8000-000000000002',
+  cwd: '/wt/task', provider: 'stub/model', modeId: null as string | null,
+  title: 'T', prompt: 'Do the work', collaboration: null,
+};
+
+describe('single-agent create', () => {
+  it('passes thinkingOptionId into the created agent config', async () => {
+    const created: Array<{ config: Record<string, unknown> }> = [];
+    const api = createApi({ thinkingOptions: [{ id: 'high', label: 'High' }], created });
+    const driver = { connect: async () => undefined, close: async () => undefined };
+    const gateway = new PaseoTodoGateway(driver as unknown as DaemonClient, api as unknown as PaseoApi, { url: 'ws://127.0.0.1/ws' });
+    const result = await gateway.create({ ...createInput, thinkingOptionId: 'high' });
+    assert.equal(result.agentId, 'agent-1');
+    assert.equal(result.workspaceId, 'ws-1');
+    assert.equal(created[0]?.config.thinkingOptionId, 'high');
+    assert.equal(created[0]?.config.provider, 'stub/model');
+  });
+
+  it('omits thinking from the agent config when the task uses the provider default', async () => {
+    const created: Array<{ config: Record<string, unknown> }> = [];
+    const api = createApi({ thinkingOptions: [{ id: 'high', label: 'High' }], created });
+    const driver = { connect: async () => undefined, close: async () => undefined };
+    const gateway = new PaseoTodoGateway(driver as unknown as DaemonClient, api as unknown as PaseoApi, { url: 'ws://127.0.0.1/ws' });
+    await gateway.create({ ...createInput, thinkingOptionId: null });
+    assert.equal(created[0]?.config.thinkingOptionId, undefined);
+  });
+
+  it('rejects a thinking level the model does not offer', async () => {
+    const created: Array<{ config: Record<string, unknown> }> = [];
+    const api = createApi({ thinkingOptions: [{ id: 'low', label: 'Low' }], created });
+    const driver = { connect: async () => undefined, close: async () => undefined };
+    const gateway = new PaseoTodoGateway(driver as unknown as DaemonClient, api as unknown as PaseoApi, { url: 'ws://127.0.0.1/ws' });
+    await assert.rejects(() => gateway.create({ ...createInput, thinkingOptionId: 'high' }), /provider-invalid/);
+    assert.deepEqual(created, []);
+  });
+});
+
 describe('reconnecting gateway', () => {
   it('rejects while the daemon is unreachable instead of reporting agents as gone, then reconnects', async () => {
     let attempts = 0;
@@ -137,7 +197,7 @@ describe('reconnecting gateway', () => {
     await assert.rejects(() => gateway.create({
       operationId: '00000000-0000-4000-8000-000000000001',
       taskId: '00000000-0000-4000-8000-000000000002',
-      cwd: '/wt/task', provider: 'stub/model', modeId: null, title: 'T', prompt: 'Do the work',
+      cwd: '/wt/task', provider: 'stub/model', modeId: null, thinkingOptionId: null, title: 'T', prompt: 'Do the work',
       collaboration: { mode: 'full', settings: { profiles: [] } } as never,
     }), /collaboration-deferred/);
     assert.deepEqual(opened, ['/wt/task']);

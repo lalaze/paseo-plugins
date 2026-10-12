@@ -88,7 +88,7 @@
 
 ## 协作
 
-待办保存的是任务自己的协作快照：关闭为 `null`，开启为 `full`（完整流程）或 `execute_review`（执行＋审核）。快照包含角色、模型、权限、提示词和限制，字段与宿主协作设置一致。`execute_review` 必须有独立审核 Agent。任务工作树已经隔离，启动时 `conversation.open` 使用 `isolation=local`，不再开第二个工作树。
+待办保存的是任务自己的协作快照：关闭为 `null`，开启为 `full`（完整流程）或 `execute_review`（执行＋审核）。快照包含角色、模型、权限、提示词和限制，字段与宿主协作设置一致。关闭协作的单 Agent 任务把思考强度存在 `thinkingOptionId`；空值表示供应商默认，创建会话时写入 `agent.create` 的 config。换模型会清掉上一次的选择。`execute_review` 必须有独立审核 Agent。任务工作树已经隔离，启动时 `conversation.open` 使用 `isolation=local`，不再开第二个工作树。
 
 当前宿主会用全局角色提示词覆盖 `conversation.open` 中的 `settings.rolePrompts`。表单和启动前检查都要求显式填写的任务提示词与主机一致；留空表示使用主机默认。不同则报错，不投递目标，也不通过修改全局提示词来绕过限制。执行＋审核不单独配置主 Agent，主会话使用执行配置；表单里留下的主 Agent 选择不参与供应商检查。完整流程的主 Agent 仍要单独选择。多个角色可以共享一个配置，单独修改其中一个角色时会拆出独立配置，避免丢失选择或修改另一个角色。
 

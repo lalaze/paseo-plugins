@@ -38,6 +38,7 @@ export interface CreateTaskInput {
   targetBranch: string;
   provider: string;
   modeId: string | null;
+  thinkingOptionId?: string | null;
   collaboration?: TaskCollaboration | null;
 }
 
@@ -169,7 +170,8 @@ export class TodoEngine {
     const task = taskSchema.parse({
       id: this.newId(), title, prompt, pendingPrompt: null, repository,
       projectId: input.projectId, projectName: input.projectName, targetBranch: input.targetBranch,
-      provider: input.provider, modeId: input.modeId, collaboration: requireCollaboration(input.collaboration),
+      provider: input.provider, modeId: input.modeId, thinkingOptionId: input.thinkingOptionId ?? null,
+      collaboration: requireCollaboration(input.collaboration),
       collaborationConversationId: null, collaborationRunId: null, collaborationPhase: null, collaborationControl: null,
       collaborationAcceptance: null, status: 'draft', branch: null, worktree: null,
       baseCommit: null, agentId: null, workspaceId: null, operationId: null, operationIds: [],
@@ -841,7 +843,8 @@ export class TodoEngine {
       const prompt = fresh.pendingPrompt ? followUpPrompt(fresh.prompt, fresh.pendingPrompt) : fresh.prompt;
       const created = await this.options.agents.create({
         operationId, taskId: initial.id, cwd: prepared.worktree, provider: initial.provider,
-        modeId: initial.modeId, title: initial.title, prompt, collaboration: fresh.collaboration,
+        modeId: initial.modeId, thinkingOptionId: initial.thinkingOptionId, title: initial.title, prompt,
+        collaboration: fresh.collaboration,
       });
       const after = this.options.store.get(id);
       if (after.operationId !== operationId) return;

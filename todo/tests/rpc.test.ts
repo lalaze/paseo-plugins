@@ -49,6 +49,9 @@ describe('collaboration rpc', () => {
       targetBranch: 'main', provider: 'stub/model', modeId: null,
     };
     assert.equal(createTask.input.safeParse(base).success, true);
+    assert.equal(createTask.input.safeParse({ ...base, thinkingOptionId: 'high' }).success, true);
+    assert.equal(createTask.input.safeParse({ ...base, thinkingOptionId: null }).success, true);
+    assert.equal(createTask.input.safeParse({ ...base, thinkingOptionId: '' }).success, false);
     assert.equal(createTask.input.safeParse({ ...base, collaboration: null }).success, true);
     assert.equal(createTask.input.safeParse({ ...base, collaboration: { mode: 'full', settings } }).success, true);
     assert.equal(createTask.input.safeParse({ ...base, collaboration: { mode: 'execute_review', settings: { ...settings, reviewerProfileId: undefined } } }).success, false);
@@ -65,8 +68,10 @@ describe('collaboration rpc', () => {
 
 describe('draft editing rpc', () => {
   it('accepts editable fields and rejects changes to task identity or lifecycle', () => {
-    const input = { id, title: 'Edited', prompt: 'New goal', targetBranch: 'next', provider: 'stub/model', modeId: null, collaboration: null };
+    const input = { id, title: 'Edited', prompt: 'New goal', targetBranch: 'next', provider: 'stub/model', modeId: null, thinkingOptionId: null, collaboration: null };
     assert.equal(updateTask.input.safeParse(input).success, true);
+    assert.equal(updateTask.input.safeParse({ ...input, thinkingOptionId: 'high' }).success, true);
+    assert.equal(updateTask.input.safeParse({ ...input, thinkingOptionId: '' }).success, false);
     for (const field of ['repository', 'projectId', 'status', 'operationId']) {
       assert.equal(updateTask.input.safeParse({ ...input, [field]: 'changed' }).success, false);
     }

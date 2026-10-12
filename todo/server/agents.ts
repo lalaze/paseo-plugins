@@ -14,6 +14,8 @@ export interface CreateAgentInput {
   cwd: string;
   provider: string;
   modeId: string | null;
+  /** Null leaves the provider default. */
+  thinkingOptionId: string | null;
   title: string;
   prompt: string;
   /** Task snapshot. Null keeps the normal single-agent launch. */

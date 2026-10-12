@@ -100,6 +100,12 @@ export class PaseoTodoGateway implements AgentPort, CollaborationPort {
     if (!entry || entry.status !== 'ready' || !entry.models?.some(item => item.id === model)) throw todoError('provider-invalid', input.provider);
     const modeId = input.modeId ?? entry.defaultModeId ?? null;
     if (modeId && entry.modes?.length && !entry.modes.some(mode => mode.id === modeId)) throw todoError('provider-invalid', modeId);
+    const thinkingOptionId = input.thinkingOptionId;
+    const modelEntry = entry.models?.find(item => item.id === model);
+    if (thinkingOptionId && modelEntry?.thinkingOptions?.length
+      && !modelEntry.thinkingOptions.some(option => option.id === thinkingOptionId)) {
+      throw todoError('provider-invalid', thinkingOptionId);
+    }
     const workspace = await this.api.workspaces.open(input.cwd);
     // The worktree's workspace is otherwise named after the task branch; a title set earlier (by us or the user) is kept.
     if (!workspace.current()?.title) await workspace.setTitle(input.title).catch(() => undefined);
@@ -108,7 +114,12 @@ export class PaseoTodoGateway implements AgentPort, CollaborationPort {
       idempotencyKey: input.operationId,
       title: input.title,
       labels: { 'paseo-todo': '1', 'paseo-todo-task': input.taskId, 'paseo-todo-operation': input.operationId },
-      config: { provider: input.provider, ...(modeId ? { modeId } : {}), systemPrompt: SYSTEM_PROMPT },
+      config: {
+        provider: input.provider,
+        ...(modeId ? { modeId } : {}),
+        ...(thinkingOptionId ? { thinkingOptionId } : {}),
+        systemPrompt: SYSTEM_PROMPT,
+      },
       prompt: input.prompt,
       clientMessageId: input.operationId,
     });

@@ -30,6 +30,16 @@ export function providerLabel(task: Task, catalog: Catalog | null): string {
   return `${entry?.label ?? provider} · ${modelLabel}`;
 }
 
+/** Catalog label for a saved thinking level, or the stored id. Null when the task uses the provider default. */
+export function thinkingLabel(task: Task, catalog: Catalog | null): string | null {
+  if (!task.thinkingOptionId) return null;
+  const [provider, ...rest] = task.provider.split('/');
+  const model = rest.join('/');
+  const entry = catalog?.providers.find(item => item.provider === provider);
+  const option = entry?.models.find(item => item.id === model)?.thinkingOptions?.find(item => item.id === task.thinkingOptionId);
+  return option?.label ?? task.thinkingOptionId;
+}
+
 const short = (sha: string | null) => (sha ? sha.slice(0, 8) : '—');
 
 /** One task: prompt, collaboration, diff, and the next action. An unstarted draft edits collaboration here. */
@@ -49,6 +59,7 @@ export function TaskSheet(props: SheetHandlers & {
 }) {
   const { colors, task } = props;
   const stats = diffStats(props.diff.patch);
+  const thinking = thinkingLabel(task, props.catalog);
   const editable = task.status === 'draft' && !task.operationId;
   const [editing, setEditing] = useState(false);
   const [collabDraft, setCollabDraft] = useState<CollaborationDraft>(() => draftFromCollaboration(task.collaboration));
@@ -145,6 +156,10 @@ export function TaskSheet(props: SheetHandlers & {
             <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{projectLabel(task)}</Text>
             <Dot colors={colors} />
             <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{providerLabel(task, props.catalog)}</Text>
+            {thinking ? <>
+              <Dot colors={colors} />
+              <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{ui('Thinking', '思考强度')}: {thinking}</Text>
+            </> : null}
             <Dot colors={colors} />
             <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{relativeAge(task.updatedAt, props.now)}</Text>
           </View>

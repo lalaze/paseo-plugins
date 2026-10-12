@@ -287,7 +287,8 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
         const task = editor.task;
         const modeId = input.provider === task.provider ? task.modeId : null;
         await host.rpc(updateTask, { id: task.id, title: input.title, prompt: input.prompt,
-          targetBranch: input.targetBranch, provider: input.provider, modeId, collaboration: input.collaboration });
+          targetBranch: input.targetBranch, provider: input.provider, modeId,
+          thinkingOptionId: input.thinkingOptionId, collaboration: input.collaboration });
         setEditor(null);
         await fetchHost(host, true);
         return;

@@ -10,7 +10,7 @@ import { CollaborationForm, collaborationIssueText } from './collaboration';
 import { parseTodoError, ui } from './i18n';
 import { Backdrop, Button, outline, tint, type Colors } from './kit';
 import { promptAfterTranslation, promptTranslateClick, type PromptUndo } from './prompt-translate';
-import { Select } from './select';
+import { Select, type SelectOption } from './select';
 import { translationBridge } from './translate-bridge';
 
 type Rpc = PluginClientContext['rpc'];
@@ -24,7 +24,23 @@ export interface TaskEditorInput {
   projectName: string | null;
   targetBranch: string;
   provider: string;
+  thinkingOptionId: string | null;
   collaboration: TaskCollaboration | null;
+}
+
+/** Thinking levels for the selected single-agent model. Empty when that model has none. */
+function thinkingOptionsFor(catalog: Catalog | null, provider: string, saved: string | null): SelectOption[] {
+  const slash = provider.indexOf('/');
+  const entry = catalog?.providers.find(item => item.provider === provider.slice(0, slash));
+  const model = entry?.models.find(item => item.id === provider.slice(slash + 1));
+  const options: SelectOption[] = (model?.thinkingOptions ?? []).map(option => ({
+    value: option.id, label: option.label, description: option.description,
+  }));
+  if (saved && !options.some(option => option.value === saved)) {
+    options.unshift({ value: saved, label: saved });
+  }
+  if (!options.length) return [];
+  return [{ value: '', label: ui('Provider default', '供应商默认') }, ...options];
 }
 
 /** Create or edit one task with its collaboration snapshot. A fresh mount owns each open. */
@@ -75,7 +91,8 @@ export function TaskEditorDialog(props: {
   const [branches, setBranches] = useState<string[]>(task ? [task.targetBranch] : []);
   const [targetBranch, setTargetBranch] = useState(task?.targetBranch ?? '');
   const [provider, setProvider] = useState(task?.provider ?? props.initialProvider ?? models[0]?.value ?? '');
-  const [picker, setPicker] = useState<'host' | 'project' | 'branch' | 'agent' | null>(null);
+  const [thinkingOptionId, setThinkingOptionId] = useState(task?.thinkingOptionId ?? '');
+  const [picker, setPicker] = useState<'host' | 'project' | 'branch' | 'agent' | 'thinking' | null>(null);
   const [collaborationOverride, setCollaborationOverride] = useState<CollaborationDraft | null>(() => task ? draftFromCollaboration(task.collaboration) : null);
 
   // A host's catalog can arrive after the dialog opens, and switching hosts brings other projects and agents:
@@ -87,12 +104,16 @@ export function TaskEditorDialog(props: {
     }
     if (!models.some(item => item.value === provider)) {
       setProvider(models.find(item => item.value === props.initialProvider)?.value ?? models[0]?.value ?? '');
+      setThinkingOptionId('');
     }
   }, [hostId, catalog]);
 
   // Another machine has its own models and saved default. Drop the previous machine's override.
   useEffect(() => {
-    if (!task) setCollaborationOverride(null);
+    if (!task) {
+      setCollaborationOverride(null);
+      setThinkingOptionId('');
+    }
   }, [hostId]);
 
   useEffect(() => {
@@ -126,6 +147,7 @@ export function TaskEditorDialog(props: {
     collaborationCatalog,
     catalog ? catalog.providers.map(entry => entry.provider) : null,
   );
+  const thinking = thinkingOptionsFor(catalog, provider, thinkingOptionId || null);
   // The title may be left empty; the prompt's first line stands in for it.
   const missing = !prompt.trim() ? ui('Write what needs doing', '先写下任务内容')
     : !repository ? ui('Choose a project', '先选项目')
@@ -163,6 +185,7 @@ export function TaskEditorDialog(props: {
     try {
       await props.onSubmit({
         hostId, title: taskTitle(title, prompt), prompt: prompt.trim(), repository, targetBranch, provider,
+        thinkingOptionId: thinkingOptionId || null,
         projectId: project?.projectId ?? null, projectName: props.scope?.name ?? project?.name ?? null,
         collaboration: snap.collaboration,
       }, start);
@@ -257,7 +280,17 @@ export function TaskEditorDialog(props: {
           options={models}
           placeholder={ui('No ready provider', '没有可用的供应商')}
           disabled={models.length === 0 || busy}
-          open={picker === 'agent'} onOpenChange={open => setPicker(open ? 'agent' : null)} onChange={setProvider}
+          open={picker === 'agent'} onOpenChange={open => setPicker(open ? 'agent' : null)}
+          onChange={value => { setProvider(value); setThinkingOptionId(''); }}
+        />}
+        {collaborationDraft.enabled || thinking.length === 0 ? null : <Select
+          label={ui('Thinking', '思考强度')} icon="Brain" colors={colors}
+          value={thinkingOptionId}
+          options={thinking}
+          placeholder={ui('Provider default', '供应商默认')}
+          disabled={busy}
+          open={picker === 'thinking'} onOpenChange={open => setPicker(open ? 'thinking' : null)}
+          onChange={value => setThinkingOptionId(value)}
         />}
       </View>
       {submitError ? <Text accessibilityRole="alert" style={{ paddingHorizontal: 20, paddingBottom: 12, color: colors.statusDanger, fontSize: 12, lineHeight: 18 }}>{submitError}</Text> : null}

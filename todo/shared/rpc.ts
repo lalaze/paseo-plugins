@@ -48,6 +48,7 @@ export const createTask = defineRpc({
     targetBranch: branchSchema,
     provider: z.string().min(3).max(300),
     modeId: z.string().min(1).max(200).nullable(),
+    thinkingOptionId: z.string().min(1).max(200).nullable().optional(),
     collaboration: taskCollaborationSchema.nullable().optional(),
   }).strict(),
   output: taskOutput,
