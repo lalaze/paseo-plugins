@@ -1,17 +1,18 @@
 import { TASK_STATUSES, type TaskStatus } from './machine';
 import type { Task } from './schema';
 
-/** Four board columns, modelled on codeg's To-dos board. The columns aggregate the engine's statuses. */
-export type BoardColumn = 'todo' | 'inProgress' | 'attention' | 'done';
+/** Five board columns, modelled on codeg's To-dos board. The columns aggregate the engine's statuses. */
+export type BoardColumn = 'todo' | 'inProgress' | 'attention' | 'done' | 'canceled';
 
-export const BOARD_COLUMNS: readonly BoardColumn[] = ['todo', 'inProgress', 'attention', 'done'];
+export const BOARD_COLUMNS: readonly BoardColumn[] = ['todo', 'inProgress', 'attention', 'done', 'canceled'];
 
 export const STATUSES_BY_COLUMN: Record<BoardColumn, readonly TaskStatus[]> = {
   todo: ['draft', 'queued'],
   inProgress: ['preparing', 'running', 'canceling'],
   // Merging stays here so a card does not jump across the board while its merge runs.
   attention: ['needs_attention', 'awaiting_review', 'needs_check', 'failed', 'merging', 'merge_failed'],
-  done: ['merged', 'canceled'],
+  done: ['merged'],
+  canceled: ['canceled'],
 };
 
 const COLUMN_OF = new Map<TaskStatus, BoardColumn>(
@@ -24,9 +25,9 @@ export function columnFor(status: TaskStatus): BoardColumn {
   return column;
 }
 
-/** Freshest first in every column; canceled tasks are hidden unless asked for. */
+/** Freshest first in every column; the canceled column can be hidden via the Filter menu. */
 export function groupTasks<T extends Pick<Task, 'status' | 'updatedAt'>>(tasks: readonly T[], showCanceled: boolean): Record<BoardColumn, T[]> {
-  const grouped: Record<BoardColumn, T[]> = { todo: [], inProgress: [], attention: [], done: [] };
+  const grouped: Record<BoardColumn, T[]> = { todo: [], inProgress: [], attention: [], done: [], canceled: [] };
   for (const task of tasks) {
     if (task.status === 'canceled' && !showCanceled) continue;
     grouped[columnFor(task.status)].push(task);

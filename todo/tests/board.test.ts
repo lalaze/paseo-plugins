@@ -22,6 +22,7 @@ describe('board', () => {
     assert.equal(columnFor('awaiting_review'), 'attention');
     assert.equal(columnFor('merging'), 'attention');
     assert.equal(columnFor('merged'), 'done');
+    assert.equal(columnFor('canceled'), 'canceled');
   });
 
   it('orders each column freshest first and hides canceled unless asked', () => {
@@ -29,7 +30,8 @@ describe('board', () => {
     const grouped = groupTasks(tasks, false);
     assert.deepEqual(grouped.todo.map(item => item.id), ['new', 'old']);
     assert.deepEqual(grouped.done.map(item => item.id), ['ok']);
-    assert.deepEqual(groupTasks(tasks, true).done.map(item => item.id), ['gone', 'ok']);
+    assert.deepEqual(grouped.canceled, []);
+    assert.deepEqual(groupTasks(tasks, true).canceled.map(item => item.id), ['gone']);
   });
 
   it('formats ages and counts diff lines without the file headers', () => {

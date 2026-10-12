@@ -33,8 +33,8 @@ interface HostList {
 }
 
 const EMPTY: TaskDiff = { patch: '', files: [], truncated: false };
-/** Below this the four columns stop fitting and the board stacks, as it does in a workspace panel. */
-const BOARD_MIN_WIDTH = 880;
+/** Below this the five columns stop fitting and the board stacks, as it does in a workspace panel. */
+const BOARD_MIN_WIDTH = 1100;
 /** Below this the toolbar drops the Filter and New task labels so the row fits a phone. */
 const TOOLBAR_MIN_WIDTH = 560;
 /** A host that does not answer in time counts as unreachable for this round instead of holding the board back. */
@@ -60,6 +60,7 @@ const COLUMN_TITLE: Record<BoardColumn, readonly [string, string]> = {
   inProgress: ['In progress', '进行中'],
   attention: ['Needs you', '等你处理'],
   done: ['Done', '已完成'],
+  canceled: ['Canceled', '已取消'],
 };
 
 const COLUMN_EMPTY: Record<BoardColumn, readonly [string, string]> = {
@@ -67,6 +68,7 @@ const COLUMN_EMPTY: Record<BoardColumn, readonly [string, string]> = {
   inProgress: ['Nothing in progress', '没有进行中的任务'],
   attention: ['Nothing needs you', '没有需要你处理的'],
   done: ['Nothing done yet', '还没有完成的任务'],
+  canceled: ['Nothing canceled', '没有已取消的任务'],
 };
 
 /** Same load state and the same task ids with the same timestamps, in the same order: the board can keep the old object. */
