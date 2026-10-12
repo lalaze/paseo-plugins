@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -1723,3 +1723,119 @@ describe('collaboration lifecycle', () => {
   });
 });
 
+
+
+describe('draft editing', () => {
+  it('saves the edited task in place without preparing or starting it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'todo-edit-'));
+    const box = harness();
+    try {
+      const engine = await box.open(dir);
+      const task = await draft(engine, 'before');
+      const collaboration = taskCollaborationSchema.parse({ mode: 'full', settings: {
+        profiles: [{ id: 'worker', label: 'Worker', provider: 'stub/worker' }],
+        directorProfileId: 'worker', workerProfileId: 'worker',
+      } });
+      const updated = await engine.updateTask(task.id, {
+        title: ' After ', prompt: ' Revised goal ', targetBranch: 'next',
+        provider: 'stub/other', modeId: 'auto-review', collaboration,
+      });
+      assert.deepEqual(updated, { ...task, title: 'After', prompt: 'Revised goal', targetBranch: 'next',
+        provider: 'stub/other', modeId: 'auto-review', collaboration, updatedAt: 2 });
+      assert.deepEqual(box.created, []);
+      assert.deepEqual(box.workspaces, []);
+      assert.equal(engine.list().tasks.length, 1);
+      assert.deepEqual(JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')).tasks[0], updated);
+      await engine.dispose();
+      const store = await TaskStore.open(dir);
+      assert.deepEqual(store.get(task.id), updated);
+      await store.dispose();
+    } finally { await box.engine.dispose(); await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('keeps the previous task on disk after a failed save and permits retry', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'todo-edit-'));
+    const box = harness();
+    let fail = false;
+    const store = await TaskStore.open(dir, { write: async body => {
+      if (fail) throw new Error('disk full');
+      await writeFile(join(dir, 'state.json'), body);
+    } });
+    const engine = new TodoEngine({ store, git: box.git, agents: box.agents });
+    try {
+      const task = await draft(engine, 'before');
+      const disk = await readFile(join(dir, 'state.json'), 'utf8');
+      const changes = { title: 'Edited', prompt: 'New goal', targetBranch: 'next', provider: 'stub/other', modeId: null, collaboration: null };
+      fail = true;
+      await assert.rejects(engine.updateTask(task.id, changes), /disk full/);
+      assert.deepEqual(engine.list().tasks, [task]);
+      assert.equal(await readFile(join(dir, 'state.json'), 'utf8'), disk);
+      fail = false;
+      const updated = await engine.updateTask(task.id, changes);
+      assert.equal(updated.title, 'Edited');
+      assert.equal(updated.status, 'draft');
+      assert.deepEqual(box.created, []);
+    } finally { await engine.dispose(); await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('rejects empty goals and missing branches without changing the draft', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'todo-edit-'));
+    const box = harness();
+    try {
+      const engine = await box.open(dir);
+      const task = await draft(engine, 'before');
+      const changes = { title: 'Edited', prompt: 'New goal', targetBranch: 'next', provider: 'stub/other', modeId: null, collaboration: null };
+      await assert.rejects(engine.updateTask(task.id, { ...changes, prompt: '  ' }), /empty-prompt/);
+      box.git.branchExists = async () => false;
+      await assert.rejects(engine.updateTask(task.id, changes), /branch-missing/);
+      assert.deepEqual(engine.list().tasks, [task]);
+    } finally { await box.engine.dispose(); await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('rejects a started task and a draft with a saved operation', async () => {
+    for (const status of ['queued', 'running', 'canceled', 'draft'] as const) {
+      const dir = await mkdtemp(join(tmpdir(), 'todo-edit-'));
+      const box = harness();
+      try {
+        const task = await seed(dir, { status });
+        const engine = await box.open(dir);
+        const before = engine.list().tasks;
+        await assert.rejects(engine.updateTask(task.id, { title: 'Edited', prompt: 'New goal',
+          targetBranch: 'next', provider: 'stub/other', modeId: null, collaboration: null }), /edit-rejected/);
+        assert.deepEqual(engine.list().tasks, before);
+        assert.deepEqual(box.created, []);
+      } finally { await box.engine.dispose(); await rm(dir, { recursive: true, force: true }); }
+    }
+  });
+
+  it('finishes an in-flight edit before starting that task', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'todo-edit-'));
+    const box = harness();
+    let entered!: () => void;
+    let release!: (exists: boolean) => void;
+    const checking = new Promise<void>(resolve => { entered = resolve; });
+    const exists = new Promise<boolean>(resolve => { release = resolve; });
+    try {
+      const engine = await box.open(dir);
+      const task = await draft(engine, 'before');
+      box.git.branchExists = async () => { entered(); return exists; };
+      const editing = engine.updateTask(task.id, { title: 'Edited', prompt: 'New goal', targetBranch: 'next',
+        provider: 'stub/other', modeId: null, collaboration: null });
+      await checking;
+      const starting = engine.startTask(task.id);
+      assert.equal(engine.list().tasks[0]?.status, 'draft');
+      release(true);
+      await editing;
+      await starting;
+      await waitFor(() => engine.list().tasks[0]?.status === 'running');
+      assert.deepEqual(box.prompts, ['New goal']);
+      const started = engine.list().tasks[0];
+      assert.equal(started?.targetBranch, 'next');
+      assert.equal(started?.provider, 'stub/other');
+      await assert.rejects(engine.updateTask(task.id, { title: 'Too late', prompt: 'Old goal',
+        targetBranch: 'main', provider: 'stub/model', modeId: null, collaboration: null }), /edit-rejected/);
+      assert.deepEqual(engine.list().tasks[0], started);
+    } finally { release(true); await box.engine.dispose(); await rm(dir, { recursive: true, force: true }); }
+  });
+
+});

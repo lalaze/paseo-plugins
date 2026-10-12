@@ -1,6 +1,6 @@
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 import { todoError } from './shared/errors';
-import { acceptTask, cancelTask, cleanupTask, continueTask, createTask, deleteTask, listTasks, readBranches, readCatalog, readCollaborationCatalog, readHostIdentity, readTask, retryTask, startQueue, startTask, updateTaskCollaboration } from './shared/rpc';
+import { acceptTask, cancelTask, cleanupTask, continueTask, createTask, deleteTask, listTasks, readBranches, readCatalog, readCollaborationCatalog, readHostIdentity, readTask, retryTask, startQueue, startTask, updateTask, updateTaskCollaboration } from './shared/rpc';
 import type { TurnKind } from './shared/machine';
 import { readBranches as branchesFor, readCatalog as catalogFor } from './server/catalog';
 import { TodoEngine } from './server/engine';
@@ -46,6 +46,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(readTask, async ({ id }) => (await useEngine()).read(id));
   server.handle(readCatalog, async () => catalogFor(await gateway.api()));
   server.handle(readCollaborationCatalog, async () => (await useEngine()).collaborationCatalog());
+  server.handle(updateTask, async ({ id, ...draft }) => ({ task: await (await useEngine()).updateTask(id, draft) }));
   server.handle(updateTaskCollaboration, async ({ id, collaboration }) => ({ task: await (await useEngine()).updateCollaboration(id, collaboration) }));
   server.handle(readBranches, async ({ repository }) => branchesFor(createGit(), repository));
   server.handle(createTask, async input => ({ task: await (await useEngine()).createTask(input) }));

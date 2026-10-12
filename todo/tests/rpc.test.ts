@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { collaborationSettingsSchema, taskCollaborationSchema } from '../shared/collaboration';
-import { acceptTask, createTask, deleteTask, listTasks, readCollaborationCatalog, updateTaskCollaboration } from '../shared/rpc';
+import { acceptTask, createTask, deleteTask, listTasks, readCollaborationCatalog, updateTask, updateTaskCollaboration } from '../shared/rpc';
 import type { ReviewBinding } from '../shared/schema';
 
 const id = '11111111-1111-4111-8111-111111111111';
@@ -59,5 +59,20 @@ describe('collaboration rpc', () => {
     assert.equal(readCollaborationCatalog.input.safeParse({}).success, true);
     assert.equal(readCollaborationCatalog.input.safeParse({ host: 'other' }).success, false);
     assert.equal(taskCollaborationSchema.safeParse({ mode: 'sideways', settings }).success, false);
+  });
+});
+
+
+describe('draft editing rpc', () => {
+  it('accepts editable fields and rejects changes to task identity or lifecycle', () => {
+    const input = { id, title: 'Edited', prompt: 'New goal', targetBranch: 'next', provider: 'stub/model', modeId: null, collaboration: null };
+    assert.equal(updateTask.input.safeParse(input).success, true);
+    for (const field of ['repository', 'projectId', 'status', 'operationId']) {
+      assert.equal(updateTask.input.safeParse({ ...input, [field]: 'changed' }).success, false);
+    }
+    assert.equal(updateTask.input.safeParse({ ...input, collaboration: undefined }).success, false);
+    assert.equal(updateTask.input.safeParse({ ...input, title: '', prompt: '' }).success, false);
+    assert.equal(updateTask.input.safeParse({ ...input, targetBranch: '../bad' }).success, false);
+    assert.equal(updateTask.input.safeParse({ ...input, provider: 'missing-model' }).success, false);
   });
 });

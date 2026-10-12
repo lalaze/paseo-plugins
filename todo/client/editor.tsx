@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { collaborationDraftIssue, inheritCollaborationDraft, snapshotFromDraft, storedDefault, type CollaborationCatalog, type CollaborationDraft, type TaskCollaboration } from '../shared/collaboration';
+import { collaborationDraftIssue, draftFromCollaboration, inheritCollaborationDraft, snapshotFromDraft, storedDefault, type CollaborationCatalog, type CollaborationDraft, type TaskCollaboration } from '../shared/collaboration';
 import { readBranches } from '../shared/rpc';
 import { taskTitle } from '../shared/title';
-import type { Catalog } from '../shared/schema';
+import type { Catalog, Task } from '../shared/schema';
 import { CollaborationForm, collaborationIssueText } from './collaboration';
-import { ui } from './i18n';
+import { parseTodoError, ui } from './i18n';
 import { Backdrop, Button, outline, tint, type Colors } from './kit';
 import { promptAfterTranslation, promptTranslateClick, type PromptUndo } from './prompt-translate';
 import { Select } from './select';
@@ -15,8 +15,8 @@ import { translationBridge } from './translate-bridge';
 
 type Rpc = PluginClientContext['rpc'];
 
-/** What Add sends. Collaboration is the snapshot for this task, not the host's settings. */
-export interface NewTaskInput {
+/** Fields submitted by the task editor, with a task-local collaboration snapshot. */
+export interface TaskEditorInput {
   title: string;
   prompt: string;
   repository: string;
@@ -27,11 +27,12 @@ export interface NewTaskInput {
   collaboration: TaskCollaboration | null;
 }
 
-/** One dialog for the task and its collaboration. Cancel discards both. Add stores the snapshot on the task. */
-export function NewTaskDialog(props: {
+/** Create or edit one task with its collaboration snapshot. A fresh mount owns each open. */
+export function TaskEditorDialog(props: {
   /** Hosts a task can be created on; the chosen one supplies the projects, branches and agents. */
   hosts: readonly { id: string; label: string }[];
   initialHost: string;
+  task: Task | null;
   rpcFor(hostId: string): Rpc;
   colors: Colors;
   catalogs: Readonly<Record<string, Catalog>>;
@@ -44,9 +45,13 @@ export function NewTaskDialog(props: {
   busy: boolean;
   width: number;
   onClose(): void;
-  onSubmit(input: NewTaskInput & { hostId: string }, start: boolean): void;
+  onSubmit(input: TaskEditorInput & { hostId: string }, start: boolean): Promise<void>;
 }) {
-  const { colors } = props;
+  const { colors, task } = props;
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const busy = props.busy || submitting;
+  const close = () => { if (!busy) props.onClose(); };
   const [hostId, setHostId] = useState(props.initialHost);
   const rpc = props.rpcFor(hostId);
   const catalog = props.catalogs[hostId] ?? null;
@@ -54,8 +59,11 @@ export function NewTaskDialog(props: {
   const models = catalog?.providers.flatMap(entry => entry.models.map(model => ({
     value: `${entry.provider}/${model.id}`, label: model.label, description: model.description, group: entry.label,
   }))) ?? [];
-  const [title, setTitle] = useState('');
-  const [prompt, setPrompt] = useState('');
+  if (task && !models.some(model => model.value === task.provider)) {
+    models.push({ value: task.provider, label: task.provider, description: undefined, group: ui('Saved choice', '已保存的选择') });
+  }
+  const [title, setTitle] = useState(task?.title ?? '');
+  const [prompt, setPrompt] = useState(task?.prompt ?? '');
   const [promptFocused, setPromptFocused] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState<string | null>(null);
@@ -64,16 +72,16 @@ export function NewTaskDialog(props: {
   const mounted = useRef(true);
   promptRef.current = prompt;
   const [repository, setRepository] = useState(props.scope?.repository ?? props.initialRepository ?? projects[0]?.path ?? '');
-  const [branches, setBranches] = useState<string[]>([]);
-  const [targetBranch, setTargetBranch] = useState('');
-  const [provider, setProvider] = useState(props.initialProvider ?? models[0]?.value ?? '');
+  const [branches, setBranches] = useState<string[]>(task ? [task.targetBranch] : []);
+  const [targetBranch, setTargetBranch] = useState(task?.targetBranch ?? '');
+  const [provider, setProvider] = useState(task?.provider ?? props.initialProvider ?? models[0]?.value ?? '');
   const [picker, setPicker] = useState<'host' | 'project' | 'branch' | 'agent' | null>(null);
-  const [collaborationOverride, setCollaborationOverride] = useState<CollaborationDraft | null>(null);
+  const [collaborationOverride, setCollaborationOverride] = useState<CollaborationDraft | null>(() => task ? draftFromCollaboration(task.collaboration) : null);
 
   // A host's catalog can arrive after the dialog opens, and switching hosts brings other projects and agents:
   // keep a choice that still exists there, otherwise fall back to the first one.
   useEffect(() => {
-    if (!catalog) return;
+    if (!catalog || task) return;
     if (!props.scope && !projects.some(item => item.path === repository)) {
       setRepository(projects.find(item => item.path === props.initialRepository)?.path ?? projects[0]?.path ?? '');
     }
@@ -84,7 +92,7 @@ export function NewTaskDialog(props: {
 
   // Another machine has its own models and saved default. Drop the previous machine's override.
   useEffect(() => {
-    setCollaborationOverride(null);
+    if (!task) setCollaborationOverride(null);
   }, [hostId]);
 
   useEffect(() => {
@@ -97,9 +105,13 @@ export function NewTaskDialog(props: {
     let live = true;
     void rpc(readBranches, { repository }).then(result => {
       if (!live) return;
+      if (task) {
+        setBranches(result.branches.includes(task.targetBranch) ? result.branches : [task.targetBranch, ...result.branches]);
+        return;
+      }
       setBranches(result.branches);
       setTargetBranch(current => (current && result.branches.includes(current) ? current : result.head ?? result.branches[0] ?? ''));
-    }).catch(() => { if (live) setBranches([]); });
+    }).catch(() => { if (live && !task) setBranches([]); });
     return () => { live = false; };
   }, [rpc, repository]);
 
@@ -124,7 +136,7 @@ export function NewTaskDialog(props: {
   const ready = !missing;
   const undoable = undo !== null && undo.after === prompt;
   const translatePrompt = () => {
-    const action = promptTranslateClick({ prompt, undo, busy: translating || props.busy });
+    const action = promptTranslateClick({ prompt, undo, busy: translating || busy });
     if (!action) return;
     if (action.kind === 'reject') { setTranslateError(action.message); return; }
     if (action.kind === 'undo') { setPrompt(action.prompt); setUndo(null); setTranslateError(null); return; }
@@ -142,25 +154,37 @@ export function NewTaskDialog(props: {
       if (mounted.current) setTranslateError(error instanceof Error ? error.message : String(error));
     }).finally(() => { if (mounted.current) setTranslating(false); });
   };
-  const submit = (start: boolean) => {
+  const submit = async (start: boolean) => {
+    if (busy || !ready) return;
     const snap = snapshotFromDraft(collaborationDraft);
     if (collaborationProblem || snap.error) return;
-    props.onSubmit({
-      hostId, title: taskTitle(title, prompt), prompt: prompt.trim(), repository, targetBranch, provider,
-      projectId: project?.projectId ?? null, projectName: props.scope?.name ?? project?.name ?? null,
-      collaboration: snap.collaboration,
-    }, start);
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      await props.onSubmit({
+        hostId, title: taskTitle(title, prompt), prompt: prompt.trim(), repository, targetBranch, provider,
+        projectId: project?.projectId ?? null, projectName: props.scope?.name ?? project?.name ?? null,
+        collaboration: snap.collaboration,
+      }, start);
+    } catch (error) {
+      setSubmitError(parseTodoError(error));
+    } finally {
+      setSubmitting(false);
+    }
   };
-  return <Backdrop onClose={props.onClose} align="center">
+  return <Backdrop onClose={close} align="center">
     <View style={{ width: Math.min(640, props.width - 24), maxHeight: '90%', borderRadius: 16, borderWidth: 1, borderColor: outline(colors), backgroundColor: colors.surface0 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: outline(colors) }}>
-        <Text style={{ flex: 1, color: colors.foreground, fontSize: 15, fontWeight: '700' }}>{ui('New task', '新建任务')}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel={ui('Close', '关闭')} onPress={props.onClose} style={{ padding: 6, borderRadius: 8 }}>
+        <Text style={{ flex: 1, color: colors.foreground, fontSize: 15, fontWeight: '700' }}>{task ? ui('Edit task', '修改任务') : ui('New task', '新建任务')}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={ui('Close', '关闭')} onPress={close} disabled={busy} style={{ padding: 6, borderRadius: 8 }}>
           <Icon name="X" size={16} color={colors.foregroundMuted} />
         </Pressable>
       </View>
       <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 16, gap: 16 }}>
         <TextInput
+          accessibilityLabel={ui('Task title', '任务标题')}
+          editable={!busy}
+          maxLength={200}
           value={title}
           onChangeText={setTitle}
           autoFocus
@@ -169,6 +193,9 @@ export function NewTaskDialog(props: {
           style={{ color: colors.foreground, fontSize: 19, fontWeight: '700', paddingVertical: 6, outlineStyle: 'solid', outlineWidth: 0 }}
         />
         <TextInput
+          accessibilityLabel={ui('Task content', '任务内容')}
+          editable={!busy}
+          maxLength={20_000}
           value={prompt}
           onChangeText={value => { setPrompt(value); setTranslateError(null); }}
           onFocus={() => setPromptFocused(true)}
@@ -188,32 +215,32 @@ export function NewTaskDialog(props: {
             colors={colors}
             variant="outline"
             size="xs"
-            disabled={translating || props.busy || (!undoable && !prompt.trim())}
+            disabled={translating || busy || (!undoable && !prompt.trim())}
           />
         </View>
         {!props.scope && projects.length === 0 ? <TextInput value={repository} onChangeText={setRepository} placeholder={ui('/path/to/repository', '/仓库/路径')} placeholderTextColor={tint(colors.foregroundMuted, 0.7)} autoCapitalize="none" autoCorrect={false}
           style={{ height: 34, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 12, outlineStyle: 'solid', outlineWidth: 0 }} /> : null}
         <View style={{ gap: 8 }}>
           <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: '600' }}>{ui('Collaboration', '协作')}</Text>
-          <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{ui('Used for this task; the next new task starts from this choice.', '只用于这条任务，下次新建沿用这次选择。')}</Text>
-          <CollaborationForm draft={collaborationDraft} catalog={catalog} collaboration={collaborationCatalog} colors={colors} disabled={props.busy} onChange={setCollaborationOverride} />
+          <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{task ? ui('Saved on this task.', '保存到这条任务。') : ui('Used for this task; the next new task starts from this choice.', '只用于这条任务，下次新建沿用这次选择。')}</Text>
+          <CollaborationForm draft={collaborationDraft} catalog={catalog} collaboration={collaborationCatalog} colors={colors} disabled={busy} onChange={setCollaborationOverride} />
         </View>
       </ScrollView>
       {picker ? <Pressable accessibilityLabel={ui('Close list', '关闭列表')} onPress={() => setPicker(null)} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 5 }} /> : null}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingBottom: 14, zIndex: 10 }}>
-        {props.hosts.length > 1 && !props.scope ? <Select
+        {props.hosts.length > 1 && !props.scope && !task ? <Select
           label={ui('Machine', '机器')} icon="Server" colors={colors}
           value={hostId}
           options={props.hosts.map(host => ({ value: host.id, label: host.label }))}
           placeholder={ui('Choose a machine', '选择机器')}
-          open={picker === 'host'} onOpenChange={open => setPicker(open ? 'host' : null)} onChange={setHostId}
+          disabled={busy} open={picker === 'host'} onOpenChange={open => setPicker(open ? 'host' : null)} onChange={setHostId}
         /> : null}
         {props.scope || projects.length > 0 ? <Select
           label={ui('Project', '项目')} icon="Folder" colors={colors}
           value={props.scope?.repository ?? repository}
           options={props.scope ? [{ value: props.scope.repository, label: props.scope.name }] : projects.map(item => ({ value: item.path, label: item.name }))}
           placeholder={ui('Choose a project', '选择项目')}
-          disabled={Boolean(props.scope)}
+          disabled={Boolean(props.scope) || busy}
           open={picker === 'project'} onOpenChange={open => setPicker(open ? 'project' : null)} onChange={setRepository}
         /> : null}
         <Select
@@ -221,7 +248,7 @@ export function NewTaskDialog(props: {
           value={targetBranch}
           options={branches.map(branch => ({ value: branch, label: branch }))}
           placeholder={repository ? ui('Loading branches…', '正在读取分支…') : ui('Pick a project first', '先选项目')}
-          disabled={branches.length === 0}
+          disabled={branches.length === 0 || busy}
           open={picker === 'branch'} onOpenChange={open => setPicker(open ? 'branch' : null)} onChange={setTargetBranch}
         />
         {collaborationDraft.enabled ? null : <Select
@@ -229,15 +256,16 @@ export function NewTaskDialog(props: {
           value={provider}
           options={models}
           placeholder={ui('No ready provider', '没有可用的供应商')}
-          disabled={models.length === 0}
+          disabled={models.length === 0 || busy}
           open={picker === 'agent'} onOpenChange={open => setPicker(open ? 'agent' : null)} onChange={setProvider}
         />}
       </View>
+      {submitError ? <Text accessibilityRole="alert" style={{ paddingHorizontal: 20, paddingBottom: 12, color: colors.statusDanger, fontSize: 12, lineHeight: 18 }}>{submitError}</Text> : null}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, paddingHorizontal: 20, paddingVertical: 14, borderTopWidth: 1, borderTopColor: outline(colors) }}>
         <Text numberOfLines={1} style={{ flex: 1, color: colors.foregroundMuted, fontSize: 12 }}>{missing ?? ''}</Text>
-        <Button label={ui('Cancel', '取消')} onPress={props.onClose} colors={colors} variant="ghost" />
-        <Button label={ui('Add to To do', '加入待办')} onPress={() => submit(false)} colors={colors} variant="outline" disabled={!ready || props.busy} />
-        <Button label={ui('Add and start', '添加并开始')} icon="Play" onPress={() => submit(true)} colors={colors} disabled={!ready || props.busy} />
+        <Button label={ui('Cancel', '取消')} onPress={close} disabled={busy} colors={colors} variant="ghost" />
+        <Button label={submitting ? ui('Saving…', '保存中…') : task ? ui('Save changes', '保存修改') : ui('Add to To do', '加入待办')} onPress={() => { void submit(false); }} colors={colors} variant="outline" disabled={!ready || busy} />
+        {task ? null : <Button label={ui('Add and start', '添加并开始')} icon="Play" onPress={() => { void submit(true); }} colors={colors} disabled={!ready || busy} />}
       </View>
     </View>
   </Backdrop>;

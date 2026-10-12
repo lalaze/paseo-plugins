@@ -72,6 +72,11 @@ export const taskSchema = z.object({
   updatedAt: z.number().int().nonnegative(),
 }).strict();
 
+export const taskDraftSchema = taskSchema.pick({
+  title: true, prompt: true, targetBranch: true, provider: true, modeId: true,
+}).extend({ collaboration: taskCollaborationSchema.nullable() }).strict();
+export type TaskDraft = z.infer<typeof taskDraftSchema>;
+
 export const storeFileSchema = z.object({
   version: z.literal(1),
   tasks: z.array(taskSchema),

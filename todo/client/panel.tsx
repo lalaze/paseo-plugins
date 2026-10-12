@@ -12,11 +12,11 @@ import {
   type TaskCollaboration,
 } from '../shared/collaboration';
 import { canRetry } from '../shared/machine';
-import { acceptTask, cancelTask, cleanupTask, continueTask, createTask, deleteTask, listTasks, readCatalog, readCollaborationCatalog, readTask, retryTask, startQueue, startTask, updateTaskCollaboration } from '../shared/rpc';
+import { acceptTask, cancelTask, cleanupTask, continueTask, createTask, deleteTask, listTasks, readCatalog, readCollaborationCatalog, readTask, retryTask, startQueue, startTask, updateTask, updateTaskCollaboration } from '../shared/rpc';
 import type { Catalog, Task, TaskDiff } from '../shared/schema';
 import { projectLabel, TaskCard, type CardAction } from './card';
 import { browserCollaborationStore } from './collaboration';
-import { NewTaskDialog, type NewTaskInput } from './editor';
+import { TaskEditorDialog, type TaskEditorInput } from './editor';
 import { createHostRegistry, hostLabel, type HostRegistry, type TodoHost } from './hosts';
 import { parseTodoError, ui } from './i18n';
 import { Button, outline, Pill, tint, type Colors } from './kit';
@@ -123,7 +123,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
   const [now, setNow] = useState(() => Date.now());
   const [open, setOpen] = useState<{ hostId: string; id: string } | null>(null);
   const [detail, setDetail] = useState<{ hostId: string; task: Task; diff: TaskDiff } | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const [editor, setEditor] = useState<{ kind: 'create' } | { kind: 'edit'; task: HostedTask } | null>(null);
   const [lastProvider, setLastProvider] = useState<string | null>(null);
   const [hostFilter, setHostFilter] = useState<string | null>(null);
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
@@ -278,16 +278,30 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     return null;
   }
 
-  function submitNew(input: NewTaskInput & { hostId: string }, start: boolean) {
-    setLastProvider(input.provider);
-    const { hostId, ...task } = input;
-    void run(hostOf(hostId), async rpc => {
-      const created = await rpc(createTask, { ...task, modeId: null });
-      rememberCollaboration(hostId, task.collaboration);
-      // The task exists now; close before starting so a failed start cannot lead to a second create.
-      setEditorOpen(false);
-      if (start) await rpc(startTask, { id: created.task.id });
-    });
+  async function submitTask(input: TaskEditorInput & { hostId: string }, start: boolean) {
+    const { hostId, ...inputTask } = input;
+    const host = hostOf(hostId);
+    setBusy(true);
+    try {
+      if (editor?.kind === 'edit') {
+        const task = editor.task;
+        const modeId = input.provider === task.provider ? task.modeId : null;
+        await host.rpc(updateTask, { id: task.id, title: input.title, prompt: input.prompt,
+          targetBranch: input.targetBranch, provider: input.provider, modeId, collaboration: input.collaboration });
+        setEditor(null);
+        await fetchHost(host, true);
+        return;
+      }
+      setLastProvider(input.provider);
+      const created = await host.rpc(createTask, { ...inputTask, modeId: null });
+      rememberCollaboration(hostId, input.collaboration);
+      setEditor(null);
+      if (start) {
+        try { await host.rpc(startTask, { id: created.task.id }); }
+        catch (error) { fail(error); }
+      }
+      await fetchHost(host, true);
+    } finally { setBusy(false); }
   }
 
   function deleteTaskAction(host: TodoHost, id: string) {
@@ -332,6 +346,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     busy={busy}
     action={cardAction(task)}
     onOpen={() => setOpen({ hostId: task.hostId, id: task.id })}
+    onEdit={() => setEditor({ kind: 'edit', task })}
     onCancel={() => { void run(hostOf(task.hostId), rpc => rpc(cancelTask, { id: task.id })); }}
     onDelete={() => deleteTaskAction(hostOf(task.hostId), task.id)}
   />);
@@ -393,7 +408,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
       </View>
       <View style={{ flex: 1 }} />
       {/* With no tasks the centre tile creates one; the toolbar button joins once there is a board. */}
-      {located.length > 0 ? <Button label={ui('New task', '新建任务')} icon="Plus" iconOnly={compact} onPress={() => { setMenu(null); setEditorOpen(true); }} colors={colors} /> : null}
+      {located.length > 0 ? <Button label={ui('New task', '新建任务')} icon="Plus" iconOnly={compact} onPress={() => { setMenu(null); setEditor({ kind: 'create' }); }} colors={colors} /> : null}
     </View>
     {loadErrors.map(({ host, text }) => <Text key={host.id} style={{ marginHorizontal: 16, marginBottom: 8, padding: 10, borderRadius: 10, color: colors.statusDanger, backgroundColor: tint(colors.statusDanger, 0.12), fontSize: 12 }}>
       {multi ? `${host.label}: ${text}` : text}
@@ -404,7 +419,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
         accessibilityRole="button"
         accessibilityLabel={ui('New task', '新建任务')}
         disabled={selfBlocked && !multi}
-        onPress={() => { setMenu(null); setEditorOpen(true); }}
+        onPress={() => { setMenu(null); setEditor({ kind: 'create' }); }}
         style={({ pressed }) => ({
           width: 440, maxWidth: '100%', alignItems: 'center', gap: 10, paddingVertical: 36, paddingHorizontal: 28, borderRadius: 20,
           borderWidth: 1.5, borderStyle: 'dashed', borderColor: tint(colors.foreground, pressed ? 0.45 : 0.22),
@@ -436,6 +451,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     {openTask ? (() => {
       const host = hostOf(openTask.hostId);
       return <TaskSheet
+        key={`${openTask.hostId}:${openTask.id}`}
         task={openTask}
         hostLabel={multi ? host.label : null}
         diff={detail && detail.hostId === openTask.hostId && detail.task.id === openTask.id ? detail.diff : EMPTY}
@@ -466,21 +482,23 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
       />;
     })() : null}
 
-    {editorOpen ? <NewTaskDialog
+    {editor ? <TaskEditorDialog
+      key={editor.kind === 'edit' ? `${editor.task.hostId}:${editor.task.id}` : 'create'}
+      task={editor.kind === 'edit' ? editor.task : null}
       hosts={hosts.map(host => ({ id: host.id, label: host.label }))}
-      initialHost={editorHost}
+      initialHost={editor.kind === 'edit' ? editor.task.hostId : editorHost}
       rpcFor={hostId => hostOf(hostId).rpc}
       colors={colors}
       catalogs={catalogs}
       collaborationCatalogs={collabCatalogs}
       collaborationDefaults={collaborationDefaults}
-      scope={props.scope ?? null}
+      scope={editor.kind === 'edit' ? { repository: editor.task.repository, name: projectLabel(editor.task) } : props.scope ?? null}
       initialRepository={project?.repository ?? null}
       initialProvider={lastProvider}
       busy={busy}
       width={width || 640}
-      onClose={() => setEditorOpen(false)}
-      onSubmit={submitNew}
+      onClose={() => setEditor(null)}
+      onSubmit={submitTask}
     /> : null}
   </View>;
 }

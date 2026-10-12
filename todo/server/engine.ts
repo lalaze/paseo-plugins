@@ -3,7 +3,7 @@ import { isAbsolute } from 'node:path';
 import { taskCollaborationSchema, unavailableCatalog, type CollaborationCatalog, type CollaborationState, type TaskCollaboration } from '../shared/collaboration';
 import { explain, todoError, type TodoErrorCode, type TodoFailure } from '../shared/errors';
 import { canAccept, canCancel, canContinue, canDelete, canEnqueue, canRetry, isExecution, recoverExecution, reduceCollaboration, reducePermission, reduceTurn, type CollaborationDecision, type CollaborationObservation, type TurnKind } from '../shared/machine';
-import { reviewBindingSchema, reviewsMatch, taskSchema, type ReviewBinding, type Task, type TaskDiff, type TaskOutcome } from '../shared/schema';
+import { reviewBindingSchema, reviewsMatch, taskDraftSchema, taskSchema, type TaskDraft, type ReviewBinding, type Task, type TaskDiff, type TaskOutcome } from '../shared/schema';
 import type { AgentInspection, AgentPort } from './agents';
 import type { CollaborationPort } from './collaboration';
 import type { GitPort } from './git';
@@ -178,6 +178,26 @@ export class TodoEngine {
     });
     await this.options.store.insert(task);
     return task;
+  }
+
+  /** Edit the saved draft in place under the same lock used by starting the queue. */
+  async updateTask(id: string, input: TaskDraft): Promise<Task> {
+    if (this.disposed) throw todoError('store-invalid');
+    this.ensureWritable();
+    return this.lockTask(id, async () => {
+      const task = this.options.store.get(id);
+      if (task.status !== 'draft' || task.operationId) throw todoError('edit-rejected');
+      const title = input.title.trim();
+      const prompt = input.prompt.trim();
+      if (!title || !prompt) throw todoError('empty-prompt');
+      const draft = taskDraftSchema.parse({ ...input, title, prompt });
+      if (!await this.options.git.branchExists(task.repository, draft.targetBranch)) throw todoError('branch-missing');
+      const clearDeferred = task.errorCode === 'collaboration-deferred';
+      return this.write({ ...task, ...draft,
+        errorCode: clearDeferred ? null : task.errorCode,
+        errorDetail: clearDeferred ? null : task.errorDetail,
+      });
+    });
   }
 
   /** Queue every draft in one repository, or every draft when repository is null. */

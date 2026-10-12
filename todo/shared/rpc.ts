@@ -2,7 +2,7 @@
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
 import { collaborationCatalogSchema, taskCollaborationSchema } from './collaboration';
-import { branchSchema, catalogSchema, diffSchema, reviewBindingSchema, taskSchema } from './schema';
+import { branchSchema, catalogSchema, diffSchema, reviewBindingSchema, taskDraftSchema, taskSchema } from './schema';
 
 const idInput = z.object({ id: z.string().uuid() }).strict();
 const taskOutput = z.object({ task: taskSchema }).strict();
@@ -57,6 +57,12 @@ export const readCollaborationCatalog = defineRpc({
   name: 'read-collaboration-catalog',
   input: z.object({}).strict(),
   output: collaborationCatalogSchema,
+});
+
+export const updateTask = defineRpc({
+  name: 'update-task',
+  input: taskDraftSchema.extend({ id: z.string().uuid() }).strict(),
+  output: taskOutput,
 });
 
 export const updateTaskCollaboration = defineRpc({

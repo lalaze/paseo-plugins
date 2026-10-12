@@ -55,10 +55,11 @@ export function HostTag(props: { label: string; colors: Colors }) {
 }
 
 /** One task on the board, with a direct stop for a started collaboration. */
-export function TaskCard(props: { task: Task; hostLabel?: string | null; colors: Colors; now: number; action: CardAction | null; busy: boolean; onOpen(): void; onCancel(): void; onDelete?(): void }) {
+export function TaskCard(props: { task: Task; hostLabel?: string | null; colors: Colors; now: number; action: CardAction | null; busy: boolean; onOpen(): void; onEdit(): void; onCancel(): void; onDelete?(): void }) {
   const { colors, task } = props;
   const [confirmDelete, setConfirmDelete] = useState(false);
   const failed = Boolean(task.errorCode) && (task.status === 'failed' || task.status === 'needs_check' || task.status === 'merge_failed');
+  const editable = task.status === 'draft' && !task.operationId;
   const stoppable = Boolean(task.collaboration && task.operationId && canCancel(task.status));
   const deletable = Boolean(props.onDelete && canDelete(task.status));
   return <Pressable
@@ -90,8 +91,9 @@ export function TaskCard(props: { task: Task; hostLabel?: string | null; colors:
       <Icon name="CircleAlert" size={13} color={colors.statusDanger} />
       <Text numberOfLines={1} style={{ flex: 1, color: colors.statusDanger, fontSize: 11 }}>{explain(task.errorCode)}</Text>
     </View> : <Text numberOfLines={2} style={{ marginTop: 6, color: colors.foregroundMuted, fontSize: 11, lineHeight: 16 }}>{task.pendingPrompt ?? task.prompt}</Text>}
-    {props.action || stoppable || deletable ? <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: outline(colors), flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+    {props.action || editable || stoppable || deletable ? <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: outline(colors), flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
       {props.action ? <Button label={props.action.label} icon={props.action.icon} onPress={props.action.onPress} colors={colors} size="xs" disabled={props.busy} /> : null}
+      {editable ? <Button label={ui('Edit task', '修改任务')} icon="Pencil" onPress={props.onEdit} colors={colors} variant="outline" size="xs" disabled={props.busy} /> : null}
       {stoppable ? <Button label={task.status === 'canceling' ? ui('Retry stop', '重试停止') : ui('Stop collaboration', '停止协作')} icon="Square" onPress={props.onCancel} colors={colors} variant="outline" size="xs" disabled={props.busy} /> : null}
       {deletable ? (confirmDelete ? <>
         <Button label={ui('Confirm delete', '确认删除')} icon="Trash2" onPress={props.onDelete!} colors={colors} variant="danger" size="xs" disabled={props.busy} />
