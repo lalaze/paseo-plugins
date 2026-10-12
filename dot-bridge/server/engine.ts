@@ -82,7 +82,7 @@ export interface EngineDeps {
   fetchImpl?: FetchLike;
   lookup?: Lookup;
   getMaxInFlight: () => number;
-  /** Tests point callbacks at a local server; production always resolves public HTTPS. */
+  /** Tests point callbacks at a local server; production validates HTTPS callback addresses. */
   allowPrivateCallback?: boolean;
   randomId?: () => string;
   isBridgeListening?: () => boolean;
@@ -1230,7 +1230,10 @@ export class BridgeEngine {
       const at = this.now();
       const decisions: Array<{ eventId: string; subscriptionId: string | null; action: 'delivered' | 'retry' | 'failed'; nextAttemptAt?: number; attempts?: number; error?: string }> = [];
       for (const event of state.events) {
-        if (event.status === 'delivered' || event.status === 'failed') continue;
+        // Address-policy failures never sent a request. Re-check them so a proxy/DNS change or
+        // the fake-IP compatibility fix can recover the original event without duplicating work.
+        const recheckAddress = event.status === 'failed' && event.attempts === 0 && event.lastError === 'callback-invalid: private-address';
+        if (event.status === 'delivered' || (event.status === 'failed' && !recheckAddress)) continue;
         if (event.nextAttemptAt > at) continue;
         const subscription = this.matchSubscription(connection, event);
         if (!subscription) continue;
@@ -1243,7 +1246,7 @@ export class BridgeEngine {
         if (!this.deps.allowPrivateCallback) {
           const check = await checkCallbackUrl(subscription.url, this.deps.lookup, this.abort.signal);
           if (!check.ok) {
-            decisions.push({ eventId: event.eventId, subscriptionId: subscription.id, action: 'failed', error: `callback-invalid: ${check.reason}` });
+            if (!recheckAddress) decisions.push({ eventId: event.eventId, subscriptionId: subscription.id, action: 'failed', error: `callback-invalid: ${check.reason}` });
             continue;
           }
           address = check.address;

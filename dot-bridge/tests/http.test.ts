@@ -47,6 +47,36 @@ describe('callback address policy', () => {
     assert.equal(publicCheck.ok, true);
     assert.equal(publicCheck.address, '93.184.216.34');
   });
+
+  it('allows Clash fake-IP resolution for the OpenAI callback and pins the resolved address', async () => {
+    for (const address of ['198.18.0.20', '198.19.255.254']) {
+      assert.deepEqual(await checkCallbackUrl('https://connectors.api.openai.com/hook', async () => [address]), { ok: true, address });
+    }
+  });
+
+  it('does not extend the fake-IP exception to other hosts, ports, credentials or IP literals', async () => {
+    for (const url of [
+      'https://example.com/hook',
+      'https://connectors.api.openai.com.example.com/hook',
+      'https://other.connectors.api.openai.com/hook',
+      'https://connectors.api.openai.com:8443/hook',
+      'https://user:password@connectors.api.openai.com/hook',
+      'http://connectors.api.openai.com/hook',
+      'https://198.18.0.20/hook',
+    ]) {
+      assert.equal((await checkCallbackUrl(url, async () => ['198.18.0.20'])).ok, false, url);
+    }
+  });
+
+  it('still rejects local, reserved and mixed DNS answers for the OpenAI callback', async () => {
+    for (const addresses of [
+      ['127.0.0.1'], ['10.0.0.1'], ['192.168.1.1'], ['169.254.169.254'], ['100.64.0.1'],
+      ['::1'], ['fd00::1'], ['198.51.100.1'], ['198.18.0.20', '127.0.0.1'],
+      ['93.184.216.34', '192.168.1.1'],
+    ]) {
+      assert.deepEqual(await checkCallbackUrl('https://connectors.api.openai.com/hook', async () => addresses), { ok: false, reason: 'private-address' });
+    }
+  });
 });
 
 describe('bounded POST', () => {

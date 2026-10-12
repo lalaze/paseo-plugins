@@ -37,7 +37,7 @@ const messages = {
   'cancel-rejected': ['Only a queued task can be canceled locally.', '只有排队中的任务可以在本地取消。'],
   'stop-rejected': ['A stop request is only available for a dispatched task.', '只有已派发的任务可以请求停止。'],
   'not-subscribed': ['The dot subscription is not active.', 'dot 订阅未生效。'],
-  'callback-invalid': ['The callback URL must be HTTPS and resolve to a public host.', '回调地址必须是 HTTPS 且解析到公网主机。'],
+  'callback-invalid': ['The callback URL must be HTTPS and resolve to an allowed network address.', '回调地址必须使用 HTTPS，且解析到允许的网络地址。'],
   'delivery-failed': ['Event delivery failed.', '事件投递失败。'],
   'git-failed': ['Reading the result from the bound remote failed.', '从绑定远端读取成果失败。'],
   'workspace-missing': ['The current workspace could not be resolved to a directory.', '无法把当前工作区解析为目录。'],

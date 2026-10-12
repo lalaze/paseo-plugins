@@ -85,12 +85,17 @@ describe('event delivery', () => {
 
   it('does not retry a 410', async () => {
     const clock = { value: 1_000_000 };
-    const engine = await engineWith(deliveryFetch(() => new Response('', { status: 410 })), clock);
+    let deliveries = 0;
+    const engine = await engineWith(deliveryFetch(() => { deliveries++; return new Response('', { status: 410 }); }), clock);
     await engine.startConnectionTest(randomUUID());
     await engine.deliverTick();
     const events = eventStatus(engine);
     assert.equal(events[0].status, 'failed');
     assert.equal(events[0].attempts, 0);
+    clock.value += 3000;
+    await engine.deliverTick();
+    assert.equal(deliveries, 1);
+    assert.deepEqual(eventStatus(engine), events);
   });
 
   it('honours Retry-After on a 429', async () => {

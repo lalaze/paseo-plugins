@@ -142,9 +142,17 @@ export interface CallbackCheck {
   address?: string;
 }
 
+/** Clash/Mihomo maps domains to the reserved 198.18.0.0/15 range before forwarding through TUN. */
+function isProxyFakeIp(address: string): boolean {
+  return isIP(address) === 4 && (address.startsWith('198.18.') || address.startsWith('198.19.'));
+}
+
 /**
- * A callback must be HTTPS and every resolved address must be public. This runs at subscribe time
- * and again before each delivery, so a name that later points at a private address is refused. The
+ * A callback must be HTTPS and every resolved address must be public, except Clash fake IPs for
+ * the exact OpenAI connectors host on the standard HTTPS port without URL credentials. TLS still
+ * verifies that hostname, and subscription verification still requires a signed challenge echo.
+ * This runs at subscribe time and again before each delivery, so a name that later points at a
+ * disallowed address is refused. The
  * returned address is pinned into the connection so DNS cannot re-resolve to a private host between
  * the check and the request (TOCTOU). Resolution is bounded by `DNS_TIMEOUT_MS` and honours the
  * lifecycle `signal`, so unload is never blocked on a stuck resolver.
@@ -166,7 +174,10 @@ export async function checkCallbackUrl(url: string, lookup: Lookup = defaultLook
     return { ok: false, reason: 'dns-failed' };
   }
   if (!addresses.length) return { ok: false, reason: 'dns-empty' };
-  if (addresses.some(isPrivateAddress)) return { ok: false, reason: 'private-address' };
+  const allowFakeIp = host === 'connectors.api.openai.com' && !parsed.port && !parsed.username && !parsed.password;
+  if (addresses.some(address => isPrivateAddress(address) && !(allowFakeIp && isProxyFakeIp(address)))) {
+    return { ok: false, reason: 'private-address' };
+  }
   return { ok: true, address: addresses[0] };
 }
 
@@ -246,7 +257,7 @@ function httpsPost(url: string, body: string, headers: Record<string, string>, a
       signal,
     };
     if (address) {
-      // Pin the connection to the address that passed the private-range check.
+      // Pin the connection to the address that passed the callback-address policy.
       (options as { lookup?: unknown }).lookup = (hostname: string, opts: { all?: boolean }, callback: (...args: unknown[]) => void) => {
         const family = isIP(address);
         if (opts && opts.all) callback(null, [{ address, family }]);

@@ -4,10 +4,10 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
-import { generateSecret } from '../server/signing';
+import { generateSecret, verifyPayload } from '../server/signing';
 import { BridgeEngine } from '../server/engine';
 import type { GitPort, VerifyInput } from '../server/git';
-import type { FetchLike } from '../server/http';
+import type { FetchLike, Lookup } from '../server/http';
 import { BridgeStore } from '../server/store';
 
 const scratch: string[] = [];
@@ -55,7 +55,7 @@ interface Harness {
   clock: { value: number };
 }
 
-async function harness(options: { git?: GitPort; fetch?: FetchLike; max?: number; dir?: string } = {}): Promise<Harness> {
+async function harness(options: { git?: GitPort; fetch?: FetchLike; max?: number; dir?: string; lookup?: Lookup; allowPrivateCallback?: boolean } = {}): Promise<Harness> {
   const dir = options.dir ?? (await tempDir());
   const store = await BridgeStore.open(dir);
   const clock = { value: 1_000_000 };
@@ -65,7 +65,8 @@ async function harness(options: { git?: GitPort; fetch?: FetchLike; max?: number
     now: () => clock.value,
     fetchImpl: options.fetch ?? echoFetch(),
     getMaxInFlight: () => options.max ?? 2,
-    allowPrivateCallback: true,
+    allowPrivateCallback: options.allowPrivateCallback ?? true,
+    lookup: options.lookup,
     randomId: () => randomUUID(),
   });
   await engine.init();
@@ -125,6 +126,59 @@ async function archiveOperation(dir: string, operationId: string): Promise<void>
 }
 
 describe('engine two-way check', () => {
+  it('verifies and delivers signed events through OpenAI fake-IP callbacks after DNS changes', async () => {
+    const calls: Array<{ body: string; headers: Headers }> = [];
+    let addresses = ['198.18.0.20'];
+    const echo = echoFetch();
+    const { engine, store, clock } = await harness({
+      allowPrivateCallback: false,
+      lookup: async () => addresses,
+      fetch: async (url, init) => {
+        calls.push({ body: String(init.body), headers: new Headers(init.headers) });
+        return echo(url, init);
+      },
+    });
+    const secret = generateSecret();
+    await engine.setSubscription({
+      name: 'paseo.dot.task_changed', arguments: { connectionId: engine.connection().id },
+      delivery: { mode: 'webhook', url: 'https://connectors.api.openai.com/hook', secret }, cursor: null,
+    });
+    assert.equal(engine.connectionFacts().callbackVerified, true);
+    assert.equal(JSON.parse(calls[0].body).type, 'verification');
+    // An existing subscription must also keep working when the proxy changes its DNS mapping.
+    addresses = ['198.19.0.42'];
+    const task = await engine.createTask({ ...taskInput(), mode: 'text', repository: null, remoteName: null, baseSha: null, targetBranch: null });
+    await engine.deliverTick();
+    assert.equal(engine.task(task.id).messages[0].delivery, 'delivered');
+    const event = calls.find(call => JSON.parse(call.body).name === 'paseo.dot.task_changed');
+    assert.ok(event);
+    assert.equal(verifyPayload(secret, {
+      id: event.headers.get('webhook-id')!, timestamp: event.headers.get('webhook-timestamp')!,
+      signature: event.headers.get('webhook-signature')!,
+    }, event.body, clock.value / 1000), true);
+    const delivered = store.read().events.find(event => event.data.taskId === task.id);
+    assert.equal(delivered?.status, 'delivered');
+    // The exception must not allow the same trusted hostname to rebind to a real local service.
+    addresses = ['127.0.0.1'];
+    const blocked = await engine.createTask({ ...taskInput(), mode: 'text', repository: null, remoteName: null, baseSha: null, targetBranch: null });
+    const sent = calls.length;
+    await engine.deliverTick();
+    assert.equal(calls.length, sent);
+    assert.equal(engine.task(blocked.id).messages[0].deliveryError, 'callback-invalid: private-address');
+    const blockedEvent = store.read().events.find(event => event.data.taskId === blocked.id);
+    assert.equal(blockedEvent?.status, 'failed');
+    // Recover the same never-sent event once the callback resolves to an allowed fake IP again.
+    addresses = ['198.18.0.20'];
+    await engine.deliverTick();
+    assert.equal(engine.task(blocked.id).messages[0].delivery, 'delivered');
+    assert.equal(store.read().events.find(event => event.eventId === blockedEvent?.eventId)?.status, 'delivered');
+    const recovered = calls.find(call => JSON.parse(call.body).eventId === blockedEvent?.eventId);
+    assert.ok(recovered);
+    const afterRecovery = calls.length;
+    await engine.deliverTick();
+    assert.equal(calls.length, afterRecovery);
+  });
+
   it('verifies the callback at subscribe time, then withholds dispatch until the dot confirms', async () => {
     const { engine } = await harness();
     assert.equal(engine.readyToDispatch(), false);
