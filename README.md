@@ -38,7 +38,7 @@ Plugins and patches run with the daemon user's privileges; read the source in th
 
 ## [Token Usage](usage-glance)
 
-The **Token Usage** sidebar page shows recorded token consumption, multi-host totals, provider/workspace/model breakdowns and a monthly heatmap on desktop and mobile. Common ranges refresh every minute. Plugin ID: `paseo-usage-glance`. The former quota header and quota queries are disabled; use Paseo's official quota feature for account limits. Install or update on each host to include its records.
+The top-right **Today** indicator shows multi-host daily token consumption, with green (<10M), yellow (10M–100M) and red (≥100M) status colors; click it to open the **Token Usage** sidebar page with provider/workspace/model breakdowns and a monthly heatmap on desktop and mobile. Common ranges refresh every minute. Plugin ID: `paseo-usage-glance`. Quota queries are disabled; use Paseo's official quota feature for account limits. Install or update on each host to include its records.
 
 ```bash
 paseo plugin add git:lalaze/paseo-plugins --path usage-glance

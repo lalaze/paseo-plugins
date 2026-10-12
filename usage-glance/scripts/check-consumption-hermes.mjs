@@ -49,6 +49,9 @@ try {
       paseo: { providers: {
         subscribe: function() { subscriptions++; return function() { subscriptions--; }; },
         listUsage: function() { throw Error('unexpected quota query'); }
+      }, workspaces: {
+        list: function() { return Promise.resolve({ entries: [{ id: 'workspace' }], pageInfo: { hasMore: false } }); },
+        subscribe: function() { subscriptions++; return function() { subscriptions--; }; }
       } },
       rpc: function(contract) {
         if (contract.name !== 'read-host-identity') throw Error('unexpected RPC');
@@ -57,10 +60,14 @@ try {
       addSurface: register, addSidebarItem: register,
       addCommandCenterItem: function(item) { command = item; return register(); },
       openSurface: function(id) { opened = id; },
-      addHeaderButton: function() { throw Error('unexpected quota header'); }
+      addHeaderButton: function(value) {
+        if (value.id !== 'today-consumption' || value.workspaceId !== 'workspace') throw Error('missing usage header');
+        if (value.button.label.indexOf('—') === -1) throw Error('missing data displayed as zero');
+        var remove = register(); return { update: noop, remove: remove };
+      }
     });
     Promise.resolve().then(function() {
-      if (active !== 3 || subscriptions !== 2) throw Error('missing consumption registrations');
+      if (active !== 4 || subscriptions !== 3) throw Error('missing consumption registrations');
       command.onSelect();
       if (opened !== 'consumption') throw Error('consumption navigation');
       cleanup();
