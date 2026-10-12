@@ -361,6 +361,22 @@ test('concurrent prompt and interrupt cannot leave newly submitted work running'
   assert.equal(h.engine.tasks()[0]!.status, 'stopped');
 });
 
+test('stopping before Dot claims releases the slot and allows the next message in the same session', async t => {
+  const h = await fixture(t); await h.openSession();
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('First hello') });
+  await h.store.mutate(draft => { draft.tasks[0] = withDispatch(draft.tasks[0]!, Date.now()); });
+  const first = h.engine.tasks()[0]!;
+  assert.equal(h.engine.slotsUsed(), 1);
+  await h.connection.send({ type: 'session.interrupt', sessionId: 'chat', requestId: randomUUID() });
+  assert.equal(h.engine.task(first.id).status, 'stopped');
+  assert.equal(h.engine.slotsUsed(), 0);
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Second hello') });
+  assert.equal(h.engine.tasks().length, 1);
+  assert.notEqual(h.engine.task(first.id).currentRoundId, first.currentRoundId);
+  await h.result('Hello back');
+  await h.wait(() => h.events.some(e => e.type === 'timeline.item' && e.item.type === 'assistant_message' && e.item.text === 'Hello back'));
+});
+
 test('reconnect to active work resumes waiting without re-dispatching; workspace mismatch fails', async t => {
   const h = await fixture(t); await h.openSession();
   await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Long work') });

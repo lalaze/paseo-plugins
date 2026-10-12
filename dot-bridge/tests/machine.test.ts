@@ -119,11 +119,22 @@ describe('cancel and stop', () => {
     assert.equal(currentRound(canceled).stop.reported, false);
   });
 
-  it('records a stop request for a dispatched task', () => {
+  it('cancels an unclaimed dispatched task locally and fences a late claim', () => {
     const dispatched = withDispatch(makeTask().task, 4000);
     const stopped = requestCancel(dispatched, 4100);
-    assert.equal(currentRound(stopped).remoteStatus, 'dispatched');
+    assert.equal(currentRound(stopped).remoteStatus, 'stopped');
     assert.equal(currentRound(stopped).stop.requested, true);
+    assert.equal(currentRound(stopped).stop.reported, false);
+    assert.equal(inFlightCount([stopped]), 0);
+    assert.throws(() => claimRound(stopped, CONNECTION, stopped.currentRoundId, 4200), /claim-rejected/);
+  });
+
+  it('keeps claimed work in flight until Dot acknowledges the stop', () => {
+    const claimed = dispatchedClaimed();
+    const stopped = requestCancel(claimed, 4100);
+    assert.equal(currentRound(stopped).remoteStatus, 'claimed');
+    assert.equal(currentRound(stopped).stop.requested, true);
+    assert.equal(inFlightCount([stopped]), 1);
   });
 });
 

@@ -236,7 +236,7 @@ export function createDotProvider(options: { engine(): Promise<BridgeEngine>; ti
                 refresh(session, stopped);
                 void options.tick();
               }
-              finish(session, 'canceled', 'Stop requested; dispatched work stops only when Dot acknowledges.');
+              finish(session, 'canceled', 'Stop requested.');
               emit({ type: 'request.completed', requestId: input.requestId });
               return;
             }

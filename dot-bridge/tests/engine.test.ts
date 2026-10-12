@@ -530,6 +530,37 @@ describe('engine dispatch readiness', () => {
 });
 
 describe('engine recovery and dedup across restart', () => {
+  it('recovers old stop requests for unclaimed tasks and dispatches the waiting message', async () => {
+    const dir = await tempDir();
+    const first = await harness({ dir });
+    await subscribeAndVerify(first.engine, first.clock);
+    const one = await first.engine.createTask(taskInput({ title: 'one' }));
+    const two = await first.engine.createTask(taskInput({ title: 'two' }));
+    await first.engine.dispatchTick();
+    const waiting = await first.engine.createTask(taskInput({ title: 'waiting' }));
+    // Reproduce the old persisted state: stop requested, never claimed, still holding both slots.
+    await first.store.mutate(draft => {
+      for (const task of draft.tasks.filter(task => task.id === one.id || task.id === two.id)) {
+        const round = task.rounds.find(round => round.roundId === task.currentRoundId)!;
+        round.stop.requested = true;
+        round.stop.at = first.clock.value;
+      }
+    });
+    assert.equal(first.engine.slotsUsed(), 2);
+    assert.deepEqual(await first.engine.dispatchTick(), []);
+    first.engine.dispose(); await first.store.dispose();
+    const second = await harness({ dir });
+    await second.engine.recover();
+    assert.equal(second.engine.task(one.id).status, 'stopped');
+    assert.equal(second.engine.task(two.id).status, 'stopped');
+    assert.equal(second.engine.slotsUsed(), 0);
+    assert.deepEqual(await second.engine.dispatchTick(), [waiting.id]);
+    await assert.rejects(second.engine.claimTask({ taskId: one.id, roundId: one.currentRoundId, connectionId: one.connectionId }), /claim-rejected/);
+    assert.equal(second.engine.task(one.id).rounds[0].stop.reported, false);
+    assert.equal(second.engine.slotsUsed(), 1);
+    second.engine.dispose(); await second.store.dispose();
+  });
+
   it('keeps an in-flight task as it was and does not duplicate it', async () => {
     const dir = await tempDir();
     const first = await harness({ dir });
@@ -549,6 +580,27 @@ describe('engine recovery and dedup across restart', () => {
 });
 
 describe('engine local cancel', () => {
+  it('serializes cancel-before-claim and claim-before-cancel without orphaning a slot', async () => {
+    const { engine, clock, store } = await harness();
+    await subscribeAndVerify(engine, clock);
+    const canceledFirst = await engine.createTask(taskInput());
+    await engine.dispatchTick();
+    await engine.cancelRequest({ id: canceledFirst.id, revision: engine.task(canceledFirst.id).revision, operationId: randomUUID() });
+    await assert.rejects(engine.claimTask({ taskId: canceledFirst.id, roundId: canceledFirst.currentRoundId, connectionId: canceledFirst.connectionId }), /claim-rejected/);
+    assert.equal(engine.slotsUsed(), 0);
+    const claimedFirst = await engine.createTask(taskInput());
+    await engine.dispatchTick();
+    await engine.claimTask({ taskId: claimedFirst.id, roundId: claimedFirst.currentRoundId, connectionId: claimedFirst.connectionId });
+    await engine.cancelRequest({ id: claimedFirst.id, revision: engine.task(claimedFirst.id).revision, operationId: randomUUID() });
+    await engine.recover();
+    assert.equal(engine.task(claimedFirst.id).status, 'claimed');
+    assert.equal(engine.slotsUsed(), 1);
+    await engine.reportProgress({ taskId: claimedFirst.id, roundId: claimedFirst.currentRoundId, connectionId: claimedFirst.connectionId,
+      updateId: randomUUID(), kind: 'stopped', note: 'Stopped', processedThroughSeq: 1 });
+    assert.equal(engine.slotsUsed(), 0);
+    engine.dispose(); await store.dispose();
+  });
+
   it('cancels a queued third task locally', async () => {
     const { engine, clock } = await harness();
     await subscribeAndVerify(engine, clock);

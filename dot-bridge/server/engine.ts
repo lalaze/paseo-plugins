@@ -1215,7 +1215,18 @@ export class BridgeEngine {
   }
 
   async recover(): Promise<void> {
-    // In-flight tasks are kept as they are. A missing heartbeat never re-claims or re-dispatches work.
+    // Older versions left canceled, unclaimed dispatches occupying slots until an impossible
+    // remote acknowledgement. Finish only those recorded stop requests; a missing heartbeat
+    // never releases claimed work or re-dispatches an active round.
+    await this.deps.store.mutate(draft => {
+      for (const task of [...draft.tasks]) {
+        const round = currentRound(task);
+        if (round.remoteStatus !== 'dispatched' || round.claim || round.claimedAt !== null || !round.stop.requested) continue;
+        const stopped = requestCancel(task, this.now());
+        this.replace(draft, stopped);
+        this.emitTaskChanged(draft, stopped, 'cancel_requested');
+      }
+    });
     await this.deliverTick();
   }
 

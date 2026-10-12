@@ -34,7 +34,7 @@ flowchart LR
   Engine <-->|bounded reads and checked file changes| Workspace[Local workspace]
 ```
 
-The plugin registers the provider in Paseo; it does not run a Dot CLI or forward arbitrary workspace tools. One conversation maps to one task. Follow-ups open another round after completion; answers to Dot's questions continue the current round. Persistence replays messages, results and files and reattaches to active work without dispatching another task. Closing a conversation detaches the local view. Stop requests block further local file operations and ask the remote Dot to stop; they do not undo files already applied.
+The plugin registers the provider in Paseo; it does not run a Dot CLI or forward arbitrary workspace tools. One conversation maps to one task. Follow-ups open another round after completion; answers to Dot's questions continue the current round. Persistence replays messages, results and files and reattaches to active work without dispatching another task. Closing a conversation detaches the local view. Stopping a queued or unclaimed task cancels it locally and releases its slot; a late claim is refused. Claimed work keeps its slot until Dot acknowledges the stop, and further local file operations are blocked. Startup also finishes old recorded stop requests for unclaimed tasks, so they cannot leave new conversations queued indefinitely. Stop requests do not undo files already applied.
 
 ## Setup
 

@@ -331,11 +331,11 @@ export function recomputeCoverage(task: Task): Task {
   return replaceRoundRaw(task, nextRound, task.updatedAt);
 }
 
-/** A queued, not-yet-dispatched task is canceled locally; any dispatched round only records a stop request. */
+/** Cancel before a claim locally; claimed work keeps its slot until Dot reports the stop. */
 export function requestCancel(task: Task, at: number): Task {
   const round = currentRound(task);
-  if (round.remoteStatus === 'queued') {
-    const nextRound: Round = { ...round, remoteStatus: 'stopped', stop: { ...round.stop, requested: true, at, note: 'canceled locally' }, updatedAt: at };
+  if (round.remoteStatus === 'queued' || (round.remoteStatus === 'dispatched' && !round.claim && round.claimedAt === null)) {
+    const nextRound: Round = { ...round, remoteStatus: 'stopped', stop: { ...round.stop, requested: true, at: round.stop.at ?? at, note: round.stop.note ?? 'canceled locally' }, updatedAt: at };
     return { ...replaceRound(task, nextRound, at, 'stopped'), cancelRequested: true };
   }
   if (occupiesSlot(round)) {

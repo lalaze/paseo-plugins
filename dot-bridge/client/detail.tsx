@@ -282,7 +282,7 @@ export function TaskDetail(props: TaskDetailProps) {
             {selected.remoteStatus === 'completed'
               ? ui('Stop was requested, but the dot completed the round anyway.', '已请求停止，但 dot 仍完成了本轮。')
               : localCancel
-                ? ui('Canceled locally before dispatch.', '派发前已在本地取消。')
+                ? ui('Canceled locally before Dot claimed it.', 'Dot 领取前已在本地取消。')
                 : ui('Stop requested — waiting for the dot to report.', '已请求停止 —— 等待 dot 回报。')}
           </Text>
         ) : null}
