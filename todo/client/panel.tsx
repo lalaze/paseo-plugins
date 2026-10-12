@@ -127,7 +127,8 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
   const [lastProvider, setLastProvider] = useState<string | null>(null);
   const [hostFilter, setHostFilter] = useState<string | null>(null);
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
-  const [showCanceled, setShowCanceled] = useState(false);
+  // Stopped (canceled) tasks stay on the board by default; the Filter menu hides them.
+  const [showCanceled, setShowCanceled] = useState(true);
   const [menu, setMenu] = useState<'host' | 'project' | 'filter' | null>(null);
   const [busy, setBusy] = useState(false);
   const [collabCatalogs, setCollabCatalogs] = useState<Record<string, CollaborationCatalog>>({});
@@ -272,7 +273,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     const session = openAgent(task);
     if (sessionPending && session && task.status === 'awaiting_review') return { label: ui('Open session', '打开会话'), icon: 'MessageSquare', onPress: session };
     if (task.status === 'awaiting_review' || task.status === 'merge_failed') return { label: ui('Review', '验收'), icon: 'GitMerge', onPress: () => setOpen({ hostId: task.hostId, id: task.id }) };
-    if (canRetry(task.status) && task.status !== 'canceled') return { label: ui('Retry', '重试'), icon: 'RotateCcw', onPress: () => { void run(host, rpc => rpc(retryTask, { id: task.id })); } };
+    if (canRetry(task.status)) return { label: ui('Retry', '重试'), icon: 'RotateCcw', onPress: () => { void run(host, rpc => rpc(retryTask, { id: task.id })); } };
     if (pendingCleanup(task)) return { label: ui('Clean up', '清理'), icon: 'Archive', onPress: () => { void run(host, rpc => rpc(cleanupTask, { id: task.id })); } };
     if (session && (task.status === 'running' || task.status === 'needs_attention' || task.status === 'preparing')) return { label: ui('Open session', '打开会话'), icon: 'MessageSquare', onPress: session };
     return null;
@@ -399,7 +400,7 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
         </Menu> : null}
       </View>
       <View>
-        <Pill colors={colors} onPress={() => setMenu(menu === 'filter' ? null : 'filter')} active={menu === 'filter' || showCanceled} label={ui('Filter', '筛选')}>
+        <Pill colors={colors} onPress={() => setMenu(menu === 'filter' ? null : 'filter')} active={menu === 'filter' || !showCanceled} label={ui('Filter', '筛选')}>
           <Icon name="ListFilter" size={14} color={colors.foregroundMuted} />
           {compact ? null : <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: '500' }}>{ui('Filter', '筛选')}</Text>}
         </Pill>
