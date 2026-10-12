@@ -273,6 +273,9 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
     if (task.status === 'draft') return { label: ui('Start', '开始'), icon: 'Play', onPress: () => { if (!startBlocked(task)) void run(host, rpc => rpc(startTask, { id: task.id })); } };
     const sessionPending = Boolean(task.collaboration) && (task.collaborationAcceptance === 'pending' || task.collaborationPhase === 'awaiting_acceptance');
     const session = openAgent(task);
+    if (session && task.mergeRequest && (task.status === 'merging' || task.status === 'merge_failed' || task.status === 'needs_check')) {
+      return { label: ui('Open session', '打开会话'), icon: 'MessageSquare', onPress: session };
+    }
     if (sessionPending && session && task.status === 'awaiting_review') return { label: ui('Open session', '打开会话'), icon: 'MessageSquare', onPress: session };
     if (task.status === 'awaiting_review' || task.status === 'merge_failed') return { label: ui('Review', '验收'), icon: 'GitMerge', onPress: () => setOpen({ hostId: task.hostId, id: task.id }) };
     if (canRetry(task.status)) return { label: ui('Retry', '重试'), icon: 'RotateCcw', onPress: () => { void run(host, rpc => rpc(retryTask, { id: task.id })); } };

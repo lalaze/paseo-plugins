@@ -31,6 +31,17 @@ export const cleanupSchema = z.object({
   at: z.number().int().nonnegative(),
 }).strict();
 
+/** A merge command sent to the producing session. Persist before sending; never resend on recovery. */
+export const mergeRequestSchema = z.object({
+  id: z.string().uuid(),
+  sentAt: z.number().int().nonnegative(),
+  previousTurnId: z.string().min(1).max(200).nullable(),
+  turnId: z.string().min(1).max(200).nullable(),
+  outcome: z.enum(['completed', 'failed', 'canceled']).nullable(),
+  observedActive: z.boolean(),
+  permission: z.boolean(),
+}).strict();
+
 export const taskSchema = z.object({
   id: z.string().uuid(),
   title: z.string().min(1).max(200),
@@ -64,8 +75,11 @@ export const taskSchema = z.object({
   review: reviewBindingSchema.nullable(),
   lastOutcome: outcomeSchema.nullable(),
   pendingMergeCommit: shaSchema.nullable(),
+  mergeRequest: mergeRequestSchema.nullable().default(null),
+  /** Task branch tip after the agent resolved conflicts; cleanup verifies this exact tip. */
+  mergedTaskHead: shaSchema.nullable().default(null),
   mergeCommit: shaSchema.nullable(),
-  mergeMethod: z.enum(['update-ref', 'ff-only']).nullable(),
+  mergeMethod: z.enum(['update-ref', 'ff-only', 'agent']).nullable(),
   errorCode: z.string().min(1).max(80).nullable(),
   errorDetail: z.string().max(4000).nullable(),
   // Absent in tasks saved before cleanup existed.

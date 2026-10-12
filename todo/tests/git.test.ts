@@ -55,6 +55,68 @@ function assertSafe(log: string[]) {
   }
 }
 
+describe('read-only verification of agent merges', () => {
+  it('proves a conflict resolution reached the target and uses the new task tip for cleanup', async () => {
+    const root = await initRepo();
+    try {
+      const watched = spy();
+      const tool = createGit({ run: watched.run, worktreeRoot: await worktreeRoot() });
+      const base = await git(root, ['rev-parse', 'HEAD']);
+      const task = await tool.ensureWorktree({ root, taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', branch: 'paseo-todo/agent', targetBranch: 'main', existingPath: null });
+      await writeFile(join(task.worktree, 'note.txt'), 'task change\n');
+      const accepted = await tool.capture({ root, worktree: task.worktree, branch: task.branch, message: 'accepted' });
+      await writeFile(join(root, 'note.txt'), 'target change\n');
+      await git(root, ['commit', '-am', 'target changed']);
+      const input = { root, worktree: task.worktree, taskBranch: task.branch, targetBranch: 'main', expectedTargetHead: base, resultCommit: accepted.commit, resultTree: accepted.tree };
+      watched.log.length = 0;
+      assert.equal((await tool.verifyAgentMerge(input)).ok, false);
+      assert.equal(await git(root, ['status', '--porcelain']), '');
+      assert.equal(await readFile(join(root, 'note.txt'), 'utf8'), 'target change\n');
+      const conflicted = await defaultGitRun(task.worktree, ['merge', 'main']);
+      assert.equal(conflicted.code, 1);
+      await writeFile(join(task.worktree, 'note.txt'), 'target and task changes\n');
+      await git(task.worktree, ['add', 'note.txt']);
+      await git(task.worktree, ['commit', '-m', 'resolve both changes']);
+      const resolvedHead = await git(task.worktree, ['rev-parse', 'HEAD']);
+      assert.notEqual(resolvedHead, accepted.commit);
+      assert.equal((await tool.verifyAgentMerge(input)).ok, false, 'resolving alone has not merged into target');
+      await git(root, ['merge', '--ff-only', task.branch]);
+      const verified = await tool.verifyAgentMerge(input);
+      assert.deepEqual(verified, { ok: true, mergeCommit: resolvedHead, taskHead: resolvedHead });
+      assert.ok(watched.log.every(line => !/^(merge |commit |commit-tree |update-ref |add |checkout |switch )/.test(line)));
+      assertSafe(watched.log);
+      await tool.removeWorktree({ root, worktree: task.worktree, branch: task.branch });
+      await assert.rejects(tool.deleteMergedBranch({ root, branch: task.branch, expectedHead: accepted.commit, targetBranch: 'main' }), /已变化/);
+      await tool.deleteMergedBranch({ root, branch: task.branch, expectedHead: resolvedHead, targetBranch: 'main' });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('refuses dirty target or task worktrees, a changed accepted tree, and lost accepted history', async () => {
+    const root = await initRepo();
+    try {
+      const tool = createGit({ worktreeRoot: await worktreeRoot() });
+      const base = await git(root, ['rev-parse', 'HEAD']);
+      const task = await tool.ensureWorktree({ root, taskId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', branch: 'paseo-todo/verify', targetBranch: 'main', existingPath: null });
+      await writeFile(join(task.worktree, 'note.txt'), 'accepted\n');
+      const accepted = await tool.capture({ root, worktree: task.worktree, branch: task.branch, message: 'accepted' });
+      const input = { root, worktree: task.worktree, taskBranch: task.branch, targetBranch: 'main', expectedTargetHead: base, resultCommit: accepted.commit, resultTree: accepted.tree };
+      await git(root, ['merge', '--ff-only', task.branch]);
+      await writeFile(join(root, 'user-edit.txt'), 'keep this\n');
+      const targetDirty = await tool.verifyAgentMerge(input);
+      assert.equal(targetDirty.ok, false);
+      assert.equal(await readFile(join(root, 'user-edit.txt'), 'utf8'), 'keep this\n');
+      await rm(join(root, 'user-edit.txt'));
+      await writeFile(join(task.worktree, 'leftover.txt'), 'uncommitted\n');
+      assert.equal((await tool.verifyAgentMerge(input)).ok, false);
+      await rm(join(task.worktree, 'leftover.txt'));
+      assert.equal((await tool.verifyAgentMerge({ ...input, resultTree: base })).ok, false);
+      await git(task.worktree, ['commit', '--amend', '-m', 'rewritten']);
+      await git(root, ['reset', '--hard', task.branch]);
+      assert.equal((await tool.verifyAgentMerge(input)).ok, false, 'equivalent files do not replace accepted history');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});
+
 describe('git merge and capture', () => {
   it('fast-forwards a checked-out clean target and update-refs a branch that is not checked out', async () => {
     const root = await initRepo();

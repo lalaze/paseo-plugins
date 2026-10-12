@@ -116,6 +116,7 @@ describe('single-agent create', () => {
     assert.equal(result.workspaceId, 'ws-1');
     assert.equal(created[0]?.config.thinkingOptionId, 'high');
     assert.equal(created[0]?.config.provider, 'stub/model');
+    assert.match(String(created[0]?.config.systemPrompt), /只有用户验收后明确下达合并指令/);
   });
 
   it('omits thinking from the agent config when the task uses the provider default', async () => {
@@ -134,6 +135,30 @@ describe('single-agent create', () => {
     const gateway = new PaseoTodoGateway(driver as unknown as DaemonClient, api as unknown as PaseoApi, { url: 'ws://127.0.0.1/ws' });
     await assert.rejects(() => gateway.create({ ...createInput, thinkingOptionId: 'high' }), /provider-invalid/);
     assert.deepEqual(created, []);
+  });
+});
+
+describe('original session merge command', () => {
+  it('sends to the saved agent with the persisted message ID', async () => {
+    const messages: Array<{ agentId: string; prompt: string; messageId: string }> = [];
+    const api = { agents: { ref: (agentId: string) => ({
+      send: async (prompt: string, options: { messageId: string }) => { messages.push({ agentId, prompt, ...options }); },
+    }) } };
+    const driver = { connect: async () => undefined };
+    const gateway = new PaseoTodoGateway(driver as unknown as DaemonClient, api as unknown as PaseoApi, { url: 'ws://127.0.0.1/ws' });
+    await gateway.send({ agentId: 'original-agent', operationId: 'merge-message', prompt: 'Merge the accepted result.' });
+    assert.deepEqual(messages, [{ agentId: 'original-agent', messageId: 'merge-message', prompt: 'Merge the accepted result.' }]);
+  });
+
+  it('exposes the live turn ID so merge monitoring can reattach after restart', async () => {
+    const api = { agents: { ref: () => ({ refresh: async () => ({ agent: {
+      status: 'running', pendingPermissions: [], activeTurn: { turnId: 'merge-turn' },
+    } }) }) } };
+    const driver = { connect: async () => undefined };
+    const gateway = new PaseoTodoGateway(driver as unknown as DaemonClient, api as unknown as PaseoApi, { url: 'ws://127.0.0.1/ws' });
+    assert.deepEqual(await gateway.inspect('original-agent'), {
+      exists: true, active: true, permission: false, status: 'running', activeTurnId: 'merge-turn',
+    });
   });
 });
 

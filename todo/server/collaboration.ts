@@ -267,6 +267,9 @@ export class PaseoCollaborationPort implements CollaborationPort {
     const parsed = taskCollaborationSchema.safeParse(input.collaboration);
     if (!parsed.success) throw todoError('collaboration-invalid', parsed.error.issues.map(issue => issue.message).join('; '));
     const collaboration = parsed.data;
+    if (collaboration.settings.reviewerAsLead && !capabilities.unified) {
+      throw todoError('collaboration-unavailable', '请更新 Paseo 主机以使用审核 Agent 主导的协作');
+    }
     if (collaboration.mode === 'execute_review' && !capabilities.executeReview) {
       throw todoError('collaboration-unavailable', '主机不支持执行＋审核');
     }

@@ -95,6 +95,8 @@ export interface GitFailure {
 export type PrepareResult = PrepareOk | GitFailure;
 export type ApplyResult = { ok: true; mergeCommit: string; method: 'update-ref' | 'ff-only' } | GitFailure;
 
+export type VerifiedAgentMerge = { ok: true; mergeCommit: string; taskHead: string } | GitFailure;
+
 export interface GitPort {
   resolveRepository(path: string): Promise<string>;
   listBranches(root: string): Promise<{ branches: string[]; head: string | null }>;
@@ -106,6 +108,8 @@ export interface GitPort {
   diff(input: { root: string; worktree: string; branch: string; from: string; to: string | null }): Promise<TaskDiff>;
   prepareMerge(input: PrepareMergeInput): Promise<PrepareResult>;
   applyMerge(input: PrepareOk): Promise<ApplyResult>;
+  /** Read-only proof that the accepted result and conflict-resolution commits reached the target. */
+  verifyAgentMerge(input: Omit<PrepareMergeInput, 'message'>): Promise<VerifiedAgentMerge>;
   removeWorktree(input: { root: string; worktree: string; branch: string }): Promise<void>;
   deleteBranch(input: { root: string; branch: string }): Promise<void>;
   deleteMergedBranch(input: { root: string; branch: string; expectedHead: string; targetBranch: string }): Promise<void>;
@@ -381,6 +385,32 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
         patch: full.length > PATCH_LIMIT ? full.slice(0, PATCH_LIMIT) : full,
         truncated: full.length > PATCH_LIMIT,
       };
+    },
+    async verifyAgentMerge(input) {
+      const snap = await snapshot({ root: input.root, worktree: input.worktree, branch: input.taskBranch, targetBranch: input.targetBranch });
+      if (!snap.clean) return { ok: false, reason: 'dirty', detail: '任务工作树还有未提交或未跟踪文件，合并未确认' };
+      if (await rev(input.root, `${input.resultCommit}^{tree}`) !== input.resultTree) {
+        return { ok: false, reason: 'stale-result', detail: '已验收提交与目录树不一致' };
+      }
+      for (const [ancestor, descendant] of [
+        [input.resultCommit, snap.head],
+        [snap.head, snap.targetHead],
+        [input.expectedTargetHead, snap.targetHead],
+      ]) {
+        const proof = await text(input.root, ['merge-base', '--is-ancestor', ancestor!, descendant!]);
+        if (proof.code !== 0) return { ok: false, reason: 'verify-failed', detail: clip(proof.stderr || '目标分支尚未包含已验收成果及冲突处理提交') };
+      }
+      const checkouts = (await worktrees(input.root)).filter(row => row.branch === `refs/heads/${input.targetBranch}`);
+      for (const checkout of checkouts) {
+        const busy = await operationInProgress(checkout.path);
+        if (busy) return { ok: false, reason: 'verify-failed', detail: `目标工作树仍在进行 ${busy}` };
+        if ((await porcelain(checkout.path)).trim()) return { ok: false, reason: 'dirty', detail: '目标工作树还有未提交改动，合并未确认' };
+      }
+      const [taskHead, targetHead] = await revs(input.root, [`refs/heads/${input.taskBranch}`, `refs/heads/${input.targetBranch}`]);
+      if (taskHead !== snap.head || targetHead !== snap.targetHead) {
+        return { ok: false, reason: 'stale-target', detail: '核对期间分支又发生了变化，请在原会话确认合并结果' };
+      }
+      return { ok: true, mergeCommit: snap.targetHead, taskHead: snap.head };
     },
     /** Build the merge commit with merge-tree. Does not check out or move the user's branch. */
     async prepareMerge(input) {

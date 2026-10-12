@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { diffLineKind, diffStats, pendingCleanup, relativeAge, type CleanupStep } from '../shared/board';
-import { collaborationDraftIssue, collaborationModeLabel, collaborationStatus, draftFromCollaboration, sameCollaborationDraft, snapshotFromDraft, type CollaborationCatalog, type CollaborationDraft, type TaskCollaboration } from '../shared/collaboration';
+import { collaborationDraftIssue, collaborationEditorDraft, collaborationModeLabel, collaborationStatus, sameCollaborationDraft, snapshotFromDraft, type CollaborationCatalog, type CollaborationDraft, type TaskCollaboration } from '../shared/collaboration';
 import { canAccept, canCancel, canContinue, canDelete, canEdit, canRetry } from '../shared/machine';
 import type { Catalog, Task, TaskDiff } from '../shared/schema';
 import { HostTag, projectLabel, StatusChip } from './card';
@@ -62,7 +62,7 @@ export function TaskSheet(props: SheetHandlers & {
   const thinking = thinkingLabel(task, props.catalog);
   const editable = canEdit(task.status, Boolean(task.operationId));
   const [editing, setEditing] = useState(false);
-  const [collabDraft, setCollabDraft] = useState<CollaborationDraft>(() => draftFromCollaboration(task.collaboration));
+  const [collabDraft, setCollabDraft] = useState<CollaborationDraft>(() => collaborationEditorDraft(task.collaboration));
   const [collabError, setCollabError] = useState<string | null>(null);
   const [discarded, setDiscarded] = useState(false);
   const collabDraftRef = useRef(collabDraft);
@@ -70,12 +70,12 @@ export function TaskSheet(props: SheetHandlers & {
   collabDraftRef.current = collabDraft;
   editingRef.current = editing;
   const collaborationKey = JSON.stringify(task.collaboration);
-  const savedDraft = draftFromCollaboration(task.collaboration);
+  const savedDraft = collaborationEditorDraft(task.collaboration);
   const dirty = editing && !sameCollaborationDraft(collabDraft, savedDraft);
   const reportDirty = useRef(props.onCollaborationDirty);
   reportDirty.current = props.onCollaborationDirty;
   useEffect(() => {
-    const saved = draftFromCollaboration(task.collaboration);
+    const saved = collaborationEditorDraft(task.collaboration);
     const editorDirty = editingRef.current && !sameCollaborationDraft(collabDraftRef.current, saved);
     if (!editable && editingRef.current) {
       if (editorDirty) setDiscarded(true);
@@ -115,7 +115,7 @@ export function TaskSheet(props: SheetHandlers & {
     setDiscarded(false);
   };
   const cancelCollaboration = () => {
-    setCollabDraft(draftFromCollaboration(task.collaboration));
+    setCollabDraft(collaborationEditorDraft(task.collaboration));
     setEditing(false);
     setCollabError(null);
   };
@@ -197,7 +197,7 @@ export function TaskSheet(props: SheetHandlers & {
             </View>
           </> : <>
             <CollaborationSummary collaboration={task.collaboration} phase={task.collaborationPhase} control={task.status === 'canceled' ? 'canceled' : task.collaborationControl} acceptance={task.status === 'canceled' ? null : task.collaborationAcceptance} catalog={props.catalog} colors={colors} />
-            {editable ? <Button label={ui('Edit', '修改')} colors={colors} variant="outline" size="xs" onPress={() => { setCollabError(null); setCollabDraft(draftFromCollaboration(task.collaboration)); setEditing(true); }} /> : null}
+            {editable ? <Button label={ui('Edit', '修改')} colors={colors} variant="outline" size="xs" onPress={() => { setCollabError(null); setCollabDraft(collaborationEditorDraft(task.collaboration)); setEditing(true); }} /> : null}
           </>}
         </Section>
         <NextStep {...props} collaborationDirty={dirty} />
@@ -240,18 +240,24 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
   const review = !sessionPending && canAccept(task.status) && Boolean(task.review);
   const text = (() => {
     if ((task.status === 'draft' || task.status === 'canceled') && props.collaborationDirty) return ui('Save or cancel the collaboration edits before starting.', '先保存或取消协作设置的修改，再开始。');
-    if (collab && task.status !== 'draft' && task.status !== 'queued' && task.status !== 'merged' && task.status !== 'canceled' && task.status !== 'canceling') return ui(...collab.detail);
+    if (collab && !task.mergeRequest && task.status !== 'draft' && task.status !== 'queued' && task.status !== 'merged' && task.status !== 'canceled' && task.status !== 'canceling') return ui(...collab.detail);
     switch (task.status) {
       case 'draft': return ui('Not started. Start it now, or leave it in To do for the queue.', '还没开始。现在开始，或者留在待办里等队列。');
       case 'queued': return ui('Waiting for the repository queue. One task runs per repository at a time.', '等待仓库队列。同一仓库一次只跑一个任务。');
       case 'preparing': return ui('Creating the worktree and the session.', '正在创建工作树和会话。');
       case 'running': return ui('The agent is working in its own worktree.', 'Agent 正在自己的工作树里工作。');
       case 'needs_attention': return ui('The agent is waiting for a permission decision in its session.', 'Agent 在会话里等待权限确认。');
-      case 'awaiting_review': return ui(`The agent finished. Read the changes below, then merge ${task.branch ?? ''} into ${task.targetBranch}.`, `Agent 已完成。看完下面的改动后，把 ${task.branch ?? ''} 合并到 ${task.targetBranch}。`);
-      case 'merge_failed': return ui('The merge did not go through. The task branch is untouched; fix the cause and accept again, or send it back.', '合并没有完成，任务分支未改动。处理原因后再验收，或者打回修改。');
-      case 'needs_check': return ui('The result could not be confirmed, so nothing was merged or resent.', '无法确认成果，没有合并也没有重新派发。');
+      case 'awaiting_review': return ui(`The agent finished. Review the changes, then ask the same session to merge into ${task.targetBranch}.`, `Agent 已完成。验收改动后，将在原会话下达指令，让它合并到 ${task.targetBranch} 并处理冲突。`);
+      case 'merge_failed': return task.mergeRequest
+        ? ui('The agent merge was not confirmed. Open the original session to continue and inspect the details below.', 'Agent 合并尚未确认。请打开原会话继续处理，并查看下面的具体原因。')
+        : ui('The merge did not go through. Fix the cause and accept again, or send it back.', '合并没有完成。处理原因后再验收，或者打回修改。');
+      case 'needs_check': return task.mergeRequest
+        ? ui('The merge needs checking. Open the original session; the command was not resent.', '合并结果需要核对。请打开原会话检查，指令没有自动重发。')
+        : ui('The result could not be confirmed, so nothing was merged or resent.', '无法确认成果，没有合并也没有重新派发。');
       case 'failed': return ui('The agent turn failed.', 'Agent 轮次失败。');
-      case 'merging': return ui('Merging…', '正在合并…');
+      case 'merging': return task.mergeRequest?.permission
+        ? ui('The original agent is waiting for permission to merge. Open its session.', '原 Agent 正在等待合并操作的权限，请打开会话处理。')
+        : ui('The original agent is merging and resolving conflicts. Git will be checked before cleanup.', '原 Agent 正在合并并处理冲突。完成后会核对 Git 状态，再清理分支和工作树。');
       case 'canceling': return ui('Stopping the session…', '正在停止会话…');
       case 'merged': return mergedText(task.targetBranch, task.branch, pendingCleanup(task), Boolean(task.cleanup), task.cleanup?.error ?? null);
       case 'canceled': return ui('Canceled. The worktree and branch were kept.', '已取消，工作树和分支已保留。');
@@ -262,10 +268,12 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
   const warn = review || sessionPending || task.status === 'needs_attention' || cleanupFailed;
   const primary = leftover
     ? <Button label={task.cleanup ? ui('Retry cleanup', '重试清理') : ui('Clean up', '清理')} icon="Archive" onPress={props.onCleanup} colors={colors} full disabled={props.busy} />
+    : task.mergeRequest && task.status !== 'merged' && props.onOpenSession
+    ? <Button label={ui('Open original session', '打开原会话')} icon="MessageSquare" onPress={props.onOpenSession} colors={colors} full />
     : sessionPending && props.onOpenSession
     ? <Button label={ui('Open session', '打开会话')} icon="MessageSquare" onPress={props.onOpenSession} colors={colors} full />
     : review
-    ? <Button label={ui('Accept and merge', '验收并合并')} icon="GitMerge" onPress={props.onAccept} colors={colors} full disabled={props.busy} />
+    ? <Button label={ui('Accept and ask agent to merge', '验收并让 Agent 合并')} icon="GitMerge" onPress={props.onAccept} colors={colors} full disabled={props.busy} />
     : task.status === 'draft'
       ? <Button label={ui('Start', '开始')} icon="Play" onPress={props.onStart} colors={colors} full disabled={props.busy || props.collaborationDirty} />
       : canRetry(task.status)
@@ -278,7 +286,7 @@ function NextStep(props: SheetHandlers & { task: Task; colors: Colors; busy: boo
     {primary}
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
       {canContinue(task.status) ? <Button label={ui('Send back', '打回修改')} icon="CornerDownLeft" onPress={() => setComposing(value => !value)} colors={colors} variant="outline" size="xs" /> : null}
-      {props.onOpenSession && task.status !== 'needs_attention' && !sessionPending ? <Button label={ui('Open session', '打开会话')} icon="MessageSquare" onPress={props.onOpenSession} colors={colors} variant="outline" size="xs" /> : null}
+      {props.onOpenSession && task.status !== 'needs_attention' && !sessionPending && !task.mergeRequest ? <Button label={ui('Open session', '打开会话')} icon="MessageSquare" onPress={props.onOpenSession} colors={colors} variant="outline" size="xs" /> : null}
       {canCancel(task.status) ? <Button label={task.status === 'canceling' ? ui('Retry stop', '重试停止') : task.collaboration && task.operationId ? ui('Stop collaboration', '停止协作') : ui('Cancel task', '取消任务')} icon="Square" onPress={props.onCancel} colors={colors} variant="outline" size="xs" disabled={props.busy} /> : null}
       {canDelete(task.status) ? (confirmDelete ? <>
         <Button label={ui('Confirm delete', '确认删除')} icon="Trash2" onPress={props.onDelete} colors={colors} variant="danger" size="xs" disabled={props.busy} />

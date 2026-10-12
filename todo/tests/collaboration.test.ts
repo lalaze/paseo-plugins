@@ -13,6 +13,7 @@ import {
   collaborationBlock,
   collaborationCatalogSchema,
   collaborationEditBlocksStart,
+  collaborationEditorDraft,
   collaborationModeLabel,
   collaborationSettingsSchema,
   collaborationStatus,
@@ -75,6 +76,7 @@ function git(): GitPort {
     diff: async () => ({ patch: '', files: [], truncated: false }),
     prepareMerge: async () => failure,
     applyMerge: async () => ({ ok: true, mergeCommit: sha, method: 'update-ref' }),
+    verifyAgentMerge: async () => ({ ok: true, mergeCommit: sha, taskHead: sha }),
     removeWorktree: async () => undefined,
     deleteBranch: async () => undefined,
     deleteMergedBranch: async () => undefined,
@@ -193,7 +195,7 @@ function portFor(peer: ScriptedPeer): PaseoCollaborationPort {
   }));
 }
 
-const capable = { collaboration: true, collaborationExecuteReview: true, collaborationInlineModels: true, collaborationWorktree: true };
+const capable = { collaboration: true, collaborationExecuteReview: true, collaborationInlineModels: true, collaborationWorktree: true, collaborationUnified: true };
 
 describe('collaboration snapshot', () => {
   it('requires a real reviewer for execute_review and known profile ids', () => {
@@ -255,7 +257,7 @@ describe('collaboration adapter', () => {
     const peer = new ScriptedPeer(capable);
     const catalog = await portFor(peer).catalog();
     assert.equal(collaborationCatalogSchema.safeParse(catalog).success, true);
-    assert.deepEqual(catalog.capabilities, { collaboration: true, executeReview: true, inlineModels: true, worktree: true });
+    assert.deepEqual(catalog.capabilities, { collaboration: true, executeReview: true, inlineModels: true, worktree: true, unified: true });
     assert.equal(catalog.settings?.reviewerProfileId, 'reviewer');
     assert.equal(catalog.rolePrompts.review, 'Check the diff.');
     assert.equal(catalog.promptExamples.execute?.includes('Do not alter tests'), true);
@@ -488,7 +490,68 @@ const readyCapabilities: CollaborationCapabilities = {
   executeReview: true,
   inlineModels: true,
   worktree: true,
+  unified: true,
 };
+
+describe('reviewer-led collaboration', () => {
+  it('starts with planning off and uses the reviewer as main in both planning modes', () => {
+    const draft = blankCollaborationDraft();
+    assert.equal(draft.enabled, false);
+    assert.equal(draft.mode, 'execute_review');
+    assert.equal(draft.reviewerAsLead, true);
+    draft.enabled = true;
+    draft.worker = { provider: 'stub', model: 'work', modeId: null, thinkingOptionId: 'low', providerLabel: 'Stub', modelLabel: 'Work' };
+    draft.reviewer = { provider: 'stub', model: 'review', modeId: null, thinkingOptionId: 'high', providerLabel: 'Stub', modelLabel: 'Review' };
+    for (const mode of ['execute_review', 'full'] as const) {
+      const result = snapshotFromDraft({ ...draft, mode, requirePlanApproval: true });
+      assert.equal(result.error, null);
+      assert.equal(result.collaboration?.settings.reviewerAsLead, true);
+      assert.equal(result.collaboration?.settings.directorProfileId, 'reviewer');
+      assert.equal(result.collaboration?.settings.reviewerProfileId, 'reviewer');
+      assert.deepEqual(result.collaboration?.settings.profiles.map(profile => profile.id), ['worker', 'reviewer']);
+      assert.equal(result.collaboration?.settings.requirePlanApproval, mode === 'full');
+      assert.equal(snapshotFromDraft({ ...draft, mode, reviewer: null }).error?.code, 'reviewer-required');
+      const reopened = draftFromCollaboration(result.collaboration!);
+      assert.equal(reopened.reviewerAsLead, true);
+      assert.equal(reopened.reviewer?.thinkingOptionId, 'high');
+    }
+  });
+
+  it('adopts the two-role editor while preserving old task snapshots and referenced profiles', () => {
+    const saved = snapshot('full');
+    saved.settings.categoryOverrides = { backend: 'director' };
+    const original = JSON.stringify(saved);
+    const draft = collaborationEditorDraft(saved);
+    assert.equal(draft.reviewerAsLead, true);
+    assert.equal(draft.reviewer?.model, 'review');
+    const result = snapshotFromDraft(draft);
+    assert.equal(result.error, null);
+    assert.equal(result.collaboration?.settings.directorProfileId, 'reviewer');
+    assert.equal(result.collaboration?.settings.categoryOverrides.backend, 'director');
+    assert.ok(result.collaboration?.settings.profiles.some(profile => profile.id === 'director'));
+    assert.equal(JSON.stringify(saved), original);
+    assert.equal(draftFromCollaboration(saved).reviewerAsLead, false);
+    const fallback = collaborationEditorDraft({ mode: 'full', settings: settingsOf(false) });
+    assert.equal(fallback.reviewer?.model, 'design');
+    assert.equal(snapshotFromDraft(fallback).collaboration?.settings.directorProfileId, 'director');
+  });
+
+  it('blocks reviewer-led launches on older hosts and preserves the flag through the wire', async () => {
+    const draft = collaborationEditorDraft(snapshot('full'));
+    assert.equal(collaborationBlock(draft, { capabilities: { ...readyCapabilities, unified: false }, error: null })?.code, 'unified');
+    assert.equal(collaborationBlock({ ...draft, enabled: false }, null), null);
+    const collaboration = snapshotFromDraft(draft).collaboration!;
+    const oldPeer = new ScriptedPeer({ ...capable, collaborationUnified: false });
+    await assert.rejects(portFor(oldPeer).open({ requestId: 'old', workspaceId: 'ws', collaboration }), /更新 Paseo/);
+    assert.equal(oldPeer.commands().some(command => command.command === 'conversation.open'), false);
+    const peer = new ScriptedPeer(capable);
+    const opened = await portFor(peer).open({ requestId: 'unified', workspaceId: 'ws', collaboration });
+    assert.equal(opened.state.conversations[0]?.settings?.reviewerAsLead, true);
+    const sent = peer.commands().find(command => command.command === 'conversation.open')?.input?.settings as TaskCollaboration['settings'];
+    assert.equal(sent.reviewerAsLead, true);
+    assert.equal(sent.directorProfileId, sent.reviewerProfileId);
+  });
+});
 
 describe('collaboration drafts', () => {
   it('round-trips shared role profiles and separates them when one role is edited', () => {
@@ -783,15 +846,16 @@ describe('collaboration drafts', () => {
 
     const draft = blankCollaborationDraft();
     draft.enabled = true;
-    draft.director = { provider: 'stub', model: 'design', modeId: 'plan', providerLabel: 'Stub', modelLabel: 'Design' };
+    draft.mode = 'full';
+    draft.reviewer = { provider: 'stub', model: 'review', modeId: 'plan', providerLabel: 'Stub', modelLabel: 'Review' };
     draft.worker = { provider: 'stub', model: 'work', modeId: null, providerLabel: 'Stub', modelLabel: 'Work' };
     draft.prompts = { plan: 'Plan it', execute: 'Do it', review: 'Check it' };
     draft.requirePlanApproval = true;
     const snap = snapshotFromDraft(draft);
     assert.equal(snap.error, null);
-    assert.equal(snap.collaboration?.settings.profiles.find(profile => profile.id === 'director')?.transport, 'mcp');
+    assert.equal(snap.collaboration?.settings.profiles.find(profile => profile.id === 'reviewer')?.transport, 'mcp');
     assert.equal(snap.collaboration?.settings.profiles.find(profile => profile.id === 'worker')?.transport, 'mcp');
-    assert.equal(snap.collaboration?.settings.profiles.find(profile => profile.id === 'director')?.modeId, 'plan');
+    assert.equal(snap.collaboration?.settings.profiles.find(profile => profile.id === 'reviewer')?.modeId, 'plan');
     assert.equal(snap.collaboration?.settings.rolePrompts?.execute, 'Do it');
     assert.equal(snap.collaboration?.settings.requirePlanApproval, true);
   });

@@ -53,6 +53,8 @@ export const collaborationSettingsSchema = z.object({
   directorProfileId: profileIdSchema,
   workerProfileId: profileIdSchema,
   reviewerProfileId: profileIdSchema.optional(),
+  /** New tasks use the reviewer for the main conversation and optional planning. */
+  reviewerAsLead: z.boolean().optional(),
   rolePrompts: rolePromptsSchema.optional(),
   categoryOverrides: z.record(z.string(), profileIdSchema).default({}),
   taskOverrides: z.record(z.string(), profileIdSchema).default({}),
@@ -64,6 +66,9 @@ export const collaborationSettingsSchema = z.object({
   requirePlanApproval: z.boolean().default(false),
   verificationCommands: z.array(collaborationCommandSchema).max(12).default([]),
 }).superRefine((settings, ctx) => {
+  if (settings.reviewerAsLead && settings.reviewerProfileId !== settings.directorProfileId) {
+    ctx.addIssue({ code: 'custom', message: '主 Agent 必须使用审核 Agent 配置' });
+  }
   const ids = new Set(settings.profiles.map(profile => profile.id));
   if (ids.size !== settings.profiles.length) ctx.addIssue({ code: 'custom', message: 'AI 配置 ID 不能重复' });
   for (const id of [
@@ -94,6 +99,7 @@ export const collaborationCapabilitiesSchema = z.object({
   executeReview: z.boolean(),
   inlineModels: z.boolean(),
   worktree: z.boolean(),
+  unified: z.boolean().default(false),
 }).strict();
 export type CollaborationCapabilities = z.infer<typeof collaborationCapabilitiesSchema>;
 
@@ -102,6 +108,7 @@ export const EMPTY_CAPABILITIES: CollaborationCapabilities = {
   executeReview: false,
   inlineModels: false,
   worktree: false,
+  unified: false,
 };
 
 export const collaborationCatalogSchema = z.object({
@@ -123,6 +130,7 @@ export function capabilitiesFrom(features: Record<string, unknown> | null | unde
     executeReview: features?.collaborationExecuteReview === true,
     inlineModels: features?.collaborationInlineModels === true,
     worktree: features?.collaborationWorktree === true,
+    unified: features?.collaborationUnified === true,
   };
 }
 
@@ -134,6 +142,7 @@ const conversationSchema = z.object({
   requestId: z.string().optional(),
   workspaceId: z.string(),
   agentId: z.string().optional(),
+  disabledAt: z.number().optional(),
   title: z.string(),
   error: z.string().optional(),
   confirmation: z.object({ kind: z.enum(['plan', 'final']), noticeId: z.string() }).optional(),
@@ -217,6 +226,7 @@ interface PreservedCollaboration {
 export interface CollaborationDraft {
   enabled: boolean;
   mode: CollaborationMode;
+  reviewerAsLead: boolean;
   director: RoleSelection | null;
   worker: RoleSelection | null;
   reviewer: RoleSelection | null;
@@ -235,6 +245,7 @@ export type CollaborationDraftIssueCode =
   | 'unavailable'
   | 'inline-models'
   | 'execute-review'
+  | 'unified'
   | 'foreign-provider'
   | 'director-required'
   | 'worker-required'
@@ -260,7 +271,8 @@ const ROLE_IDS = { director: 'director', worker: 'worker', reviewer: 'reviewer' 
 export function blankCollaborationDraft(): CollaborationDraft {
   return {
     enabled: false,
-    mode: 'full',
+    mode: 'execute_review',
+    reviewerAsLead: true,
     director: null,
     worker: null,
     reviewer: null,
@@ -348,6 +360,7 @@ export function draftFromCollaboration(value: TaskCollaboration | null): Collabo
   return {
     enabled: true,
     mode: value.mode,
+    reviewerAsLead: settings.reviewerAsLead === true,
     director: selectionFrom(directorProfile),
     worker: selectionFrom(workerProfile),
     reviewer: selectionFrom(reviewerProfile),
@@ -373,6 +386,25 @@ export function draftFromCollaboration(value: TaskCollaboration | null): Collabo
   };
 }
 
+/** Editable tasks and remembered defaults adopt the current two-role form; running records retain their snapshot. */
+export function collaborationEditorDraft(value: TaskCollaboration | null): CollaborationDraft {
+  const draft = draftFromCollaboration(value);
+  if (draft.reviewerAsLead) return draft;
+  const reviewer = draft.reviewer ?? draft.director;
+  return {
+    ...draft,
+    reviewerAsLead: true,
+    reviewer,
+    ids: { ...draft.ids, reviewer: draft.reviewer ? draft.ids.reviewer : draft.ids.director },
+    preserved: {
+      ...draft.preserved,
+      profileExtras: { ...draft.preserved.profileExtras,
+        ...(draft.reviewer ? {} : { reviewer: draft.preserved.profileExtras.director }),
+      },
+    },
+  };
+}
+
 /**
  * New tasks and the settings form start here.
  * A saved snapshot wins over the host catalog. Off and "never saved" both stay off,
@@ -382,10 +414,10 @@ export function inheritCollaborationDraft(
   saved: TaskCollaboration | null | undefined,
   catalog: { settings: CollaborationSettings | null; rolePrompts?: RolePrompts },
 ): CollaborationDraft {
-  if (saved) return draftFromCollaboration(saved);
+  if (saved) return collaborationEditorDraft(saved);
   if (!catalog.settings) return blankCollaborationDraft();
-  const seeded = draftFromCollaboration({
-    mode: 'full',
+  const seeded = collaborationEditorDraft({
+    mode: 'execute_review',
     settings: catalog.settings,
   });
   return { ...seeded, enabled: false, prompts: mergePromptFields(catalog.settings.rolePrompts, catalog.rolePrompts) };
@@ -447,9 +479,9 @@ function cleanCommands(commands: CollaborationSettings['verificationCommands']):
 /** `collaboration: null` is Off. An issue means the form must stay put and must not be stored. */
 export function snapshotFromDraft(draft: CollaborationDraft): { collaboration: TaskCollaboration | null; error: CollaborationDraftIssue | null } {
   if (!draft.enabled) return { collaboration: null, error: null };
-  if (draft.mode === 'full' && !complete(draft.director)) return { collaboration: null, error: issue('director-required') };
+  if (!draft.reviewerAsLead && draft.mode === 'full' && !complete(draft.director)) return { collaboration: null, error: issue('director-required') };
   if (!complete(draft.worker)) return { collaboration: null, error: issue('worker-required') };
-  if (draft.mode === 'execute_review' && !complete(draft.reviewer)) return { collaboration: null, error: issue('reviewer-required') };
+  if ((draft.reviewerAsLead || draft.mode === 'execute_review') && !complete(draft.reviewer)) return { collaboration: null, error: issue('reviewer-required') };
   if (draft.reviewer && !complete(draft.reviewer)) return { collaboration: null, error: issue('reviewer-incomplete') };
   const prompts = cleanPrompts(draft.prompts);
   if (prompts.error) return { collaboration: null, error: prompts.error };
@@ -474,7 +506,7 @@ export function snapshotFromDraft(draft: CollaborationDraft): { collaboration: T
   };
   let directorProfileId = draft.ids.worker;
   // Execute + review has no lead row. A selection left over from the full flow must not open a separate conversation.
-  if (draft.mode === 'full') {
+  if (!draft.reviewerAsLead && draft.mode === 'full') {
     const director = buildProfile(
       draft.ids.director,
       draft.director as RoleSelection,
@@ -492,6 +524,7 @@ export function snapshotFromDraft(draft: CollaborationDraft): { collaboration: T
     const reviewer = buildProfile(draft.ids.reviewer, draft.reviewer, draft.preserved.profileExtras.reviewer);
     reviewerProfileId = addRole(reviewer, 'reviewer');
   }
+  if (draft.reviewerAsLead) directorProfileId = reviewerProfileId!;
   const seen = new Set(profiles.map(profile => profile.id));
   for (const extra of draft.preserved.extraProfiles) {
     if (seen.has(extra.id)) continue;
@@ -505,6 +538,7 @@ export function snapshotFromDraft(draft: CollaborationDraft): { collaboration: T
       directorProfileId,
       workerProfileId: worker.id,
       ...(reviewerProfileId ? { reviewerProfileId } : {}),
+      ...(draft.reviewerAsLead ? { reviewerAsLead: true } : {}),
       ...(prompts.prompts ? { rolePrompts: prompts.prompts } : {}),
       categoryOverrides: draft.preserved.categoryOverrides,
       taskOverrides: draft.preserved.taskOverrides,
@@ -513,7 +547,7 @@ export function snapshotFromDraft(draft: CollaborationDraft): { collaboration: T
       maxAttempts: draft.maxAttempts,
       turnTimeoutMs: draft.turnTimeoutMs,
       runTimeoutMs: draft.runTimeoutMs,
-      requirePlanApproval: draft.requirePlanApproval,
+      requirePlanApproval: draft.reviewerAsLead ? draft.mode === 'full' && draft.requirePlanApproval : draft.requirePlanApproval,
       verificationCommands: commands.commands,
     },
   });
@@ -523,13 +557,14 @@ export function snapshotFromDraft(draft: CollaborationDraft): { collaboration: T
 
 /** Capability failures block an enabled draft. Off stays valid so the user can still save a normal task. */
 export function collaborationBlock(
-  draft: Pick<CollaborationDraft, 'enabled' | 'mode'>,
+  draft: Pick<CollaborationDraft, 'enabled' | 'mode'> & Partial<Pick<CollaborationDraft, 'reviewerAsLead'>>,
   catalog: { capabilities: CollaborationCapabilities; error: string | null } | null,
 ): CollaborationDraftIssue | null {
   if (!draft.enabled) return null;
   if (!catalog) return issue('loading');
   if (!catalog.capabilities.collaboration) return issue('unavailable', catalog.error);
   if (!catalog.capabilities.inlineModels) return issue('inline-models', catalog.error);
+  if (draft.reviewerAsLead && !catalog.capabilities.unified) return issue('unified', catalog.error);
   if (draft.mode === 'execute_review' && !catalog.capabilities.executeReview) return issue('execute-review', catalog.error);
   return null;
 }
@@ -543,7 +578,7 @@ export function collaborationWarning(catalog: { capabilities: CollaborationCapab
 export function foreignProviderIds(draft: CollaborationDraft, providerIds: readonly string[]): string[] {
   const known = new Set(providerIds);
   const selected: RoleSelection[] = [];
-  if (draft.mode === 'full' && draft.director) selected.push(draft.director);
+  if (!draft.reviewerAsLead && draft.mode === 'full' && draft.director) selected.push(draft.director);
   if (draft.worker) selected.push(draft.worker);
   if (draft.reviewer) selected.push(draft.reviewer);
   return [...new Set(selected.map(item => item.provider).filter(id => id && !known.has(id)))];
@@ -633,8 +668,8 @@ export function writeCollaborationDefault(
 }
 
 export function collaborationModeLabel(mode: CollaborationMode | 'off'): readonly [string, string] {
-  if (mode === 'full') return ['Full flow', '完整流程'];
-  if (mode === 'execute_review') return ['Execute + review', '执行＋审核'];
+  if (mode === 'full') return ['Collaboration · Plan first', '协作 · 先规划'];
+  if (mode === 'execute_review') return ['Collaboration · Direct execution', '协作 · 直接执行'];
   return ['Off', '关闭'];
 }
 

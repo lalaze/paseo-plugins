@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { Icon } from '@getpaseo/plugin/client/react-native';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { Pressable, Switch, Text, TextInput, View } from 'react-native';
 import {
   COLLABORATION_ROLE_LABELS,
   collaborationModeLabel,
@@ -12,7 +12,6 @@ import {
   type CollaborationDefaultStore,
   type CollaborationDraft,
   type CollaborationDraftIssue,
-  type CollaborationMode,
   type RoleSelection,
   type TaskCollaboration,
 } from '../shared/collaboration';
@@ -50,6 +49,8 @@ export function collaborationIssueText(issue: CollaborationDraftIssue): string {
       return explain('collaboration-unavailable', issue.detail || ui('This host will not apply per-task collaboration settings.', '主机不会按任务使用协作设置。'));
     case 'execute-review':
       return explain('collaboration-unavailable', issue.detail || ui('This host does not support execute + review.', '主机不支持执行＋审核。'));
+    case 'unified':
+      return explain('collaboration-unavailable', ui('Update Paseo on this host to use reviewer-led collaboration.', '请更新这台主机上的 Paseo，以使用审核 Agent 主导的协作。'));
     case 'foreign-provider':
       return ui(`This host has no provider ${issue.detail ?? ''}. Pick a model on this host.`, `这台主机没有供应商 ${issue.detail ?? ''}。请改选这台主机上的模型。`);
     case 'director-required':
@@ -143,11 +144,11 @@ export function CollaborationSummary(props: {
     return <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui('Collaboration is off. One agent runs this task.', '协作关闭。这个任务由单个 Agent 执行。')}</Text>;
   }
   const settings = collaboration.settings;
-  const roles = [
-    ['director', settings.directorProfileId],
+  const roles: Array<readonly [RoleName, string]> = [
+    ...(!settings.reviewerAsLead ? [['director', settings.directorProfileId] as const] : []),
     ['worker', settings.workerProfileId],
     ...(settings.reviewerProfileId ? [['reviewer', settings.reviewerProfileId] as const] : []),
-  ] as const;
+  ];
   return <View style={{ gap: 8 }}>
     <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: '600' }}>{ui(...collaborationModeLabel(collaboration.mode))}</Text>
     {roles.map(([role, id]) => {
@@ -162,7 +163,7 @@ export function CollaborationSummary(props: {
       const permission = entry?.modes.find(item => item.id === profile.modeId)?.label ?? profile.modeId;
       const thinking = entry?.models.find(item => item.id === modelId)?.thinkingOptions?.find(item => item.id === profile.thinkingOptionId)?.label ?? profile.thinkingOptionId;
       return <Text key={role} style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>
-        {ui(...COLLABORATION_ROLE_LABELS[role])} · {providerLabel} · {modelLabel}{permission ? ` · ${permission}` : ''}{thinking ? ` · ${ui('Thinking', '思考强度')}: ${thinking}` : ''}
+        {role === 'reviewer' && settings.reviewerAsLead ? ui('Reviewer · Main agent', '审核 Agent · 主 Agent') : ui(...COLLABORATION_ROLE_LABELS[role])} · {providerLabel} · {modelLabel}{permission ? ` · ${permission}` : ''}{thinking ? ` · ${ui('Thinking', '思考强度')}: ${thinking}` : ''}
       </Text>;
     })}
     <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>
@@ -205,14 +206,6 @@ export function CollaborationForm(props: {
   // The open section has to be the dismiss layer's sibling and sit above it, or a provider click hits the layer and closes the list.
   const modelsOpen = picker === 'director' || picker === 'worker' || picker === 'reviewer' || picker?.endsWith('-mode') === true || picker?.endsWith('-thinking') === true;
   const limitsOpen = picker === 'rework' || picker === 'run' || picker === 'turn';
-  const modes: Array<'off' | CollaborationMode> = ['off', 'full', 'execute_review'];
-  const selectedMode = draft.enabled ? draft.mode : 'off';
-  const setMode = (mode: 'off' | CollaborationMode) => {
-    if (disabled) return;
-    if (mode !== 'full' && picker?.startsWith('director')) setPicker(null);
-    if (mode === 'off') props.onChange({ ...draft, enabled: false });
-    else props.onChange({ ...draft, enabled: true, mode });
-  };
   const setRole = (role: RoleName, value: string) => {
     if (!value) {
       props.onChange({ ...draft, [role]: null });
@@ -251,12 +244,13 @@ export function CollaborationForm(props: {
     const options = modelOptions(props.catalog, selection);
     const thinking = thinkingOptions(props.catalog, selection);
     const fallback = role === 'director' ? ui('Use worker for the conversation', '会话使用执行配置') : ui('Reviewed by the lead agent', '由主 Agent 审核');
+    const label = role === 'reviewer' ? ui('Reviewer · Main agent', '审核 Agent · 主 Agent') : ui(...COLLABORATION_ROLE_LABELS[role]);
     if (optional) options.unshift({ value: '', label: fallback });
     return <View key={role} style={{ gap: 6 }}>
-      <FieldLabel colors={colors}>{ui(...COLLABORATION_ROLE_LABELS[role])}</FieldLabel>
+      <FieldLabel colors={colors}>{label}</FieldLabel>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, zIndex: picker?.startsWith(role) ? 20 : 1 }}>
         <Select
-          label={ui(...COLLABORATION_ROLE_LABELS[role])} icon="Bot" colors={colors}
+          label={label} icon="Bot" colors={colors}
           value={modelValue(selection)} options={options}
           placeholder={optional ? fallback : ui('Choose a model', '选择模型')}
           disabled={disabled || options.length === (optional ? 1 : 0)}
@@ -283,31 +277,23 @@ export function CollaborationForm(props: {
     </View>;
   };
   return <View style={{ gap: 16 }}>
-    <View style={{ flexDirection: 'row', alignSelf: 'flex-start', padding: 3, borderRadius: 12, backgroundColor: colors.surface2, borderWidth: 1, borderColor: outline(colors), opacity: disabled ? 0.5 : 1 }}>
-      {modes.map(mode => {
-        const active = selectedMode === mode;
-        const label = ui(...collaborationModeLabel(mode));
-        return <Pressable key={mode} accessibilityRole="button" accessibilityState={{ selected: active }} disabled={disabled} onPress={() => setMode(mode)} style={({ pressed }) => ({ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 9, backgroundColor: active ? colors.foreground : pressed ? tint(colors.foreground, 0.08) : 'transparent' })}>
-          <Text style={{ color: active ? colors.surface0 : colors.foregroundMuted, fontSize: 12, fontWeight: active ? '700' : '600' }}>{label}</Text>
-        </Pressable>;
-      })}
-    </View>
-    <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>
-      {selectedMode === 'off'
-        ? ui('One agent runs the task. Nothing merges until you accept it.', '单个 Agent 执行。你验收之前不会合并。')
-        : selectedMode === 'full'
-          ? ui('Design, then execute, then review. You accept the result.', '设计 → 执行 → 审核 → 你验收。')
-          : ui('One worker, then a separate reviewer. You accept the result.', '一个执行 Agent，独立审核后交你验收。')}
-    </Text>
+    <ToggleRow colors={colors} label={ui('Enable collaboration', '开启协作')} checked={draft.enabled} disabled={disabled}
+      description={draft.enabled
+        ? ui('The review agent leads the conversation; implementation runs in a separate session. You accept the result.', '审核 Agent 担任主 Agent，执行 Agent 在独立会话实施，最终由你验收。')
+        : ui('One agent runs the task. Nothing merges until you accept it.', '单个 Agent 执行。你验收之前不会合并。')}
+      onChange={enabled => { setPicker(null); props.onChange({ ...draft, enabled }); }} />
     {warning ? <Text style={{ color: colors.statusWarning, fontSize: 12, lineHeight: 18 }}>{warning}</Text> : null}
     {draft.enabled ? <>
+      <ToggleRow colors={colors} label={ui('Plan first', '先规划')} checked={draft.mode === 'full'} disabled={disabled}
+        description={ui('The main agent prepares a plan before implementation. Turn off to execute the goal directly.', '开启后由主 Agent 先制定方案；关闭时直接交给执行 Agent 实施。')}
+        onChange={planning => props.onChange({ ...draft, mode: planning ? 'full' : 'execute_review' })} />
+      {draft.mode === 'full' ? <CheckRow colors={colors} checked={draft.requirePlanApproval} disabled={disabled} label={ui('Require plan approval', '要求批准方案')} onPress={() => props.onChange({ ...draft, requirePlanApproval: !draft.requirePlanApproval })} /> : null}
       <View style={{ gap: 12, zIndex: modelsOpen ? 5 : 0 }}>
-        {draft.mode === 'full' ? roleRow('director', false) : null}
         {roleRow('worker', false)}
-        {roleRow('reviewer', draft.mode === 'full')}
-        {draft.mode === 'execute_review' ? <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui('The reviewer can use the same model as the worker, but it is a separate agent.', '审核可以和执行用同一个模型，但必须是独立的 Agent。')}</Text> : null}
+        {roleRow('reviewer', false)}
+        <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui('The main agent handles planning, review, acceptance, and the merge request.', '主 Agent 负责规划、审核与验收沟通，并接收合并请求。')}</Text>
       </View>
-      <Disclosure colors={colors} open={advanced} disabled={disabled} label={ui('Advanced settings', '高级设置')} onPress={() => setAdvanced(!advanced)} />
+      <Disclosure colors={colors} open={advanced} disabled={disabled} label={`${ui('Advanced settings', '高级设置')} · ${ui('Reworks', '返工')} ${draft.maxReworks} · ${durationLabel(draft.runTimeoutMs, 'h')}`} onPress={() => setAdvanced(!advanced)} />
       {advanced ? <>
       <View style={{ gap: 8 }}>
         <Disclosure colors={colors} open={editPrompts} disabled={disabled} label={ui('Custom prompts', '自定义提示词')} onPress={() => setEditPrompts(!editPrompts)} />
@@ -358,8 +344,6 @@ export function CollaborationForm(props: {
             style={{ width: 120, height: 34, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 12, outlineStyle: 'solid', outlineWidth: 0 }}
           />
         </View>
-        {draft.mode === 'full' ? <CheckRow colors={colors} checked={draft.requirePlanApproval} disabled={disabled} label={ui('Require plan approval', '要求批准方案')} onPress={() => props.onChange({ ...draft, requirePlanApproval: !draft.requirePlanApproval })} /> : null}
-        <CheckRow colors={colors} checked={draft.preserved.allowDirectorSelection} disabled={disabled} label={ui('Let the lead agent choose the worker profile', '允许主 Agent 选择执行配置')} onPress={() => patchPreserved({ allowDirectorSelection: !draft.preserved.allowDirectorSelection })} />
       </View>
       <View style={{ gap: 8 }}>
         <SectionTitle colors={colors}>{ui('Verification commands', '验证命令')}</SectionTitle>
@@ -391,6 +375,18 @@ function FieldLabel(props: { children: ReactNode; colors: Colors }) {
 
 function fieldStyle(colors: Colors) {
   return { height: 34, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: outline(colors), color: colors.foreground, fontSize: 12, outlineStyle: 'solid' as const, outlineWidth: 0 };
+}
+
+function ToggleRow(props: { colors: Colors; checked: boolean; disabled?: boolean; label: string; description: string; onChange(value: boolean): void }) {
+  const { colors } = props;
+  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, opacity: props.disabled ? 0.5 : 1 }}>
+    <View style={{ flex: 1, gap: 5 }}>
+      <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: '600' }}>{props.label}</Text>
+      <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{props.description}</Text>
+    </View>
+    <Switch accessibilityLabel={props.label} value={props.checked} disabled={props.disabled} onValueChange={props.onChange}
+      trackColor={{ false: colors.surface2, true: colors.foreground }} thumbColor={props.checked ? colors.surface0 : colors.foregroundMuted} />
+  </View>;
 }
 
 function Disclosure(props: { colors: Colors; open: boolean; disabled?: boolean; label: string; onPress(): void }) {

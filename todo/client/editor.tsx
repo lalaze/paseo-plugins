@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { collaborationDraftIssue, draftFromCollaboration, inheritCollaborationDraft, snapshotFromDraft, storedDefault, type CollaborationCatalog, type CollaborationDraft, type TaskCollaboration } from '../shared/collaboration';
+import { collaborationDraftIssue, collaborationEditorDraft, inheritCollaborationDraft, snapshotFromDraft, storedDefault, type CollaborationCatalog, type CollaborationDraft, type TaskCollaboration } from '../shared/collaboration';
 import { readBranches } from '../shared/rpc';
 import { taskTitle } from '../shared/title';
 import type { Catalog, Task } from '../shared/schema';
@@ -93,7 +93,7 @@ export function TaskEditorDialog(props: {
   const [provider, setProvider] = useState(task?.provider ?? props.initialProvider ?? models[0]?.value ?? '');
   const [thinkingOptionId, setThinkingOptionId] = useState(task?.thinkingOptionId ?? '');
   const [picker, setPicker] = useState<'host' | 'project' | 'branch' | 'agent' | 'thinking' | null>(null);
-  const [collaborationOverride, setCollaborationOverride] = useState<CollaborationDraft | null>(() => task ? draftFromCollaboration(task.collaboration) : null);
+  const [collaborationOverride, setCollaborationOverride] = useState<CollaborationDraft | null>(() => task ? collaborationEditorDraft(task.collaboration) : null);
 
   // A host's catalog can arrive after the dialog opens, and switching hosts brings other projects and agents:
   // keep a choice that still exists there, otherwise fall back to the first one.

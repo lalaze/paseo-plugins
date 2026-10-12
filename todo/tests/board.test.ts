@@ -9,7 +9,7 @@ function task(id: string, status: Task['status'], updatedAt: number): Task {
     targetBranch: 'main', provider: 'a/b', modeId: null, thinkingOptionId: null, collaboration: null, collaborationConversationId: null, collaborationRunId: null,
     collaborationPhase: null, collaborationControl: null, collaborationAcceptance: null, status, branch: null, worktree: null, baseCommit: null,
     agentId: null, workspaceId: null, operationId: null, operationIds: [], review: null, lastOutcome: null,
-    pendingMergeCommit: null, mergeCommit: null, mergeMethod: null, errorCode: null, errorDetail: null, cleanup: null,
+    pendingMergeCommit: null, mergeRequest: null, mergedTaskHead: null, mergeCommit: null, mergeMethod: null, errorCode: null, errorDetail: null, cleanup: null,
     createdAt: 0, updatedAt,
   };
 }
@@ -55,4 +55,3 @@ describe('board', () => {
     assert.equal(pendingCleanup({ ...merged, cleanup: { sessions: true, worktree: true, branch: true, error: null, at } }), null);
   });
 });
-

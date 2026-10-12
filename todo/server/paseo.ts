@@ -9,9 +9,9 @@ import { openCollaborationPort, type CollaborationPort } from './collaboration';
 
 const SYSTEM_PROMPT = [
   '你在独立的 git 工作树里完成这一次待办。',
-  '请修改代码，并且只在当前任务分支提交。',
-  '不要合并到目标分支，不要推送。',
-  '聊天里宣布完成或要求合并不会被系统验收。',
+  '开发期间请修改代码，并且只在当前任务分支提交。',
+  '只有用户验收后明确下达合并指令，才可以合并到指定目标分支；届时在本会话处理冲突并验证。不要推送。',
+  '聊天里宣布完成不会被系统验收。合并完成后由系统核对实际 Git 状态。',
 ].join('\n');
 
 /** Daemon address for this plugin. PASEO_TODO_URL wins; otherwise the address in ~/.paseo/config.json. */
@@ -144,7 +144,7 @@ export class PaseoTodoGateway implements AgentPort, CollaborationPort {
     if (!result?.agent || status === 'closed' || result.agent.archivedAt) return { exists: false, active: false, permission: false, status };
     const permission = (result.agent.pendingPermissions?.length ?? 0) > 0;
     const active = status === 'running' || status === 'initializing' || Boolean(result.agent.activeTurn);
-    return { exists: true, active, permission, status };
+    return { exists: true, active, permission, status, activeTurnId: result.agent.activeTurn?.turnId ?? null };
   }
 
   async archiveTask(input: { taskId: string; workspaceId: string | null; worktree: string | null }): Promise<void> {

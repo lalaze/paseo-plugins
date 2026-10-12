@@ -82,6 +82,29 @@ export function followUpPrompt(original: string, followUp: string): string {
   ].join('\n');
 }
 
+/** The original conversation already holds the implementation context; send only the accepted merge request. */
+export function mergePrompt(task: Task, binding: ReviewBinding): string {
+  return [
+    '用户已经验收这个待办，现在明确授权你在本会话完成本地合并。',
+    ...(task.collaboration ? ['这是发给协作主 Agent 的合并请求。请在当前主会话接手已验收成果的合并，不要重新启动或重新规划开发任务。'] : []),
+    `任务：${JSON.stringify(task.title)}`,
+    `仓库：${JSON.stringify(task.repository)}`,
+    `任务工作树：${JSON.stringify(task.worktree)}`,
+    `任务分支：${JSON.stringify(task.branch)}`,
+    `目标分支：${JSON.stringify(binding.targetBranch)}`,
+    `已验收提交：${binding.resultCommit}`,
+    `验收时的目标提交：${binding.targetHead}`,
+    '',
+    '请检查实际 Git 状态，把已验收成果合并到目标分支的最新提交。有冲突时由你结合本会话的任务上下文解决，运行相关验证后再完成合并。',
+    '保留已验收提交和目标分支已有提交的历史。优先在任务工作树把最新目标分支合入任务分支并解决冲突，再将任务分支合入目标分支。不要 squash、rebase 或强制移动引用。',
+    '如果协作期间任务工作树留在 director/<run> 分支，请先在任务工作树切换回上面指定的任务分支，再处理合并；不要让冲突处理提交只留在 director 分支。',
+    '目标分支若已在其他工作树检出，请在那里完成最终合并；不要切换用户工作目录的分支。若目标分支未检出，可以创建临时工作树完成合并并在完成后移除该临时工作树。',
+    '不要覆盖、暂存或提交用户在目标工作树里的未提交改动；遇到脏工作树或已有 Git 操作应停下来说明原因。不要 reset --hard、clean、强推或推送。',
+    '不要删除任务分支或任务工作树，不要归档会话；插件核对目标分支包含任务分支的全部提交、两个工作树都干净后会负责清理。',
+    '完成后报告合并提交、冲突处理和验证结果；若受阻，报告具体原因。',
+  ].join('\n');
+}
+
 function collaborationError(code: string | null): boolean {
   return code === 'collaboration-unavailable'
     || code === 'collaboration-blocked'
@@ -95,13 +118,6 @@ function conversationOf(state: CollaborationState, task: Task) {
   return state.conversations.find(entry => entry.id === task.collaborationConversationId)
     ?? state.conversations.find(entry => task.operationId !== null && entry.requestId === task.operationId)
     ?? null;
-}
-
-function mergeError(reason: string): TodoErrorCode {
-  if (reason === 'conflict') return 'merge-conflict';
-  if (reason === 'dirty') return 'merge-dirty';
-  if (reason === 'stale-target' || reason === 'stale-result') return 'binding-stale';
-  return 'merge-verify';
 }
 
 /**
@@ -127,6 +143,7 @@ export class TodoEngine {
   private readonly reconciles = new Map<string, Promise<void>>();
   private readonly reconciledAt = new Map<string, number>();
   private readonly collaborationRecoveries = new Map<string, Promise<void>>();
+  private readonly mergeSyncs = new Map<string, Promise<void>>();
   private readonly collaborationPoll: ReturnType<typeof setInterval>;
   private readonly idleWaiters: Array<() => void> = [];
   private spanDepth = 0;
@@ -259,6 +276,7 @@ export class TodoEngine {
   async read(id: string): Promise<{ task: Task; diff: TaskDiff }> {
     // Required: an in-flight board poll may have snapshotted the run before this read. Wait for it, then fetch again.
     await this.syncCollaboration(id, { required: true }).catch(() => undefined);
+    if (this.options.store.get(id).status === 'merging') await this.syncAgentMerge(id).catch(() => undefined);
     await this.reconcile(id).catch(() => undefined);
     const task = this.options.store.get(id);
     if (!task.worktree || !task.branch) return { task, diff: EMPTY_DIFF };
@@ -342,7 +360,7 @@ export class TodoEngine {
           await this.gitSerial(task.repository, async () => {
             if (task.status === 'merged' && task.review) {
               await this.options.git.deleteMergedBranch({
-                root: task.repository, branch, expectedHead: task.review.resultCommit, targetBranch: task.review.targetBranch,
+                root: task.repository, branch, expectedHead: task.mergedTaskHead ?? task.review.resultCommit, targetBranch: task.review.targetBranch,
               });
             } else {
               await this.options.git.deleteBranch({ root: task.repository, branch });
@@ -436,12 +454,9 @@ export class TodoEngine {
         return current.agentId;
       });
       await this.assertAgentIdle(agentId);
-      // The merge shares the short git lock with worktree setup and capture, not the execution slot, so another
-      // task running in the same repository does not hold an accept for the length of its turn.
-      const result = await this.lockTask(id, () => this.gitSerial(task.repository, () => this.acceptLocked(id, review)));
+      const result = await this.lockTask(id, () => this.gitSerial(task.repository, () => this.startAgentMerge(id, review)));
       this.tick();
-      // The merge stands on its own; a cleanup step that fails is recorded on the task and can be retried.
-      return result.status === 'merged' ? await this.cleanup(id).catch(() => this.options.store.get(id)) : result;
+      return result;
     } finally {
       release();
     }
@@ -467,7 +482,10 @@ export class TodoEngine {
         try { await fn(); return true; } catch (error) { problem = errorText(error).slice(0, 4000); return false; }
       };
       if (!done.sessions) {
-        done.sessions = await step(() => this.options.agents.archiveTask({ taskId: task.id, workspaceId: task.workspaceId, worktree: task.worktree }));
+        done.sessions = await step(async () => {
+          await this.assertAgentIdle(task.agentId);
+          await this.options.agents.archiveTask({ taskId: task.id, workspaceId: task.workspaceId, worktree: task.worktree });
+        });
       }
       if (done.sessions && !done.worktree) {
         const { worktree, branch } = task;
@@ -478,7 +496,7 @@ export class TodoEngine {
         done.branch = !branch || await step(async () => {
           if (!review) throw new Error('没有记录验收时的成果提交');
           await this.gitSerial(task.repository, () => this.options.git.deleteMergedBranch({
-            root: task.repository, branch, expectedHead: review.resultCommit, targetBranch: review.targetBranch,
+            root: task.repository, branch, expectedHead: task.mergedTaskHead ?? review.resultCommit, targetBranch: review.targetBranch,
           }));
         });
       }
@@ -498,6 +516,16 @@ export class TodoEngine {
     this.startedTurn.delete(event.agentId);
     this.startedTurn.set(event.agentId, event.turnId);
     while (this.startedTurn.size > this.startedTurnLimit) this.startedTurn.delete(this.startedTurn.keys().next().value as string);
+    const task = this.options.store.findByAgent(event.agentId);
+    if (!task?.mergeRequest || !event.turnId) return;
+    await this.lockTask(task.id, async () => {
+      const current = this.options.store.get(task.id);
+      const request = current.mergeRequest;
+      if (!request || !current.review || !['merging', 'merge_failed', 'needs_check'].includes(current.status)) return;
+      if (event.turnId === request.previousTurnId || event.turnId === current.review.turnId) return;
+      await this.write({ ...current, status: 'merging',
+        mergeRequest: { ...request, turnId: event.turnId, outcome: null, observedActive: false, permission: false }, errorCode: null, errorDetail: null });
+    });
   }
 
   /** Record the turn, then advance the task. A collaboration run is advanced by the host poll, not by this event alone. */
@@ -526,6 +554,16 @@ export class TodoEngine {
   private async applyPermission(agentId: string): Promise<void> {
     const pending = (this.permissions.get(agentId)?.size ?? 0) > 0;
     const task = this.options.store.findByAgent(agentId);
+    if (task?.status === 'merging' && task.mergeRequest) {
+      await this.lockTask(task.id, async () => {
+        const current = this.options.store.get(task.id);
+        if (current.status === 'merging' && current.mergeRequest) {
+          await this.write({ ...current, mergeRequest: { ...current.mergeRequest, permission: pending } });
+        }
+      });
+      if (!pending) this.permissions.delete(agentId);
+      return;
+    }
     // Collaboration permission comes from the host run, not one main-agent permission request.
     if (!task || task.collaboration) {
       if (!pending) this.permissions.delete(agentId);
@@ -567,78 +605,124 @@ export class TodoEngine {
     }
   }
 
-  private async acceptLocked(id: string, review: ReviewBinding): Promise<Task> {
+  private async startAgentMerge(id: string, review: ReviewBinding): Promise<Task> {
     const displayed = reviewBindingSchema.parse(review);
-    const task = this.options.store.get(id);
+    let task = this.options.store.get(id);
     if (!canAccept(task.status) || !task.review || !task.worktree || !task.branch) throw todoError('accept-rejected');
     if (task.collaboration && task.collaborationAcceptance !== 'accepted') throw todoError('collaboration-acceptance-pending');
     if (!reviewsMatch(task.review, displayed)) throw todoError('stale-client-review');
-    // A later chat-only round keeps the binding, so a newer started turn no longer blocks the merge:
-    // liveness is checked by assertAgentIdle, and the git state by prepareMerge.
     const binding = task.review;
-    await this.write({ ...task, status: 'merging', pendingMergeCommit: null, errorCode: null, errorDetail: null });
+    if (task.collaboration) {
+      if (!this.options.collaboration) throw todoError('collaboration-unavailable');
+      let state: CollaborationState;
+      try { state = await this.options.collaboration.status(); }
+      catch (error) { throw todoError('gateway-unavailable', errorText(error)); }
+      if (state.error) throw todoError('gateway-unavailable', state.error);
+      const main = conversationOf(state, task);
+      // A worker, an old main session, or a disabled conversation must never receive the merge command.
+      if (!main?.agentId || main.disabledAt !== undefined || main.error) throw todoError('merge-agent-missing', main?.error);
+      if (main.run?.id !== task.collaborationRunId || main.run?.phase !== 'completed') throw todoError('collaboration-acceptance-pending');
+      if (main.agentId !== task.agentId) task = await this.write({ ...task, agentId: main.agentId });
+    }
+    if (!task.agentId) throw todoError('merge-agent-missing');
+    if (this.options.store.list().some(other => other.id !== id && other.repository === task.repository && other.status === 'merging')) {
+      throw todoError('merge-busy');
+    }
+    await this.assertAgentIdle(task.agentId, true);
+    if (!await this.bindingIntact(task, binding)) throw todoError('binding-stale');
+    const request = {
+      id: this.newId(), sentAt: this.now(), previousTurnId: this.startedTurn.get(task.agentId) ?? task.lastOutcome?.turnId ?? binding.turnId,
+      turnId: null, outcome: null, observedActive: false, permission: false,
+    };
+    await this.write({ ...task, status: 'merging', mergeRequest: request, pendingMergeCommit: null, errorCode: null, errorDetail: null });
     try {
-      return await this.merge(id, task, binding);
+      await this.options.agents.send({ agentId: task.agentId, operationId: request.id, prompt: mergePrompt(task, binding) });
     } catch (error) {
-      return this.settleThrownMerge(id, binding, error);
+      // The send may have reached the daemon. Keep watching the original session; never send it again automatically.
+      const current = this.options.store.get(id);
+      await this.write({ ...current, errorCode: 'gateway-unavailable', errorDetail: errorText(error).slice(0, 4000) });
     }
+    return this.options.store.get(id);
   }
 
-  private async merge(id: string, task: Task, binding: ReviewBinding): Promise<Task> {
-    if (!task.worktree || !task.branch) throw todoError('accept-rejected');
-    const prepared = await this.options.git.prepareMerge({
-      root: task.repository,
-      worktree: task.worktree,
-      taskBranch: task.branch,
-      targetBranch: binding.targetBranch,
-      expectedTargetHead: binding.targetHead,
-      resultCommit: binding.resultCommit,
-      resultTree: binding.resultTree,
-      message: `paseo-todo: accept ${task.title}\n\nTask: ${task.id}\nResult: ${binding.resultCommit}`,
+  /** Poll the producing session and prove the merge from Git. Never run a merge or send a command here. */
+  private syncAgentMerge(id: string, recovering = false): Promise<void> {
+    const previous = this.mergeSyncs.get(id);
+    if (previous) return previous;
+    const release = this.enter();
+    if (!release) return Promise.resolve();
+    const run = this.syncAgentMergeNow(id, recovering).finally(() => {
+      if (this.mergeSyncs.get(id) === run) this.mergeSyncs.delete(id);
+      release();
     });
-    if (!prepared.ok) {
-      return this.write({ ...this.options.store.get(id), status: 'merge_failed', errorCode: mergeError(prepared.reason), errorDetail: prepared.detail.slice(0, 4000) });
-    }
-    await this.write({ ...this.options.store.get(id), pendingMergeCommit: prepared.mergeCommit });
-    const applied = await this.options.git.applyMerge(prepared);
-    const current = this.options.store.get(id);
-    if (current.status !== 'merging') return current;
-    if (!applied.ok) {
-      return this.write({ ...current, status: 'merge_failed', errorCode: mergeError(applied.reason), errorDetail: applied.detail.slice(0, 4000) });
-    }
-    return this.write({
-      ...current, status: 'merged', mergeCommit: applied.mergeCommit, mergeMethod: applied.method,
-      pendingMergeCommit: applied.mergeCommit, errorCode: null, errorDetail: null,
-    });
+    this.mergeSyncs.set(id, run);
+    return run;
   }
 
-  /**
-   * An exception says nothing about whether the ref moved, so the target ref decides, as it does after a restart:
-   * already at the precomputed commit is merged, still at the bound HEAD can be accepted again, anything else is checked by hand.
-   */
-  private async settleThrownMerge(id: string, binding: ReviewBinding, error: unknown): Promise<Task> {
-    const current = this.options.store.get(id);
-    if (current.status !== 'merging') return current;
-    const detail = errorText(error).slice(0, 4000);
-    let target: string;
-    try {
-      target = await this.options.git.readTargetHead(current.repository, binding.targetBranch);
-    } catch (readError) {
-      return this.write({ ...current, status: 'needs_check', errorCode: 'interrupted-merge', errorDetail: `${detail}\n${errorText(readError)}`.slice(0, 4000) });
-    }
-    if (current.pendingMergeCommit && target === current.pendingMergeCommit) {
-      return this.write({ ...current, status: 'merged', mergeCommit: target, errorCode: null, errorDetail: null });
-    }
-    if (target === binding.targetHead) {
-      return this.write({ ...current, status: 'merge_failed', pendingMergeCommit: null, errorCode: 'merge-verify', errorDetail: detail });
-    }
-    return this.write({ ...current, status: 'needs_check', review: null, errorCode: 'binding-stale', errorDetail: detail });
+  private async syncAgentMergeNow(id: string, recovering: boolean): Promise<void> {
+    let cleanup = false;
+    await this.lockTask(id, async () => {
+      const task = this.options.store.tryGet(id);
+      if (!task || task.status !== 'merging' || !task.mergeRequest || !task.review || !task.agentId || !task.worktree || !task.branch) return;
+      let inspection: AgentInspection;
+      try { inspection = await this.options.agents.inspect(task.agentId); }
+      catch (error) {
+        await this.write({ ...task, errorCode: 'gateway-unavailable', errorDetail: errorText(error).slice(0, 4000) });
+        return;
+      }
+      const request = { ...task.mergeRequest, permission: inspection.permission };
+      if (inspection.activeTurnId && inspection.activeTurnId !== request.previousTurnId && inspection.activeTurnId !== task.review.turnId) {
+        request.turnId = inspection.activeTurnId;
+      }
+      if (inspection.active || inspection.permission) {
+        request.observedActive = true;
+        if (request.turnId !== task.mergeRequest.turnId || request.permission !== task.mergeRequest.permission || !task.mergeRequest.observedActive || task.errorCode) {
+          await this.write({ ...task, mergeRequest: request, errorCode: null, errorDetail: null });
+        }
+        return;
+      }
+      // Do not mistake the brief idle gap between send and turn-start for a failed merge.
+      if (!inspection.exists) {
+        await this.write({ ...task, status: 'needs_check', errorCode: 'merge-agent-missing', errorDetail: null });
+        return;
+      }
+      if (!recovering && !request.observedActive && !request.outcome) {
+        if (this.now() - request.sentAt <= 30_000) return;
+        recovering = true;
+      }
+      if (request.outcome === 'failed' || request.outcome === 'canceled') {
+        await this.write({ ...task, status: 'merge_failed', mergeRequest: request, errorCode: 'merge-agent-failed', errorDetail: task.errorDetail });
+        return;
+      }
+      try {
+        const verified = await this.gitSerial(task.repository, () => this.options.git.verifyAgentMerge({
+          root: task.repository, worktree: task.worktree!, taskBranch: task.branch!, targetBranch: task.review!.targetBranch,
+          expectedTargetHead: task.review!.targetHead, resultCommit: task.review!.resultCommit, resultTree: task.review!.resultTree,
+        }));
+        if (verified.ok) {
+          await this.write({ ...task, status: 'merged', mergeRequest: request, mergeCommit: verified.mergeCommit,
+            mergedTaskHead: verified.taskHead, mergeMethod: 'agent', errorCode: null, errorDetail: null });
+          cleanup = true;
+        } else if (recovering || request.outcome) {
+          await this.write({ ...task, status: recovering ? 'needs_check' : 'merge_failed', mergeRequest: request,
+            errorCode: 'merge-agent-failed', errorDetail: verified.detail.slice(0, 4000) });
+        }
+      } catch (error) {
+        await this.write({ ...task, status: 'needs_check', mergeRequest: request, errorCode: 'merge-verify', errorDetail: errorText(error).slice(0, 4000) });
+      }
+    });
+    if (cleanup && !this.disposed) await this.cleanup(id).catch(() => undefined);
+    this.tick();
   }
 
   private async recoverOne(id: string): Promise<void> {
     const task = this.options.store.tryGet(id);
     if (!task) return;
     if (task.status === 'merging') {
+      if (task.mergeRequest) {
+        await this.syncAgentMerge(id, true);
+        return;
+      }
       if (!task.review) {
         await this.write({ ...task, status: 'needs_check', errorCode: 'interrupted-merge', errorDetail: null });
         return;
@@ -955,7 +1039,7 @@ export class TodoEngine {
     }
   }
 
-  private async assertAgentIdle(agentId: string | null): Promise<void> {
+  private async assertAgentIdle(agentId: string | null, requireExists = false): Promise<void> {
     if (!agentId) return;
     let snap: AgentInspection;
     try {
@@ -963,6 +1047,7 @@ export class TodoEngine {
     } catch (error) {
       throw todoError('gateway-unavailable', errorText(error));
     }
+    if (requireExists && !snap.exists) throw todoError('merge-agent-missing');
     if (snap.exists && (snap.active || snap.permission)) throw todoError('agent-busy');
   }
 
@@ -1006,6 +1091,20 @@ export class TodoEngine {
 
   private async applyTurn(id: string, event: TurnEvent): Promise<boolean> {
     const current = this.options.store.tryGet(id);
+    if (current?.status === 'merging' && current.mergeRequest && current.agentId === event.agentId) {
+      await this.lockTask(id, async () => {
+        const task = this.options.store.get(id);
+        const request = task.mergeRequest;
+        if (task.status !== 'merging' || !request || !task.review) return;
+        if (event.turnId === request.previousTurnId || event.turnId === task.review.turnId) return;
+        if (request.turnId && event.turnId && request.turnId !== event.turnId) return;
+        if (!event.turnId && !request.turnId) return;
+        await this.write({ ...task, mergeRequest: { ...request, turnId: event.turnId ?? request.turnId, outcome: event.outcome.kind },
+          errorDetail: event.outcome.error?.slice(0, 4000) ?? null });
+      });
+      await this.syncAgentMerge(id);
+      return true;
+    }
     if (current?.collaboration && current.agentId === event.agentId) {
       if (current.status === 'canceling') return true;
       try { await this.syncCollaboration(id, { required: true }); }
@@ -1164,7 +1263,7 @@ export class TodoEngine {
   /** A new round keeps the saved snapshot and drops the previous conversation association. */
   private requeue(task: Task, pendingPrompt: string | null): Task {
     return {
-      ...task, status: 'queued', pendingPrompt, review: null, lastOutcome: null, pendingMergeCommit: null,
+      ...task, status: 'queued', pendingPrompt, review: null, lastOutcome: null, pendingMergeCommit: null, mergeRequest: null, mergedTaskHead: null,
       operationId: null, agentId: null, workspaceId: null, collaborationConversationId: null, collaborationRunId: null,
       collaborationPhase: null, collaborationControl: null, collaborationAcceptance: null, errorCode: null, errorDetail: null,
     };
@@ -1277,6 +1376,10 @@ export class TodoEngine {
   private watchCollaborations(): void {
     if (this.disposed || this.closed || this.options.store.loadError) return;
     for (const task of this.options.store.list()) {
+      if (task.status === 'merging' && task.mergeRequest) {
+        void this.syncAgentMerge(task.id).catch(() => undefined);
+        continue;
+      }
       if (!task.collaboration) continue;
       if (task.status === 'canceling') {
         if (!this.preparing.has(task.id)) this.watchCollaborationRecovery(task.id);

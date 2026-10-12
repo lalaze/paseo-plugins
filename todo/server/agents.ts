@@ -6,6 +6,7 @@ export interface AgentInspection {
   active: boolean;
   permission: boolean;
   status: string | null;
+  activeTurnId?: string | null;
 }
 
 export interface CreateAgentInput {

@@ -46,6 +46,8 @@ function harness(options: {
   prepare?: GitPort['prepareMerge'];
   resolve?: GitPort['resolveRepository'];
   apply?: GitPort['applyMerge'];
+  send?: AgentPort['send'];
+  verifyMerge?: GitPort['verifyAgentMerge'];
   target?: () => Promise<string>;
   cancel?: (agentId: string) => Promise<void>;
   archive?: () => Promise<void>;
@@ -65,6 +67,7 @@ function harness(options: {
   const prompts: string[] = [];
   const cancels: string[] = [];
   const sent: string[] = [];
+  const mergePrompts: Array<{ agentId: string; operationId: string; prompt: string }> = [];
   const captures: string[] = [];
   const prepares: number[] = [];
   let seq = 0;
@@ -79,6 +82,8 @@ function harness(options: {
     async openWorkspace(cwd: string, title?: string) { workspaces.push(cwd); workspaceTitles.push(title); return 'ws-1'; },
     async send(input) {
       sent.push(input.agentId);
+      mergePrompts.push(input);
+      await options.send?.(input);
     },
     async cancel(agentId) { cancels.push(agentId); await options.cancel?.(agentId); },
     inspect: options.inspect ?? (async () => idle()),
@@ -101,13 +106,14 @@ function harness(options: {
     async diff() { return { patch: '', files: [], truncated: false }; },
     prepareMerge: options.prepare ?? (async input => { prepares.push(1); return prepared(input); }),
     applyMerge: options.apply ?? (async input => ({ ok: true, mergeCommit: input.mergeCommit, method: 'update-ref' })),
+    verifyAgentMerge: options.verifyMerge ?? (async () => ({ ok: true, mergeCommit: M, taskHead: R })),
     async removeWorktree(input) { await options.removeWorktree?.(input); removed.push(input.worktree); },
     async deleteBranch(input) { forceDeleted.push(input.branch); },
     async deleteMergedBranch(input) { deleted.push({ branch: input.branch, expectedHead: input.expectedHead, targetBranch: input.targetBranch }); },
   };
   let now = 1;
   return {
-    created, thinkings, sent, captures, prepares, prompts, cancels, archived, removed, deleted, forceDeleted, workspaces, workspaceTitles, agents, git,
+    created, thinkings, sent, mergePrompts, captures, prepares, prompts, cancels, archived, removed, deleted, forceDeleted, workspaces, workspaceTitles, agents, git,
     engine: null as unknown as TodoEngine,
     async open(dir: string) {
       const store = await TaskStore.open(dir);
@@ -150,6 +156,21 @@ async function reviewed(box: ReturnType<typeof harness>, engine: TodoEngine, tit
   const done = engine.list().tasks.find(item => item.id === task.id);
   assert.equal(done?.status, 'awaiting_review');
   return done as Task;
+}
+
+async function finishMerge(engine: TodoEngine, task: Task): Promise<Task> {
+  assert.ok(task.agentId);
+  assert.ok(task.mergeRequest);
+  const turnId = `merge-${task.mergeRequest.id}`;
+  await engine.onTurnStarted({ agentId: task.agentId, turnId });
+  await engine.onTurnEnded({ agentId: task.agentId, turnId, outcome: { kind: 'completed' } });
+  return engine.list().tasks.find(item => item.id === task.id)!;
+}
+
+async function acceptAndFinish(engine: TodoEngine, id: string, binding: ReviewBinding): Promise<Task> {
+  const sent = await engine.accept(id, binding);
+  assert.equal(sent.status, 'merging');
+  return finishMerge(engine, sent);
 }
 
 async function draft(engine: TodoEngine, title: string): Promise<Task> {
@@ -240,9 +261,10 @@ describe('engine rounds', () => {
       assert.equal(box.prepares.length, 0);
       assert.equal(engine.list().tasks[0]?.status, 'awaiting_review');
       assert.deepEqual(engine.list().tasks[0]?.review, saved);
-      const merged = await engine.accept(task.id, saved);
+      const merged = await acceptAndFinish(engine, task.id, saved);
       assert.equal(merged.status, 'merged');
-      assert.equal(box.prepares.length, 1);
+      assert.equal(box.prepares.length, 0);
+      assert.equal(box.sent.length, 1);
       await engine.dispose();
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -293,9 +315,10 @@ describe('engine rounds', () => {
       await engine.onTurnEnded({ agentId: box.created[0] ?? '', turnId: 'turn-2', outcome: { kind: 'completed' } });
       assert.equal(engine.list().tasks[0]?.status, 'awaiting_review');
       assert.deepEqual(engine.list().tasks[0]?.review, saved);
-      const merged = await engine.accept(task.id, saved);
+      const merged = await acceptAndFinish(engine, task.id, saved);
       assert.equal(merged.status, 'merged');
-      assert.equal(box.prepares.length, 1);
+      assert.equal(box.prepares.length, 0);
+      assert.equal(box.sent.length, 1);
       await engine.dispose();
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -525,15 +548,7 @@ describe('engine rounds', () => {
     const mergeReady = new Promise<void>(resolve => { mergeEntered = resolve; });
     const gate = new Promise<void>(resolve => { releaseMerge = resolve; });
     const box = harness({
-      prepare: async input => {
-        mergeEntered();
-        await gate;
-        return {
-          ok: true, mergeCommit: M, checkout: null, root: input.root, worktree: input.worktree,
-          taskBranch: input.taskBranch, targetBranch: input.targetBranch, expectedTargetHead: input.expectedTargetHead,
-          resultCommit: input.resultCommit, resultTree: input.resultTree,
-        };
-      },
+      send: async () => { mergeEntered(); await gate; },
     });
     const dir = await mkdtemp(join(tmpdir(), 'todo-engine-'));
     try {
@@ -555,7 +570,7 @@ describe('engine rounds', () => {
       const canceling = engine.cancel(second.id);
       releaseMerge();
       await assert.rejects(canceling, /cancel-rejected/);
-      assert.equal((await accepting).status, 'merged');
+      assert.equal((await finishMerge(engine, await accepting)).status, 'merged');
       assert.equal(engine.list().tasks.find(task => task.id === first.id)?.status, 'failed');
       await engine.dispose();
     } finally {
@@ -637,40 +652,197 @@ async function withEngine(box: ReturnType<typeof harness>, fn: (engine: TodoEngi
 
 const statusOf = (engine: TodoEngine, id: string) => engine.list().tasks.find(task => task.id === id)?.status;
 
+describe('merging in the original session', () => {
+  it('sends one merge command to the producing agent and waits for a verified result', async () => {
+    const box = harness();
+    await withEngine(box, async engine => {
+      const task = await reviewed(box, engine, 'context');
+      const sent = await engine.accept(task.id, reviewOf(task));
+      assert.equal(sent.status, 'merging');
+      assert.deepEqual(box.sent, [task.agentId]);
+      assert.equal(box.created.length, 1);
+      assert.equal(box.captures.length, 1);
+      assert.equal(box.prepares.length, 0);
+      const command = box.mergePrompts[0]!;
+      assert.notEqual(command.operationId, task.operationId);
+      assert.equal(command.operationId, sent.mergeRequest?.id);
+      for (const value of [task.repository, task.worktree!, task.branch!, 'main', R, H]) {
+        assert.ok(command.prompt.includes(value), value);
+      }
+      assert.match(command.prompt, /冲突/);
+      assert.match(command.prompt, /验证/);
+      assert.equal(box.archived.length, 0);
+      assert.equal((await engine.read(task.id)).task.status, 'merging');
+      await assert.rejects(engine.accept(task.id, reviewOf(task)), /accept-rejected/);
+      assert.equal(box.sent.length, 1);
+      const merged = await finishMerge(engine, sent);
+      assert.equal(merged.status, 'merged');
+      assert.equal(merged.mergeMethod, 'agent');
+      assert.equal(merged.agentId, task.agentId);
+    });
+  });
+
+  it('keeps claimed success unmerged until Git proves it, and continues in the same session', async () => {
+    let landed = false;
+    const box = harness({ verifyMerge: async () => landed
+      ? { ok: true, mergeCommit: M, taskHead: OTHER }
+      : { ok: false, reason: 'conflict', detail: 'note.txt has unresolved conflicts' } });
+    await withEngine(box, async engine => {
+      const task = await reviewed(box, engine, 'conflicts');
+      const failed = await acceptAndFinish(engine, task.id, reviewOf(task));
+      assert.equal(failed.status, 'merge_failed');
+      assert.match(failed.errorDetail ?? '', /note.txt/);
+      assert.equal(box.archived.length, 0);
+      assert.equal(box.removed.length, 0);
+      assert.equal(box.deleted.length, 0);
+      landed = true;
+      await engine.onTurnStarted({ agentId: task.agentId!, turnId: 'fix-conflicts' });
+      await engine.onTurnEnded({ agentId: task.agentId!, turnId: 'fix-conflicts', outcome: { kind: 'completed' } });
+      assert.equal(statusOf(engine, task.id), 'merged');
+      assert.equal(box.created.length, 1);
+      assert.equal(box.sent.length, 1);
+      assert.equal(box.deleted[0]?.expectedHead, OTHER);
+      assert.equal(engine.list().tasks[0]?.review?.resultCommit, R, 'the accepted binding is preserved');
+    });
+  });
+
+  it('does not clean up a failed or canceled merge turn', async () => {
+    for (const kind of ['failed', 'canceled'] as const) {
+      const box = harness();
+      await withEngine(box, async engine => {
+        const task = await reviewed(box, engine, kind);
+        await engine.accept(task.id, reviewOf(task));
+        await engine.onTurnStarted({ agentId: task.agentId!, turnId: 'merge-turn' });
+        await engine.onTurnEnded({ agentId: task.agentId!, turnId: 'merge-turn', outcome: { kind, error: 'stopped' } });
+        assert.equal(statusOf(engine, task.id), 'merge_failed');
+        assert.equal(box.archived.length, 0);
+        assert.equal(box.removed.length, 0);
+      });
+    }
+  });
+
+  it('ignores delayed original-turn and other-turn completions', async () => {
+    const box = harness();
+    await withEngine(box, async engine => {
+      const task = await reviewed(box, engine, 'old');
+      const sent = await engine.accept(task.id, reviewOf(task));
+      await engine.onTurnEnded({ agentId: task.agentId!, turnId: task.review!.turnId, outcome: { kind: 'failed' } });
+      assert.equal(statusOf(engine, task.id), 'merging');
+      await engine.onTurnStarted({ agentId: task.agentId!, turnId: 'current-merge' });
+      await engine.onTurnEnded({ agentId: task.agentId!, turnId: 'older-turn', outcome: { kind: 'completed' } });
+      assert.equal(statusOf(engine, task.id), 'merging');
+      assert.equal(box.archived.length, 0);
+      assert.equal((await finishMerge(engine, sent)).status, 'merged');
+    });
+  });
+
+  it('waits for permissions and for the original session to become idle before cleanup', async () => {
+    let inspection = idle();
+    const box = harness({ inspect: async () => inspection });
+    await withEngine(box, async engine => {
+      const task = await reviewed(box, engine, 'permission');
+      await engine.accept(task.id, reviewOf(task));
+      await engine.onTurnStarted({ agentId: task.agentId!, turnId: 'merge-turn' });
+      inspection = { exists: true, active: true, permission: true, status: 'running' };
+      await engine.onPermissionRequested(task.agentId!, 'p1');
+      assert.equal(engine.list().tasks[0]?.mergeRequest?.permission, true);
+      await engine.onTurnEnded({ agentId: task.agentId!, turnId: 'merge-turn', outcome: { kind: 'completed' } });
+      assert.equal(statusOf(engine, task.id), 'merging');
+      assert.equal(box.archived.length, 0);
+      inspection = idle();
+      await engine.onPermissionResolved(task.agentId!, 'p1');
+      await engine.read(task.id);
+      assert.equal(statusOf(engine, task.id), 'merged');
+      assert.equal(box.archived.length, 1);
+    });
+  });
+
+  it('serializes merge commands in one repository and holds the queue during the merge', async () => {
+    const box = harness();
+    await withEngine(box, async engine => {
+      const first = await reviewed(box, engine, 'first-merge');
+      const second = await reviewed(box, engine, 'second-merge');
+      const sent = await engine.accept(first.id, reviewOf(first));
+      await assert.rejects(engine.accept(second.id, reviewOf(second)), /merge-busy/);
+      const third = await draft(engine, 'queued');
+      await engine.startTask(third.id);
+      assert.equal(statusOf(engine, third.id), 'queued');
+      assert.equal(box.sent.length, 1);
+      await finishMerge(engine, sent);
+      await waitFor(() => statusOf(engine, third.id) === 'running');
+    });
+  });
+
+  it('reattaches to an active merge after restart without sending again', async () => {
+    let inspection = idle();
+    const box = harness({ inspect: async () => inspection });
+    const dir = await mkdtemp(join(tmpdir(), 'todo-merge-restart-'));
+    try {
+      let engine = await box.open(dir);
+      const task = await reviewed(box, engine, 'restart-merge');
+      await engine.accept(task.id, reviewOf(task));
+      inspection = { exists: true, active: true, permission: false, status: 'running', activeTurnId: 'live-merge' };
+      await engine.dispose();
+      engine = await box.open(dir);
+      await engine.recover();
+      assert.equal(statusOf(engine, task.id), 'merging');
+      assert.equal(box.sent.length, 1);
+      assert.equal(box.created.length, 1);
+      assert.equal(engine.list().tasks[0]?.mergeRequest?.turnId, 'live-merge');
+      inspection = idle();
+      await engine.read(task.id);
+      assert.equal(statusOf(engine, task.id), 'merged');
+      assert.equal(box.sent.length, 1);
+      await engine.dispose();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('keeps an interrupted idle merge for inspection when Git cannot prove success', async () => {
+    const box = harness({ verifyMerge: async () => ({ ok: false, reason: 'verify-failed', detail: 'not merged' }) });
+    const dir = await mkdtemp(join(tmpdir(), 'todo-merge-restart-'));
+    try {
+      let engine = await box.open(dir);
+      const task = await reviewed(box, engine, 'interrupted');
+      await engine.accept(task.id, reviewOf(task));
+      await engine.dispose();
+      engine = await box.open(dir);
+      await engine.recover();
+      assert.equal(statusOf(engine, task.id), 'needs_check');
+      assert.equal(box.sent.length, 1);
+      assert.equal(box.archived.length, 0);
+      await engine.dispose();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+});
+
 describe('engine failure paths', () => {
-  it('does not leave a task in merging when git throws, and frees the repository', async () => {
-    const box = harness({ prepare: async () => { throw new Error('git worktree list timed out'); } });
+  it('keeps the worktree when merge verification throws and frees the repository', async () => {
+    const box = harness({ verifyMerge: async () => { throw new Error('git timed out'); } });
     await withEngine(box, async engine => {
       const task = await reviewed(box, engine, 'boom');
       const next = await draft(engine, 'next');
-      const result = await engine.accept(task.id, reviewOf(task));
-      assert.equal(result.status, 'merge_failed');
+      const result = await acceptAndFinish(engine, task.id, reviewOf(task));
+      assert.equal(result.status, 'needs_check');
       assert.match(result.errorDetail ?? '', /timed out/);
-      assert.ok(result.review, 'the binding stays so accept can be tried again');
+      assert.ok(result.review);
+      assert.equal(box.archived.length, 0);
       await engine.startTask(next.id);
       await waitFor(() => statusOf(engine, next.id) === 'running');
     });
   });
 
-  it('settles a merge that threw after the ref moved from the target ref, not from the exception', async () => {
-    const moved = harness({ apply: async () => { throw new Error('rev-parse failed'); }, target: async () => M });
-    await withEngine(moved, async engine => {
-      const task = await reviewed(moved, engine, 'moved');
-      const result = await engine.accept(task.id, reviewOf(task));
-      assert.equal(result.status, 'merged');
-      assert.equal(result.mergeCommit, M);
-    });
-    const unmoved = harness({ apply: async () => { throw new Error('rev-parse failed'); } });
-    await withEngine(unmoved, async engine => {
-      const task = await reviewed(unmoved, engine, 'unmoved');
-      assert.equal((await engine.accept(task.id, reviewOf(task))).status, 'merge_failed');
-    });
-    const unreadable = harness({ apply: async () => { throw new Error('rev-parse failed'); }, target: async () => { throw new Error('no repo'); } });
-    await withEngine(unreadable, async engine => {
-      const task = await reviewed(unreadable, engine, 'unreadable');
-      const result = await engine.accept(task.id, reviewOf(task));
-      assert.equal(result.status, 'needs_check');
-      assert.equal(result.errorCode, 'interrupted-merge');
+  it('watches a send whose reply was lost without dispatching another command', async () => {
+    const box = harness({ send: async () => { throw new Error('reply lost'); } });
+    await withEngine(box, async engine => {
+      const task = await reviewed(box, engine, 'lost');
+      const sent = await engine.accept(task.id, reviewOf(task));
+      assert.equal(sent.status, 'merging');
+      assert.equal(sent.errorCode, 'gateway-unavailable');
+      assert.equal(box.sent.length, 1);
+      const merged = await finishMerge(engine, sent);
+      assert.equal(merged.status, 'merged');
+      assert.equal(merged.mergeCommit, M);
+      assert.equal(box.sent.length, 1);
     });
   });
 
@@ -713,7 +885,7 @@ describe('engine failure paths', () => {
       const other = await draft(engine, 'other');
       await engine.startTask(other.id);
       await waitFor(() => statusOf(engine, other.id) === 'running');
-      const accepted = engine.accept(task.id, reviewOf(task));
+      const accepted = acceptAndFinish(engine, task.id, reviewOf(task));
       const timeout = new Promise<'timeout'>(resolve => setTimeout(() => resolve('timeout'), 1000));
       const result = await Promise.race([accepted, timeout]);
       assert.notEqual(result, 'timeout', 'accept waited for the other task to finish');
@@ -772,7 +944,7 @@ describe('cleanup after a merge', () => {
     const box = harness();
     await withEngine(box, async engine => {
       const task = await reviewed(box, engine, 'tidy');
-      const merged = await engine.accept(task.id, reviewOf(task));
+      const merged = await acceptAndFinish(engine, task.id, reviewOf(task));
       assert.equal(merged.status, 'merged');
       assert.deepEqual(box.archived, [{ taskId: task.id, workspaceId: 'ws-1', worktree: `/wt/${task.id}` }]);
       assert.deepEqual(box.removed, [`/wt/${task.id}`]);
@@ -786,7 +958,7 @@ describe('cleanup after a merge', () => {
     const box = harness({ archive: async () => { if (down) throw new Error('daemon unreachable'); } });
     await withEngine(box, async engine => {
       const task = await reviewed(box, engine, 'later');
-      const merged = await engine.accept(task.id, reviewOf(task));
+      const merged = await acceptAndFinish(engine, task.id, reviewOf(task));
       assert.equal(merged.status, 'merged');
       assert.equal(merged.cleanup?.sessions, false);
       assert.match(merged.cleanup?.error ?? '', /daemon unreachable/);
@@ -804,7 +976,7 @@ describe('cleanup after a merge', () => {
     const box = harness({ removeWorktree: async () => { throw new Error('contains untracked files'); } });
     await withEngine(box, async engine => {
       const task = await reviewed(box, engine, 'dirty');
-      const merged = await engine.accept(task.id, reviewOf(task));
+      const merged = await acceptAndFinish(engine, task.id, reviewOf(task));
       assert.equal(merged.status, 'merged');
       assert.equal(merged.cleanup?.sessions, true);
       assert.equal(merged.cleanup?.worktree, false);
@@ -853,6 +1025,8 @@ class CollaborationHost {
   childRunning = false;
   isolation: 'local' | 'worktree' | null = 'local';
   failOpen = false;
+  mainAgentId: string | null = null;
+  disabled = false;
   readonly opens: Array<{ requestId: string; workspaceId: string; goal?: string; fresh?: boolean; collaboration: TaskCollaboration }> = [];
   readonly controls: Array<{ id: string; action: string }> = [];
   reads = 0;
@@ -927,7 +1101,8 @@ class CollaborationHost {
         id: `chat-${requestId}`,
         requestId,
         workspaceId: opened?.workspaceId ?? 'ws-1',
-        agentId: `agent-${requestId}`,
+        agentId: this.mainAgentId ?? `agent-${requestId}`,
+        ...(this.disabled ? { disabledAt: 1 } : {}),
         title: opened?.goal ?? 'task',
         mode: opened?.collaboration.mode,
         ...(this.isolation ? { isolation: this.isolation } : {}),
@@ -1362,11 +1537,74 @@ describe('collaboration lifecycle', () => {
       assert.equal(box.captures.length, 1);
       await assert.rejects(engine.accept(task.id, { ...reviewOf(ready), resultTree: OTHER }), /stale-client-review/);
       assert.equal(box.prepares.length, 0);
-      const merged = await engine.accept(task.id, reviewOf(ready));
+      const merged = await acceptAndFinish(engine, task.id, reviewOf(ready));
       assert.equal(merged.status, 'merged');
-      assert.equal(box.prepares.length, 1);
+      assert.equal(box.prepares.length, 0);
+      assert.equal(box.sent.length, 1);
       assert.equal(host.controls.some(item => item.action !== 'cancel' && item.action !== 'retry'), false);
     });
+  });
+
+  it('sends merge requests to the current collaboration main agent after its session was replaced', async () => {
+    for (const mode of ['full', 'execute_review'] as const) {
+      const host = new CollaborationHost();
+      let changeOnInspect = false;
+      const box = harness({ collaboration: host.port, inspect: async () => {
+        if (changeOnInspect) { host.mainAgentId = 'reviewer-current-main'; changeOnInspect = false; }
+        return idle();
+      } });
+      await withEngine(box, async engine => {
+        const saved = collaborationSnapshot(mode);
+        saved.settings.reviewerAsLead = true;
+        saved.settings.directorProfileId = saved.settings.reviewerProfileId!;
+        const task = await engine.createTask({
+          title: 'Merge collaboration', prompt: 'Do the work', repository: REPO, projectId: null, projectName: null,
+          targetBranch: 'main', provider: 'stub/model', modeId: null, collaboration: saved,
+        });
+        await engine.startTask(task.id);
+        await waitFor(() => statusOf(engine, task.id) === 'running');
+        host.phase = 'completed';
+        const ready = await settled(engine, task.id);
+        assert.equal(ready.collaborationAcceptance, 'accepted');
+        const oldMain = ready.agentId;
+        changeOnInspect = true;
+        const sent = await engine.accept(task.id, reviewOf(ready));
+        assert.equal(sent.agentId, 'reviewer-current-main');
+        assert.notEqual(sent.agentId, oldMain);
+        assert.deepEqual(box.sent, ['reviewer-current-main']);
+        assert.equal(box.created.length, 0, 'no implementer or replacement is created for the merge');
+        assert.equal(host.opens.length, 1);
+        assert.equal((await finishMerge(engine, sent)).status, 'merged');
+      });
+    }
+  });
+
+  it('refuses to send a merge to a missing or disabled collaboration main conversation', async () => {
+    for (const invalid of ['missing', 'disabled'] as const) {
+      const host = new CollaborationHost();
+      const box = harness({ collaboration: host.port });
+      await withEngine(box, async engine => {
+        const task = await engine.createTask({
+          title: 'Missing main', prompt: 'Do the work', repository: REPO, projectId: null, projectName: null,
+          targetBranch: 'main', provider: 'stub/model', modeId: null, collaboration: collaborationSnapshot(),
+        });
+        await engine.startTask(task.id);
+        await waitFor(() => statusOf(engine, task.id) === 'running');
+        host.phase = 'completed';
+        const ready = await settled(engine, task.id);
+        if (invalid === 'disabled') host.disabled = true;
+        else {
+          const status = host.port.status;
+          host.port.status = async () => {
+            const state = await status();
+            return { ...state, conversations: state.conversations.map(c => ({ ...c, agentId: undefined })) };
+          };
+        }
+        await assert.rejects(engine.accept(task.id, reviewOf(ready)), /merge-agent-missing/);
+        assert.equal(box.sent.length, 0);
+        assert.equal(box.archived.length, 0);
+      });
+    }
   });
 
   it('cancels a recovered main session and records the stopped collaboration state', async () => {
@@ -1711,7 +1949,7 @@ describe('collaboration lifecycle', () => {
       const box = harness();
       await withEngine(box, async engine => {
         const task = await reviewed(box, engine, 'merged-task');
-        const merged = await engine.accept(task.id, reviewOf(task));
+        const merged = await acceptAndFinish(engine, task.id, reviewOf(task));
         assert.equal(merged.status, 'merged');
         // The merge's automatic cleanup already archived, removed, and deleted once.
         assert.equal(box.deleted.length, 1);
