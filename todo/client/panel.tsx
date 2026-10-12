@@ -443,13 +443,13 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
       {BOARD_COLUMNS.map(column => <View key={column} style={{ flex: 1, minWidth: 0, gap: 8 }}>
         {header(column)}
         <View style={[lane, { flex: 1, minHeight: 0, overflow: 'hidden' }]}>
-          {columns[column].length === 0 ? <View style={{ flex: 1, minHeight: 64, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 }}>{empty(column, true)}</View> : <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 10, padding: 8 }}>{cards(column)}</ScrollView>}
+          {columns[column].length === 0 ? <View style={{ flex: 1, minHeight: 64, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 }}>{empty(column, true)}</View> : <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 8, padding: 8 }}>{cards(column)}</ScrollView>}
         </View>
       </View>)}
     </View> : <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24, gap: 18 }}>
       {BOARD_COLUMNS.map(column => <View key={column} style={{ gap: 8 }}>
         {header(column)}
-        {columns[column].length === 0 ? empty(column) : <View style={{ gap: 10 }}>{cards(column)}</View>}
+        {columns[column].length === 0 ? empty(column) : <View style={{ gap: 8 }}>{cards(column)}</View>}
       </View>)}
     </ScrollView>}
 
