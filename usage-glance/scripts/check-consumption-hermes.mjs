@@ -4,12 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-// Run the shipped bundle through Hermes eval, including the actual workspace
-// registration loop. Node alone does not reproduce Hermes's loop capture bug.
-// HERMES_BIN=/path/to/hermes node usage-glance/scripts/check-quota-hermes.mjs
+// Run the token-only contribution through the mobile dynamic eval boundary.
+// HERMES_BIN=/path/to/hermes node usage-glance/scripts/check-consumption-hermes.mjs
 assert.ok(process.env.HERMES_BIN, 'Set HERMES_BIN to the Hermes CLI executable');
 const source = await readFile(process.argv[2] ?? new URL('../dist/client.js', import.meta.url), 'utf8');
-const directory = await mkdtemp(join(tmpdir(), 'paseo-quota-hermes-'));
+const directory = await mkdtemp(join(tmpdir(), 'paseo-consumption-hermes-'));
 try {
   const path = join(directory, 'probe.js');
   await writeFile(path, `
@@ -24,13 +23,7 @@ try {
         { type: 'year', value: '2026' }, { type: 'month', value: '09' }, { type: 'day', value: '21' }
       ]; }
     }; } };
-    var refs = {}, currentWorkspace;
-    var react = {
-      useEffect: noop,
-      useRef: function() { return refs[currentWorkspace] || (refs[currentWorkspace] = { current: {} }); },
-      useLayoutEffect: function(effect) { effect(); },
-      useSyncExternalStore: function(subscribe, snapshot) { return snapshot(); }
-    };
+    var react = {};
     function element(type, props) { return { type: type, props: props }; }
     function QueryClient() {}
     QueryClient.prototype.mount = QueryClient.prototype.unmount = QueryClient.prototype.clear = noop;
@@ -50,42 +43,34 @@ try {
       if (name === '@tanstack/react-query') return { QueryClient: QueryClient, QueryObserver: QueryObserver, queryOptions: identity };
       throw Error('Unexpected module ' + name);
     }
-    var buttons = {}, ids = ['first', 'middle', 'last'];
+    var active = 0, subscriptions = 0, command, opened;
+    function register() { active++; return function() { active--; }; }
     var cleanup = globalThis.eval(${JSON.stringify(source)})(runtimeRequire).default({
-      paseo: {
-        providers: { subscribe: function() { return noop; } },
-        workspaces: {
-          subscribe: function() { return noop; },
-          list: function() { return Promise.resolve({ entries: ids.map(function(id) { return { id: id }; }), pageInfo: { hasMore: false } }); }
-        }
+      paseo: { providers: {
+        subscribe: function() { subscriptions++; return function() { subscriptions--; }; },
+        listUsage: function() { throw Error('unexpected quota query'); }
+      } },
+      rpc: function(contract) {
+        if (contract.name !== 'read-host-identity') throw Error('unexpected RPC');
+        return Promise.resolve({ id: 'test', label: 'Phone' });
       },
-      rpc: function() { return Promise.resolve({}); },
-      addSurface: function() { return noop; }, addSidebarItem: function() { return noop; }, addCommandCenterItem: function() { return noop; },
-      addHeaderButton: function(entry) {
-        buttons[entry.workspaceId] = entry.button;
-        return { update: noop, remove: noop };
-      }
+      addSurface: register, addSidebarItem: register,
+      addCommandCenterItem: function(item) { command = item; return register(); },
+      openSurface: function(id) { opened = id; },
+      addHeaderButton: function() { throw Error('unexpected quota header'); }
     });
     Promise.resolve().then(function() {
-      if (Object.keys(buttons).length !== ids.length) throw Error('missing workspace buttons');
-      ids.forEach(function(id) {
-        currentWorkspace = id;
-        var button = buttons[id], props = { workspaceId: id, host: { id: 'test' } };
-        button.icon(props); // Mount the workspace presenter.
-        for (var attempt = 0; attempt < 3; attempt++) {
-          button.behavior.onPress();
-          if (!button.icon(props).props.children[1]) throw Error('quota failed to open in ' + id);
-          button.behavior.onPress();
-          if (button.icon(props).props.children[1]) throw Error('quota failed to close in ' + id);
-        }
-      });
+      if (active !== 3 || subscriptions !== 2) throw Error('missing consumption registrations');
+      command.onSelect();
+      if (opened !== 'consumption') throw Error('consumption navigation');
       cleanup();
-      print('PASS Hermes: quota callbacks target each of three workspaces');
+      if (active !== 0 || subscriptions !== 0) throw Error('consumption cleanup');
+      print('PASS Hermes: token consumption entry points and cleanup');
     }).catch(function(error) { print(error.stack); });
   `);
   const result = spawnSync(process.env.HERMES_BIN, ['-Xes6-class', path], { encoding: 'utf8' });
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), 'PASS Hermes: quota callbacks target each of three workspaces', result.stdout + result.stderr);
+  assert.equal(result.stdout.trim(), 'PASS Hermes: token consumption entry points and cleanup', result.stdout + result.stderr);
   console.log(result.stdout.trim());
 } finally { await rm(directory, { recursive: true, force: true }); }

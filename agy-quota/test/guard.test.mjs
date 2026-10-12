@@ -59,12 +59,12 @@ test('ordinary Paseo commands bypass the patch guard', () => {
   }
 });
 
-test('restart reapplies quota patches before launching Paseo', () => {
+test('restart only reapplies Kimi and Grok renewal before launching Paseo', () => {
   const f = fixture();
   try {
     const result = spawnSync(f.guard, ['daemon', 'restart', '--json'], { env: f.env });
     assert.equal(result.status, 0);
-    assert.equal(readFileSync(f.patchLog, 'utf8'), `google\napply\n--cli\n${f.cliDir}\nkimi\napply\n--cli\n${f.cliDir}\ngrok\napply\n--cli\n${f.cliDir}\n`);
+    assert.equal(readFileSync(f.patchLog, 'utf8'), `kimi\napply\n--cli\n${f.cliDir}\ngrok\napply\n--cli\n${f.cliDir}\n`);
     assert.equal(readFileSync(f.realLog, 'utf8'), 'daemon\nrestart\n--json\n');
   } finally {
     f.cleanup();
@@ -95,12 +95,13 @@ test('fork startup reaches Paseo after real quota compatibility checks', t => {
   } finally { f.cleanup(); }
 });
 
-test('an incompatible Google patch blocks restart without invoking Paseo', () => {
+test('retired Google quota patch is ignored even with the legacy override configured', () => {
   const f = fixture({ googlePatchExit: 42 });
   try {
     const result = spawnSync(f.guard, ['restart'], { env: f.env });
-    assert.equal(result.status, 42);
-    assert.equal(existsSync(f.realLog), false);
+    assert.equal(result.status, 0);
+    assert.equal(readFileSync(f.realLog, 'utf8'), 'restart\n');
+    assert.equal(readFileSync(f.patchLog, 'utf8').includes('google'), false);
   } finally {
     f.cleanup();
   }

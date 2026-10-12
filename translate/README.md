@@ -21,7 +21,7 @@
 - 本地接口与 Qwen 接口的翻译请求显式关闭思考模式；本地接口同时传入 `enable_thinking: false` 和 `chat_template_kwargs.enable_thinking: false`，DashScope 使用顶层开关。实际是否关闭取决于接口对这些参数的支持。参数用法见 [Qwen 文档](https://qwen.readthedocs.io/en/latest/deployment/vllm.html#thinking-non-thinking-modes)和 [DashScope 文档](https://www.alibabacloud.com/help/en/model-studio/deep-thinking)。
 - API 地址、API Key 与模型（含可选的备用接口）按主机保存在 Paseo 插件设置中；同一时间最多处理 3 个请求，主接口与备用接口每次调用各最多等待 60 秒。
 - 支持复制结果，单次选区最多 5000 个字符。
-- 每次翻译 API 调用返回后，把时间、模型、主/备接口和返回的 token 用量追加到本机账本 `~/.paseo/translate/usage/YYYY-MM.jsonl`；同仓库的 [`usage-glance`](../usage-glance/README.md) 会把它作为「翻译」来源计入 Token 消耗统计。
+- 每次翻译 API 调用返回后，把时间、模型、主/备接口和返回的 token 用量追加到本机账本 `~/.paseo/translate/usage/YYYY-MM.jsonl`，可用于本地统计。
 
 ## 安装
 
@@ -57,7 +57,7 @@ paseo reload
 
 ## Token 用量账本
 
-只要 API 返回了响应（即使随后内容解析失败，token 也已消耗），插件就会向 `$PASEO_HOME/translate/usage/YYYY-MM.jsonl`（默认 `~/.paseo/translate/usage/`，可用 `PASEO_TRANSLATE_USAGE_DIR` 改到其他目录）追加一行 JSON：调用时间、模型名、`primary`/`fallback`，以及 OpenAI Chat Completions 的 `usage`（`prompt_tokens`、`completion_tokens`、`prompt_tokens_details.cached_tokens`、`completion_tokens_details.reasoning_tokens`）。接口没有返回 `usage` 时记为 `null`，统计页会提示有多少次调用缺少 token 数。账本不保存原文、译文、API 地址和 Key；写入失败不影响翻译。usage-glance 安装在同一台 daemon 主机上时会自动发现该目录，无需额外设置；删除该目录即清空历史。
+只要 API 返回了响应（即使随后内容解析失败，token 也已消耗），插件就会向 `$PASEO_HOME/translate/usage/YYYY-MM.jsonl`（默认 `~/.paseo/translate/usage/`，可用 `PASEO_TRANSLATE_USAGE_DIR` 改到其他目录）追加一行 JSON：调用时间、模型名、`primary`/`fallback`，以及 OpenAI Chat Completions 的 `usage`（`prompt_tokens`、`completion_tokens`、`prompt_tokens_details.cached_tokens`、`completion_tokens_details.reasoning_tokens`）。接口没有返回 `usage` 时记为 `null`。账本不保存原文、译文、API 地址和 Key；写入失败不影响翻译。[Token 消耗统计插件](../usage-glance/README.md) 会读取该账本并将其计入「翻译」来源；删除该目录即清空历史。
 
 ## 手机端每条回复下方的翻译按钮
 

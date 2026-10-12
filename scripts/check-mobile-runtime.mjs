@@ -12,6 +12,22 @@ const require = createRequire(join(root, 'translate/package.json'));
 const { build } = require('esbuild');
 assert.ok(process.env.HERMES_BIN, 'Set HERMES_BIN to the Hermes CLI executable');
 const probes = [
+  ['usage-glance', `
+    import { createHostRegistry, getHostRegistry } from './client/hosts';
+    export function run() {
+      const registry = createHostRegistry();
+      let notices = 0;
+      const stop = registry.subscribe(() => notices++);
+      const registration = registry.register({ consumption: { client: { getQueryCache: () => ({
+        subscribe: () => () => {}, findAll: () => [],
+      }) } } });
+      registration.identify({ id: 'phone', label: 'Phone' });
+      if (!registry.get('phone')?.online || registry.getSnapshot().length !== 1 || notices !== 1) throw Error('host state');
+      registration.dispose(); stop();
+      if (registry.get('phone')?.online) throw Error('host cleanup');
+      if (getHostRegistry() !== getHostRegistry()) throw Error('shared registry');
+      return Promise.resolve();
+    }`],
   ['translate', `
     import { splitReply, installReplyTranslations } from './client/reply-translation';
     export function run() {
@@ -30,33 +46,6 @@ const probes = [
       if (result.items[0].data.text !== text) throw Error('reply source');
       stop();
       if (registration !== null || renderers !== 0) throw Error('reply cleanup');
-      return Promise.resolve();
-    }`],
-  ['usage-glance', `
-    import { createHostRegistry, getHostRegistry } from './client/hosts';
-    import { createQuotaDialogController } from './client/quota-dialog';
-    export function run() {
-      const registry = createHostRegistry();
-      let notices = 0;
-      const stop = registry.subscribe(() => notices++);
-      const registration = registry.register({ consumption: { client: { getQueryCache: () => ({
-        subscribe: () => () => {}, findAll: () => [],
-      }) } } });
-      registration.identify({ id: 'phone', label: 'Phone' });
-      if (!registry.get('phone')?.online || registry.getSnapshot().length !== 1 || notices !== 1) throw Error('host state');
-      registration.dispose(); stop();
-      if (registry.get('phone')?.online) throw Error('host cleanup');
-      if (getHostRegistry() !== getHostRegistry()) throw Error('shared registry');
-      const quota = createQuotaDialogController();
-      const first = {}, duplicate = {};
-      const remove = quota.register(first, 'workspace');
-      quota.register(duplicate, 'workspace');
-      quota.toggle('workspace');
-      if (quota.getSnapshot()?.presenter !== first) throw Error('quota open');
-      remove();
-      if (quota.getSnapshot()?.presenter !== duplicate) throw Error('quota transfer');
-      quota.dispose();
-      if (quota.getSnapshot() !== null) throw Error('quota cleanup');
       return Promise.resolve();
     }`],
 ];

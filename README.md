@@ -2,13 +2,13 @@
 
 Multi-package repository of Paseo plugins and companion extensions. The active Paseo plugins support daemon and app versions 0.8.x through 0.11.x, including prereleases, except `paseo-shared-tools`, `paseo-todo` and `paseo-provider-update`, which need 0.10.x or newer. The separate quota and notification patches retain their own version restrictions. Enable plugins under **Settings → Plugins** on the target host first. Each active package can also be installed on its own as described below; see each directory's README for updating, uninstalling and limitations.
 
-Install the active packages at once (three plugins, the quota patch and Kimi renewal):
+Install the active packages at once (three plugins and Kimi renewal):
 
 ```bash
 ./install-all.sh
 ```
 
-By default this installs from the local checkout, so keep this directory around. `--git` installs the plugins from GitHub instead; `--replace` removes the old single-repo sources before installing; `--dry-run` only previews. `--skip-quota` / `--skip-kimi` skip the corresponding patches. Antigravity Hub is retained as source only; the install and update scripts do not register its provider entry. `--skip-hub` remains accepted for older commands.
+By default this installs from the local checkout, so keep this directory around. `--git` installs the plugins from GitHub instead; `--replace` removes the old single-repo sources before installing; `--dry-run` only previews. `--skip-kimi` skips Kimi renewal. The old Antigravity quota patch and Hub are retained as source only; install, update, and the CLI wrapper do not load the quota patch or register the Hub provider. `--skip-quota` and `--skip-hub` remain accepted for older commands.
 
 Update the active packages that are installed:
 
@@ -16,7 +16,7 @@ Update the active packages that are installed:
 ./update-all.sh
 ```
 
-This runs `git pull`, then updates active items that were installed from this repo. Items that are not installed are skipped. `--skip-pull` updates without pulling. The archived `director/`, `file-upload/` and `response-speed/` sources are retained, but neither script installs, updates, or individually reloads these plugins, even if they are already installed.
+This runs `git pull`, then updates active items that were installed from this repo. Items that are not installed are skipped. `--skip-pull` updates without pulling. The archived `director/`, `file-upload/` and `response-speed/` sources are retained, but neither script installs, updates, or individually reloads these plugins, even if they are already installed. Usage Glance provides token consumption statistics only; account quotas use Paseo's official feature.
 
 On macOS `~/.local/bin` is not on the PATH by default, and nvm gets ahead of it. Set up the wrapper like this:
 
@@ -36,9 +36,9 @@ It should print `.../paseo-plugins/agy-quota/bin/paseo`.
 
 Plugins and patches run with the daemon user's privileges; read the source in the corresponding directory before installing.
 
-## [Usage Glance](usage-glance)
+## [Token Usage](usage-glance)
 
-Shows a quota summary and breakdown for the current host in the top-right corner of the workspace, with providers pinnable to the top bar. The "Token usage" sidebar entry opens a standalone statistics page with multi-host totals, per-host filtering and a monthly model heatmap; common ranges refresh in the background every minute and cached data is shown first when opened. Usage follows each host's own Providers toggles and supports Codex, Claude Code, Kimi, Grok, Antigravity and Pi, grouped by provider, model, model vendor or host. Install or update it on each host separately. Plugin ID: `paseo-usage-glance`. Antigravity quota falls back to the signed-in official agy CLI (1.1.11+) when Paseo returns no usable quota; the separate [`agy-quota`](agy-quota) patch is only needed for older Plan usage pages.
+The **Token Usage** sidebar page shows recorded token consumption, multi-host totals, provider/workspace/model breakdowns and a monthly heatmap on desktop and mobile. Common ranges refresh every minute. Plugin ID: `paseo-usage-glance`. The former quota header and quota queries are disabled; use Paseo's official quota feature for account limits. Install or update on each host to include its records.
 
 ```bash
 paseo plugin add git:lalaze/paseo-plugins --path usage-glance
@@ -105,9 +105,9 @@ paseo plugin add git:lalaze/paseo-plugins --path translate
 
 Details: [translate/README.md](translate/README.md)
 
-## [Antigravity quota patch](agy-quota)
+## [Antigravity quota patch — archived source](agy-quota)
 
-Adds Google Antigravity quota reading to Plan usage, plus optional on-demand Kimi and Grok credential renewal. This is an install-time patch, not a `paseo plugin` package.
+The old Google Antigravity quota reader is retained for reference. Use the official Antigravity provider. Install, update, and CLI startup do not apply this patch. Kimi and Grok renewal remain independent. The commands below are only for explicitly restoring the old patch.
 
 ```bash
 git clone git@github.com:lalaze/paseo-plugins.git
@@ -139,7 +139,7 @@ Details: [antigravity-hub/README.md](antigravity-hub/README.md)
 
 The former single-purpose repositories were merged here by directory. On hosts where they are installed, remove the old sources first, then install with the commands above:
 
-- `paseo-agy-quote` → [Usage Glance](usage-glance/README.md), [quota patch](agy-quota/README.md), [Hub ACP](antigravity-hub/README.md)
+- `paseo-agy-quote` → [quota patch](agy-quota/README.md), [Hub ACP](antigravity-hub/README.md). [Token Usage](usage-glance/README.md) retains consumption statistics under the existing plugin ID; use Paseo's official quota feature for limits.
 
 AI collaboration has moved into Paseo itself. The former `paseo-sub-agnet` / `paseo-director` plugin is [archived source](director/README.md); use the built-in feature instead of reinstalling it. Disable the old plugin before enabling built-in collaboration, and retain `$PASEO_HOME/director` (or `PASEO_DIRECTOR_DATA_DIR`) for migration.
 
@@ -147,12 +147,12 @@ The former `paseo-file-upload` repository is preserved as [archived source](file
 
 ## Mobile runtime regression check
 
-The client state of Usage Glance is built with factory functions. When Hermes evaluates the esbuild output dynamically, instantiating anonymous classes can fail with `Cannot read property 'prototype' of undefined`, so dynamic loading must be verified even after the Node tests pass. The check also covers Translate's native reply registration and long-reply splitting.
+The check covers Token Usage's multi-host state and Translate's native reply registration and long-reply splitting. Dynamic loading in Hermes must be verified even after the Node tests pass.
 
-Install the dev dependencies of the two active plugins, get the [official Hermes CLI](https://github.com/facebook/hermes/releases/tag/v0.13.0), and run from the repo root:
+Install Usage Glance's and Translate's dev dependencies, get the [official Hermes CLI](https://github.com/facebook/hermes/releases/tag/v0.13.0), and run from the repo root:
 
 ```bash
 HERMES_BIN=/path/to/hermes node scripts/check-mobile-runtime.mjs
 ```
 
-The check loads the compiled output through `eval` and verifies creation and cleanup of multi-host registration state and reply translations. RPC, schema and query-cancellation detection use stubs; the mobile UI still needs verification on a real device.
+The check loads the compiled output through `eval` and verifies multi-host registration, reply translations and cleanup. RPC, schema and query-cancellation detection use stubs; the mobile UI still needs verification on a real device.

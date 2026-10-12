@@ -1,6 +1,5 @@
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 import type { PaseoApi } from '@getpaseo/client';
-import { headerSettings } from './shared/settings';
 import { readConsumption, readWorkspaceConsumption, enabledConsumptionSources, unsupportedConsumptionProviders } from './shared/consumption';
 import { ConsumptionService } from './server/consumption';
 import { readHostIdentity } from './shared/hosts';
@@ -9,11 +8,8 @@ import { startConsumptionSync } from './server/consumption-sync';
 import { readWorkspaceCatalog } from './server/workspace-catalog';
 import { readWorkspaceSource } from './server/workspace-consumption';
 import { hasTranslateLedger } from './server/translate';
-import { registerAntigravityQuota } from './server/antigravity-usage';
 
 export default function contribute(server: PluginServerContext) {
-  registerAntigravityQuota(server);
-  server.registerSettings(headerSettings);
   server.handle(readHostIdentity, () => hostIdentity());
   const consumption = new ConsumptionService();
   let catalog: ReturnType<typeof readWorkspaceCatalog> | undefined;

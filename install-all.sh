@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键安装本仓库的插件和额度补丁；Hub ACP 源码保留，不自动挂载入口。
+# 一键安装本仓库的插件和 Kimi 续期；旧 Antigravity Hub/额度扩展不自动加载。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,19 +10,19 @@ USE_GIT=0
 REPLACE=0
 SKIP_KIMI=0
 SKIP_HUB=1
-SKIP_QUOTA=0
 
 usage() {
   cat <<'EOF'
 用法: ./install-all.sh [选项]
 
 从本仓库安装启用的包：
-  - paseo-usage-glance / paseo-translate / paseo-shared-tools
-  - Antigravity 额度补丁、Kimi 按需续期
+  - paseo-usage-glance（Token 消耗） / paseo-translate / paseo-shared-tools
+  - Kimi 按需续期
 
-Antigravity Hub ACP 入口已停用，源码保留，不参与默认安装。
+Antigravity Hub ACP 和旧额度补丁已停用，源码保留，不参与安装。
 
 Director 已归档，请使用 Paseo 内置协作；即使已安装也不会处理旧插件。
+Token 消耗统计由 paseo-usage-glance 提供；账号额度请使用 Paseo 官方功能。
 
 已从本仓库安装的会跳过。仍指向旧单仓库的默认只警告，加 --replace 才会卸掉再装。
 
@@ -30,7 +30,7 @@ Director 已归档，请使用 Paseo 内置协作；即使已安装也不会处�
   --git          插件从 GitHub 安装（paseo plugin add git:lalaze/paseo-plugins --path …）
                  默认从本仓库本地目录安装，本目录需长期保留
   --replace      卸掉旧来源后改从本仓库安装
-  --skip-quota   不装 Antigravity 额度补丁
+  --skip-quota   兼容旧参数；旧 Antigravity 额度补丁已停用
   --skip-kimi    不装 Kimi 续期补丁
   --skip-hub     兼容旧参数；Hub 入口已默认停用
   --dry-run      只打印将要执行的步骤
@@ -42,7 +42,7 @@ for arg in "$@"; do
   case "$arg" in
     --git) USE_GIT=1 ;;
     --replace) REPLACE=1 ;;
-    --skip-quota) SKIP_QUOTA=1 ;;
+    --skip-quota) : ;;
     --skip-kimi) SKIP_KIMI=1 ;;
     --skip-hub) SKIP_HUB=1 ;;
     --dry-run) DRY_RUN=1 ;;
@@ -295,17 +295,13 @@ install_hub() {
   fi
 }
 
-# Director 已迁入 Paseo 内置协作；归档源码不参与安装、更新或单独 reload。
+# Director 已由 Paseo 内置功能取代；usage-glance 仅提供 Token 消耗统计。
 install_plugin usage-glance paseo-usage-glance
 install_plugin translate paseo-translate
 install_plugin shared-tools paseo-shared-tools
 
-if [ "$SKIP_QUOTA" = 1 ]; then
-  note "SKIP agy-quota（--skip-quota）"
-  skip=$((skip + 1))
-else
-  install_patch agy-quota patch.mjs "Antigravity 额度补丁"
-fi
+note "SKIP agy-quota（旧 Antigravity 额度补丁已停用；源码保留）"
+skip=$((skip + 1))
 
 if [ "$SKIP_KIMI" = 1 ]; then
   note "SKIP kimi-quota（--skip-kimi）"

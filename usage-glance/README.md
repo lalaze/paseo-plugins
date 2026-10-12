@@ -1,24 +1,18 @@
-# Paseo 额度与 token 消耗速览
+# Paseo Token 消耗统计
 
-适用于 Paseo daemon 和客户端 **0.8.x–0.11.x（含 beta）**。本插件位于多插件仓库 [`lalaze/paseo-plugins`](https://github.com/lalaze/paseo-plugins) 的 [`usage-glance/`](.) 目录。电脑端的工作区右上角直接显示额度摘要，例如「Codex 余28%」。默认显示所有可用供应商中最低的剩余百分比，并标明供应商；点击展开后可把顶栏固定到某一个供应商，该选择保存在当前主机，刷新或重开工作区后仍有效。未固定时继续跟随最低剩余。在聊天、终端和文件标签之间切换时仍可查看。点击展开全部明细。顶部按钮宽度由 Paseo 限制为 160px，因此使用短名称；AGY 表示 Antigravity。窄窗口或顶部有多个其他插件按钮时，Paseo 可能将按钮放入更多菜单。
+适用于 Paseo daemon 和客户端 **0.8.x–0.11.x（含 beta）**。保留插件 ID `paseo-usage-glance`，已有安装可直接更新。插件专门统计已使用的 token，提供多主机汇总、Workspace/模型分类和月度热力图；账号剩余额度使用 Paseo 官方功能。
 
-绿色表示充足，黄色表示剩余不超过 25%，红色表示剩余不超过 10%。顶部额度入口只显示**当前工作区所在主机**已返回的剩余额度，没有额度明细的供应商不列出。明细不显示消耗页签和主机选择器；顶栏供应商设置默认收起，点击「顶栏显示设置」展开。点击顶部入口打开 Paseo 的额度明细对话框，手机端顶部仅显示图标。
-
-每个供应商只显示一张额度卡片，明细和顶栏统一使用 Paseo 返回的首条默认登录记录。通过 CC Switch 等工具切换账号后，Paseo 可能在列表末尾附带旧会话记住的账号；这些重复记录不再显示，也不参与最低剩余比较。当前默认记录暂不可用时，不会改用旧账号的额度。
-
-进度条统一表示**剩余**。同一账号有多个限额时，摘要使用最低剩余百分比，明细保留每个窗口和真实重置时间。官方 Antigravity（provider id `antigravity`）优先读取 Paseo 已返回的有效额度；缺少额度时，通过插件 RPC 调用本机官方 `agy -p /usage --output-format json`，补充 Gemini 与 Claude/GPT 的周额度、5 小时额度和重置时间。插件不注册同名 usage source，避免与 Paseo 0.11 的内置源冲突。官方 CLI 需为 1.1.11 或更新版本；旧版不会执行该命令，以免把 `/usage` 当作模型提示词。官方读取在后台执行，最多等待 60 秒，不阻塞插件 RPC；读取期间客户端约每 1.5 秒检查进度。成功结果缓存 5 分钟，失败后至少等待 1 分钟再试；多个客户端共用正在进行的读取。失败刷新保留上次成功的额度与真实时间戳，并标记「待更新」，不会清空卡片或把旧结果当作新额度。首次读取尚未成功时显示读取状态，不猜测剩余百分比。顶栏短名仍是 AGY。不再依赖已停用的 antigravity-hub / antigravity-acp。
-
-同一客户端只保留一个打开的额度对话框；在其他工作区或主机打开额度时，会关闭上一份。对话框由按钮点击控制，同一个工作区的顶栏即使被重复挂载也只显示一份；插件重载或卸载时清理对话框。0.7.3 修复了 0.7.2 通过弹层挂载互斥导致点击后立即关闭的回归。0.7.4 为手机 App 使用独立原生弹窗，内部只有一个滚动列表，避开 Paseo 0.8 底部菜单的手势和动态高度限制。0.7.5 修复手机 Hermes 运行时下，多工作区按钮回调错误引用最后一个工作区、导致点击无反应的问题。0.7.6 精简手机弹窗：移除重复标题和高亮边框，使用圆角分组卡片，周期和重置时间在左、剩余额度和短进度条在右。手机弹窗标题为「可用额度」，整体高度为窗口的 65%（最多 600），支持关闭按钮、点击遮罩和 Android 返回键关闭。
+从 0.8.0 起恢复安装和更新，仅保留 Token 消耗功能，不再注册顶部额度按钮、额度设置或 Antigravity 额度查询。
 
 ## 独立消耗页面与多主机汇总
 
-点击 Paseo **侧边栏「Token 消耗」**打开独立页面，也可在命令中心搜索「查看 Token 消耗」。桌面端和手机端均支持。页面提供消耗汇总和月度热力图，默认选择 **「全部主机」**。在同一个客户端连接各台主机，并在**每台 daemon 主机**安装或更新本插件：
+点击 Paseo **侧边栏「Token 消耗」**打开独立页面，也可在命令中心搜索「查看 Token 消耗」。桌面端和手机端均支持。页面提供消耗汇总和月度热力图，默认选择 **「全部主机」**；汇总依赖同一个客户端连接的各台主机已加载本插件：
 
 - **消耗合计**：按相同日期范围和客户端时区汇总各主机的 token，可按 Provider、Workspace、模型、模型厂商或主机分组。每台主机独立遵循自己的 Providers 开关；例如只在 Mac 上启用 Claude Code，就只计入 Mac 的 Claude Code 记录。
-- **主机切换**：页面右上方（手机端在标题下方）选择全部或单台主机，消耗汇总和月度热力图一起切换。同名模型在明细和热力图选择器中带有主机名称，便于区分。额度始终在各自工作区的顶部入口查看。
+- **主机切换**：页面右上方（手机端在标题下方）选择全部或单台主机，消耗汇总和月度热力图一起切换。同名模型在明细和热力图选择器中带有主机名称，便于区分。账号额度通过 Paseo 官方功能查看。
 - **独立加载**：各主机并行读取，先展示已经返回的结果。断开连接或读取失败时，保留当前客户端会话内该主机、该日期范围的缓存，明确提示合计可能不完整；从未读取的范围显示「—」。
 
-主机列表来自此插件在**当前客户端会话中已加载的各主机实例**。未安装、未更新，或本次打开客户端后始终未连接的主机不会自动出现。发现数量不代表账号的全部主机。其他主机未出现时，请更新该主机插件并保持连接，必要时刷新客户端。
+主机列表来自此插件在**当前客户端会话中已加载的各主机实例**。未安装、未更新，或本次打开客户端后始终未连接的主机不会自动出现。发现数量不代表账号的全部主机。
 
 聚合复用 Paseo 已有的主机连接，无需额外服务、SSH 配置或 API key。当前适配 Paseo 0.8.x–0.11.x 的客户端插件加载方式；跨主机缓存不写入磁盘，刷新客户端后重新读取。
 
@@ -50,7 +44,7 @@
 - 无法对齐的模型分别显示为 **「用量更新中」**、**「待核对用量」** 或 **「归属读取失败」**，与缺少工作区匹配的记录分开。展开可查看会话明细、每日合计及输入/输出/缓存/推理的差异项。该模型暂按每日总量保留，其他核对成功的模型正常归属；不会按比例猜测分配差额。
 - 首次切入此分类才按需读取，随后在页面打开期间每分钟刷新。它使用独立的日期范围缓存，不把整月的会话总量套用到今日或近 7 天；最多保留 8 组范围，每次最多同时读取两个来源。其余分类和热力图继续使用原来的每日缓存。跨主机查看需要在各主机更新插件。
 
-这里展示的是项目已记录的 **token 消耗**；账号剩余额度仍在顶栏额度入口查看。
+这里展示的是项目已记录的 **token 消耗**；账号剩余额度请使用 Paseo 官方功能查看。
 
 ### 月度模型热力图
 
@@ -93,52 +87,24 @@ Codex、Claude Code、Kimi、Grok 消耗读取使用 **ccusage 20.0.20** 的离�
 
 准备脚本会将锁定的本机平台采集器复制到 `$XDG_CACHE_HOME/paseo-usage-glance`（默认 `~/.cache/paseo-usage-glance`），按文件内容的 SHA-256 分目录保存，以适应 Paseo 移动 Git 安装目录。可用 `PASEO_USAGE_CACHE_DIR` 覆盖；配置需在安装/构建时生效。缓存只放采集器和空配置，不保存会话记录。删除缓存后需重新执行插件准备或更新；卸载插件不会自动删除可复用的采集器缓存。
 
-## 安装
+## 安装与更新
 
-如果只是换一台电脑连接同一个 Paseo daemon，无需重复安装。每个独立 daemon 需要单独安装，daemon 和客户端均需为 **0.8.x–0.11.x（含 beta）**。插件 ID 为 `paseo-usage-glance`。
-
-在目标主机的 Paseo **Settings → Plugins** 开启插件，并确保该主机安装了 Git、npm，且运行 daemon 的用户有本仓库的 GitHub SSH 读取权限。然后在该主机执行：
+在每台需要统计的 daemon 主机上启用 **Settings → Plugins**，然后安装：
 
 ```bash
 paseo plugin add git:lalaze/paseo-plugins --path usage-glance
-paseo plugin ls paseo-usage-glance --json
 ```
 
-SSH 源：
-
-```bash
-paseo plugin install git@github.com:lalaze/paseo-plugins.git:usage-glance --ref main
-```
-
-`--path usage-glance` 或 `:usage-glance` 指定本多插件仓库中的插件子目录。安装会自动运行锁定依赖的 `npm ci --include=dev --ignore-scripts` 和类型检查，再由 Paseo 编译加载；不需要手动克隆或构建。失败时保留已安装的版本。
-
-显示 `running` 后，刷新客户端或重新打开工作区，即可在顶部看到额度。新机器读取的是该机器上已登录账号的额度；Antigravity 需在该机器安装并登录官方 agy 1.1.11+，本插件可以直接补充额度，无需额外安装额度补丁。旧版 Paseo 的 Plan usage 页面仍可使用 [`agy-quota`](../agy-quota/README.md) 补丁。
-
-## 更新
-
-GitHub 源安装：
+已有 Git 安装直接更新：
 
 ```bash
 paseo plugin update paseo-usage-glance
 paseo plugin ls paseo-usage-glance --json
 ```
 
-要统一查看两台或更多主机，请在**每台 daemon 主机**分别执行上述更新命令；均显示 `running` 后刷新客户端，并保持这些主机连接。
+本仓库的 `install-all.sh` 和 `update-all.sh` 也会处理本插件。显示 `running` 后刷新客户端，从侧边栏「Token 消耗」或命令中心「查看 Token 消耗」进入。跨主机汇总需要各主机都安装插件并保持连接。安装会自动准备锁定依赖和采集器，不需要新增 API key。
 
-本地目录安装不能使用 `paseo plugin update`。覆盖源码后：
-
-```bash
-npm ci --include=dev --ignore-scripts
-npm run check
-paseo plugin reload paseo-usage-glance
-```
-
-如果之前通过本地目录或旧仓库 `paseo-agy-quote` 安装，请先卸载再从本仓库安装：
-
-```bash
-paseo plugin remove paseo-usage-glance
-paseo plugin add git:lalaze/paseo-plugins --path usage-glance
-```
+如果之前已卸载旧额度插件，重新安装即可读取仍保留的历史记录；插件内存缓存会重新建立。
 
 ## 卸载
 
@@ -146,39 +112,25 @@ paseo plugin add git:lalaze/paseo-plugins --path usage-glance
 paseo plugin remove paseo-usage-glance
 ```
 
-只移除展示扩展，原有额度读取补丁继续工作，顶栏固定的供应商选择也不再使用。失败时查看：
+卸载会停止统计后台任务，不删除 CLI 历史记录或翻译账本，不影响 Paseo 官方额度功能。
 
-```bash
-paseo plugin logs paseo-usage-glance
-```
+## 本地开发
 
-## 本地目录开发
-
-如果已经克隆仓库，在 `usage-glance` 目录运行：
+在 `usage-glance` 目录运行：
 
 ```bash
 npm ci --include=dev --ignore-scripts
 npm run check
 paseo plugin install "$PWD"
-paseo plugin ls paseo-usage-glance --json
 ```
 
-返回 `running` 后重新打开聊天即可。安装到现有 daemon，不需要重启。额度视图通过 Paseo 官方 `providers.listUsage()` 读取已有额度补丁和原生额度数据，Antigravity 未返回有效额度时通过插件 RPC 读取官方 agy；消耗视图通过插件 RPC 读取本机记录。顶栏固定的供应商写入该主机的插件设置，同一 daemon 的客户端共用。插件本身不读取凭证、不发送模型消息。
+已从此本地目录安装时，修改后执行 `paseo plugin reload paseo-usage-glance`。插件读取本机记录，不读取凭证或发送模型消息。`build` 使用当前 Node 安装中的 Paseo 官方编译器，也可通过 `PASEO_COMPILER` 指定 `compiler.js`。
 
-Paseo 沿用 5 分钟额度缓存，插件每分钟检查一次。手动刷新也遵循 daemon 缓存；界面显示数据实际更新时间。连接失败或数据过期时，标签显示「待更新」，概览明确标注上次数据。没有剩余窗口或余额的供应商不参与顶栏比较，也不会被当成 0%；Antigravity 正在后台读取或读取失败时，明细保留状态卡片和上次成功的额度。
-
-Claude 可另外安装 [`claude-patch.mjs` 限频补丁](../agy-quota/README.md#claude-额度查询限频可选)，将外部查询降到每 15 分钟最多一次，并遵守 429 的 `Retry-After`。此时界面和 daemon 仍可读取本机缓存，Claude 数字的真实查询间隔为 15 分钟或更长；daemon 的总响应时间戳不代表 Claude 刚刚访问了远端。
-
-`paseo plugin install` 会记录目录路径。移动本仓库后，需要重新安装从该路径装过的插件。`build` 使用当前 Node 安装中的 Paseo 官方编译器，也可通过 `PASEO_COMPILER` 指定 `compiler.js`。
-
-手机回归检查需在构建后额外运行：
+手机运行时检查（在仓库根目录运行）：
 
 ```bash
-HERMES_BIN=/path/to/hermes node scripts/check-quota-hermes.mjs
+HERMES_BIN=/path/to/hermes node scripts/check-mobile-runtime.mjs
+HERMES_BIN=/path/to/hermes node usage-glance/scripts/check-consumption-hermes.mjs
 ```
 
-该检查用官方 Hermes CLI 动态执行实际客户端 bundle，验证三个工作区的额度按钮分别能够打开、关闭和再次打开；只运行 Node 测试无法复现手机端的循环变量闭包问题。0.7.5 已在 Android 版 Paseo 0.8 上验证点击打开、限高、列表滚动、关闭及再次打开。0.7.7 将手机弹窗改为从底部滑入的全宽抽屉，保留 65% 限高、固定标题和独立滚动列表。顶部拖拽条或标题区域下滑可收起；列表滑动只滚动内容。底部预留系统导航空间，设置入口不会被遮挡。
-
-0.7.8 修复 Antigravity 额度在缓存过期或读取超时后消失的问题：官方 CLI 改为后台读取，服务端和客户端保留成功结果，失败时明确显示待更新，恢复后自动替换旧结果。
-
-0.7.9 修复切换账号后重复显示 Codex 额度的问题：在查询入口按供应商保留首条默认登录记录，统一桌面、手机、顶栏及明细的账号选择。
+检查动态加载后的统计入口、后台同步、主机注册和卸载清理；实际手机的页面布局和触控仍需在设备上验证。

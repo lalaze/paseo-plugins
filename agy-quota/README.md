@@ -2,7 +2,7 @@
 
 为 Linux 和 macOS 上的 Paseo **Plan usage** 增加当前 Google Antigravity 账号的额度。独立保存补丁源码、兼容性基线、测试和回退工具，不需要修改或重新构建 Paseo 前端。本目录是 [paseo-plugins](../README.md) 中的配套补丁，不是 `paseo plugin` 包。
 
-**直接查看额度：** Paseo 0.8.x 可安装 [额度速览插件](../usage-glance/README.md)，电脑端工作区右上角默认显示最低剩余额度及供应商，也可在展开后固定某一个供应商。切换聊天、终端或文件仍可查看。点击顶部额度展开全部明细，不必进入设置。该展示插件独立安装，复用已有额度数据。
+**直接查看额度：** 请使用 Paseo 官方额度功能。旧 Antigravity 额度补丁和额度速览插件已归档，仅保留源码备份。安装、更新和 CLI 启动守卫不再加载旧 Antigravity 补丁；下方命令仅供显式恢复。Kimi/Grok 续期仍独立保留。
 
 支持基线：Paseo `0.7.2`、Node.js `22+`、Linux 或 macOS、已登录的 Antigravity `agy`。已核对 `@lalaze/paseo-cli@0.9.0-beta.2.lalaze.1` 的额度模块、协议和续期补丁边界与基线一致。使用 Paseo 自带的 `node-pty`；测试需要 `openssl` 和绑定本机回环端口的权限。macOS 用系统自带的 `/usr/sbin/lsof` 和 `/bin/ps` 查找本进程拥有的端口。没有额外 npm 依赖，不需要 `npm install`。
 
@@ -47,7 +47,7 @@ node patch.mjs apply
 paseo daemon restart
 ```
 
-在 Paseo 中打开 **Plan usage** 并点击 **Refresh**。新增 **Antigravity**（provider id `antigravity`，与官方 agy provider 相同），优先显示 Gemini 和 Claude/GPT 两组各自的周额度与 5 小时额度。进度条表示**已使用**百分比，与 Paseo 其他项目一致，例如剩余 80% 显示已用 20%。仅显示真实返回的重置时间。Paseo 0.11 起额度来自 usage source；额度速览插件优先读取内置源，缺少有效额度时通过独立 RPC 调用官方 agy，不重复注册同名源。本补丁仍供使用旧 quota-fetcher 的安装。
+在 Paseo 中打开 **Plan usage** 并点击 **Refresh**。新增 **Antigravity**（provider id `antigravity`，与官方 agy provider 相同），优先显示 Gemini 和 Claude/GPT 两组各自的周额度与 5 小时额度。进度条表示**已使用**百分比，与 Paseo 其他项目一致，例如剩余 80% 显示已用 20%。仅显示真实返回的重置时间。Paseo 0.11 起额度来自 usage source；本补丁仍供使用旧 quota-fetcher 的安装。
 
 `live` 只读取额度，不发送模型提示词，不消耗生成 token；它会打印当前账号的额度，但不输出账号标识或凭证。后台 `agy` 可能正常刷新它自己管理的登录状态。界面沿用 Paseo 原有缓存和 Refresh 行为。
 
@@ -211,7 +211,7 @@ paseo daemon restart
 
 ## 升级后自动恢复额度补丁
 
-本目录提供 `bin/paseo` 守卫入口。将它放在真实 Paseo 之前的 PATH 后，普通命令直接透传；`start`、`restart`、`daemon start`、`daemon restart` 和 `onboard` 会先定位当前 nvm/npm 安装的真实 CLI，再运行兼容性检查并按需重装 Google Antigravity、Kimi 和 Grok 续期补丁。已安装时不会重复写文件；任一补丁与新版不兼容时会在停止旧 daemon 之前拒绝执行，避免盲目覆盖。守卫会启用全部三项补丁；要长期单独卸载其中一项，应使用真实 Paseo 入口启动，否则下次守卫启动时会重新安装。
+本目录提供 `bin/paseo` 守卫入口。将它放在真实 Paseo 之前的 PATH 后，普通命令直接透传；`start`、`restart`、`daemon start`、`daemon restart` 和 `onboard` 会先定位当前 nvm/npm 安装的真实 CLI，再运行兼容性检查并按需重装 Kimi 和 Grok 续期补丁。已安装时不会重复写文件；任一补丁与新版不兼容时会在停止旧 daemon 之前拒绝执行，避免盲目覆盖。守卫不加载旧 Antigravity 补丁，旧的 `PASEO_USAGE_GUARD_GOOGLE_PATCH_SCRIPT` 覆盖参数也被忽略。要长期卸载 Kimi 或 Grok 续期，应使用真实 Paseo 入口启动，否则下次守卫启动时会重新安装。
 
 ```bash
 ln -sfn "$PWD/bin/paseo" ~/.local/bin/paseo

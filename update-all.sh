@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键更新本仓库已安装的插件和额度补丁；Hub ACP 不自动挂载入口。
+# 一键更新本仓库已安装的插件和 Kimi 续期；旧 Antigravity Hub/额度扩展不自动加载。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,12 +13,13 @@ usage() {
 用法: ./update-all.sh [--skip-pull] [--dry-run]
 
 拉取本仓库最新 main，然后更新已经安装的：
-  - paseo-usage-glance / paseo-translate / paseo-shared-tools / paseo-todo
-  - Antigravity 额度补丁、可选 Kimi 续期
+  - paseo-usage-glance（Token 消耗） / paseo-translate / paseo-shared-tools / paseo-todo
+  - 可选 Kimi 续期
 
-Antigravity Hub ACP 入口已停用，源码保留，不参与自动更新或挂载。
+Antigravity Hub ACP 和旧额度补丁已停用，源码保留，不参与自动更新或挂载。
 
 Director 已归档，请使用 Paseo 内置协作；即使已安装也不会处理旧插件。
+Token 消耗统计由 paseo-usage-glance 提供；账号额度请使用 Paseo 官方功能。
 
 未安装的会跳过。从旧单仓库安装的会提示先按各目录 README 迁移，不会改它们。
 GitHub 源插件走 paseo plugin update；本仓库本地目录安装的先 git pull 再 reload。
@@ -284,12 +285,13 @@ update_hub() {
   fi
 }
 
-# Director 已迁入 Paseo 内置协作；归档源码不参与安装、更新或单独 reload。
+# Director 已由 Paseo 内置功能取代；usage-glance 仅提供 Token 消耗统计。
 update_plugin usage-glance paseo-usage-glance
 update_plugin translate paseo-translate
 update_plugin shared-tools paseo-shared-tools
 update_plugin todo paseo-todo
-update_patch agy-quota patch.mjs "Antigravity 额度补丁"
+note "SKIP agy-quota（旧 Antigravity 额度补丁已停用；源码保留）"
+skip=$((skip + 1))
 update_patch kimi-quota kimi-patch.mjs "Kimi 续期补丁"
 note "SKIP antigravity-hub（入口已停用；源码保留）"
 skip=$((skip + 1))
