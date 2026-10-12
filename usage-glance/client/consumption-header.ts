@@ -22,11 +22,10 @@ export function installConsumptionHeaders(client: PluginClientContext, registry:
   const summary = () => consumptionHeaderSummary(combineHostConsumption(registry.getSnapshot(), presetRange('today', timezone, now())));
   const button = () => {
     const { total, partial, tone } = summary();
-    const estimated = combineHostConsumption(registry.getSnapshot(), presetRange('today', timezone, now())).sources.some(source => source.source === 'dot' && source.rows.some(row => totalTokens(row) > 0));
     const range = presetRange('today', timezone, now());
     return {
-      title: `${ui('Today’s token usage · All hosts', '今日 Token 消耗 · 全部主机')} · ${total === null ? ui('Waiting for records', '等待用量记录') : `${estimated ? '≈ ' : ''}${formatTokens(total)} tokens`}${partial ? ui(' · Partial records', ' · 部分记录') : ''} · ${range.since} · ${timezone}\n${ui('Green <1B · Yellow 1B–5B · Red ≥5B. Open usage details.', '绿色 <1B · 黄色 1B–5B · 红色 ≥5B。点击查看消耗明细。')}`,
-      label: `${ui('Today', '今日')} ${total === null ? '—' : `${estimated ? '≈ ' : ''}${compactTokens(total)}`}${partial ? ' *' : ''}`,
+      title: `${ui('Today’s token usage · All hosts', '今日 Token 消耗 · 全部主机')} · ${total === null ? ui('Waiting for records', '等待用量记录') : `${formatTokens(total)} tokens`}${partial ? ui(' · Partial records', ' · 部分记录') : ''} · ${range.since} · ${timezone}\n${ui('Green <1B · Yellow 1B–5B · Red ≥5B. Open usage details.', '绿色 <1B · 黄色 1B–5B · 红色 ≥5B。点击查看消耗明细。')}`,
+      label: `${ui('Today', '今日')} ${total === null ? '—' : compactTokens(total)}${partial ? ' *' : ''}`,
       icon: icon(tone),
       behavior: { kind: 'action' as const, onPress: () => client.openSurface('consumption') },
     };

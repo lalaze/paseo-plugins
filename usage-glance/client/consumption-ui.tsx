@@ -20,7 +20,7 @@ export function TextAction({ label, accessibilityLabel, onPress, disabled, theme
   </Pressable>;
 }
 
-export function TotalCard({ label, total, accessibilityLabel, partial, estimated = false, theme, children }: { label: string; total: number | null; accessibilityLabel: string; partial?: boolean; estimated?: boolean; theme: Theme; children: ReactNode }) {
+export function TotalCard({ label, total, accessibilityLabel, partial, theme, children }: { label: string; total: number | null; accessibilityLabel: string; partial?: boolean; theme: Theme; children: ReactNode }) {
   return <View style={{ padding: 14, borderRadius: 16, backgroundColor: theme.colors.surface0, overflow: 'hidden', gap: 12 }}>
     <View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: theme.colors.accent, opacity: 0.045 }} />
     <View style={{ gap: 4 }}>
@@ -28,8 +28,8 @@ export function TotalCard({ label, total, accessibilityLabel, partial, estimated
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{label}</Text>
         {partial ? <Text style={{ color: theme.colors.statusWarning, fontSize: 10, fontWeight: '500' }}>{ui('Partial records', '部分记录')}</Text> : null}
       </View>
-      <Text accessibilityLabel={`${estimated ? ui('Approximately ', '约 ') : ''}${accessibilityLabel}`} numberOfLines={1} adjustsFontSizeToFit style={{ color: theme.colors.foreground, fontSize: 36, lineHeight: 44, fontWeight: '700', letterSpacing: -1, fontVariant: ['tabular-nums'] }}>{total === null ? '—' : `${estimated ? '≈ ' : ''}${compactTokens(total)}`}<Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, fontWeight: '400', letterSpacing: 0 }}>  token</Text></Text>
-      <Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontVariant: ['tabular-nums'] }}>{total === null ? ui('Waiting for complete records', '等待完整记录') : `${estimated ? '≈ ' : ''}${formatTokens(total)} tokens`}</Text>
+      <Text accessibilityLabel={accessibilityLabel} numberOfLines={1} adjustsFontSizeToFit style={{ color: theme.colors.foreground, fontSize: 36, lineHeight: 44, fontWeight: '700', letterSpacing: -1, fontVariant: ['tabular-nums'] }}>{total === null ? '—' : compactTokens(total)}<Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, fontWeight: '400', letterSpacing: 0 }}>  token</Text></Text>
+      <Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontVariant: ['tabular-nums'] }}>{total === null ? ui('Waiting for complete records', '等待完整记录') : `${formatTokens(total)} tokens`}</Text>
     </View>
     <View style={{ flexDirection: 'row', gap: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.colors.border }}>{children}</View>
   </View>;

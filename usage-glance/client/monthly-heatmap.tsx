@@ -26,7 +26,6 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
   const all = buildMonthHeatmap(sources, month, today);
   const selectedModel = all.models.find(model => model.key === requestedModel);
   const heatmap = selectedModel ? buildMonthHeatmap(sources, month, today, selectedModel.key) : all;
-  const estimated = heatmap.days.some(day => day.models.some(model => model.source === 'dot' && totalTokens(model) > 0));
   const relevant = selectedModel ? sources.filter(source => source.source === selectedModel.source && source.host?.id === selectedModel.host?.id) : sources;
   const relevantHosts = report?.hosts?.filter(host => !selectedModel?.host || host.id === selectedModel.host.id);
   const pending = result.isPending || (selectedModel && relevantHosts ? relevantHosts.some(host => host.status === 'loading') : report?.scanning === true && !hasConsumptionReading(report));
@@ -35,7 +34,6 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
   const latest = relevant.map(source => source.updatedAt).filter((date): date is string => date !== null).sort()[0];
   const activeDate = selectedDate?.startsWith(`${month}-`) ? selectedDate : month === currentMonth ? today : range.until;
   const day = heatmap.days.find(day => day.date === activeDate)!;
-  const dayEstimated = day.models.some(model => model.source === 'dot' && totalTokens(model) > 0);
   const matches = all.models.filter(model => `${model.model} ${modelOrigin(model)}`.toLowerCase().includes(search.toLowerCase()));
   useEffect(() => {
     if (report && !report.scanning && requestedModel && !selectedModel) setRequestedModel(null);
@@ -77,9 +75,9 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
       </View> : null}
     </View>
     {result.isError || refreshError ? <Text accessibilityRole="alert" style={{ color: theme.colors.statusWarning, fontSize: 12 }}>{ui('Failed to load. Please try again.', '读取失败，请重试。')}{report ? ui(' Showing the last loaded data.', '以下为上次读取的数据。') : ''}</Text> : null}
-    <TotalCard estimated={estimated} label={ui('This month', '本月消耗')} total={unknownTotal ? null : heatmap.total} accessibilityLabel={unknownTotal ? ui('Heatmap monthly total unavailable', '热力图月合计 暂无完整记录') : ui(`Heatmap monthly total ${formatTokens(heatmap.total)} tokens`, `热力图月合计 ${formatTokens(heatmap.total)} token`)} partial={incomplete} theme={theme}>
+    <TotalCard label={ui('This month', '本月消耗')} total={unknownTotal ? null : heatmap.total} accessibilityLabel={unknownTotal ? ui('Heatmap monthly total unavailable', '热力图月合计 暂无完整记录') : ui(`Heatmap monthly total ${formatTokens(heatmap.total)} tokens`, `热力图月合计 ${formatTokens(heatmap.total)} token`)} partial={incomplete} theme={theme}>
       <SmallStat label={ui('Recorded days', '有记录天数')} value={ui(`${heatmap.activeDays} days`, `${heatmap.activeDays} 天`)} theme={theme} />
-      <SmallStat label={ui('Daily peak', '单日峰值')} value={unknownTotal ? '—' : `${estimated ? '≈ ' : ''}${compactTokens(heatmap.peak)}`} theme={theme} />
+      <SmallStat label={ui('Daily peak', '单日峰值')} value={unknownTotal ? '—' : compactTokens(heatmap.peak)} theme={theme} />
     </TotalCard>
     <View style={{ gap: 10, width: '100%' }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 30 }}>
@@ -95,7 +93,7 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
             const value = totalTokens(cell), level = heatLevel(value, heatmap.peak), selected = cell.date === activeDate;
             const unknown = !cell.future && value === 0 && (incomplete || !sources.length);
             const ink = level === 4 ? theme.colors.accentForeground : cell.future ? theme.colors.foregroundMuted : theme.colors.foreground;
-            return <View key={cell.date} style={{ flex: 1, minWidth: 0 }}><Pressable accessibilityRole="button" accessibilityLabel={`${cell.date} ${cell.future ? ui('future date', '未到来') : unknown ? ui('incomplete record', '记录未完整') : `${cell.models.some(model => model.source === 'dot') ? '≈ ' : ''}${formatTokens(value)} token`}`} accessibilityState={{ selected, disabled: cell.future }} disabled={cell.future} onPress={() => setSelectedDate(cell.date)} style={({ pressed }) => ({ width: '100%', height: layout.compact ? 44 : 56, borderRadius: 8, overflow: 'hidden', justifyContent: 'center', alignItems: 'center', backgroundColor: cell.future ? 'transparent' : level ? theme.colors.surface1 : theme.colors.surface0, opacity: pressed ? 0.7 : 1 })}>
+            return <View key={cell.date} style={{ flex: 1, minWidth: 0 }}><Pressable accessibilityRole="button" accessibilityLabel={`${cell.date} ${cell.future ? ui('future date', '未到来') : unknown ? ui('incomplete record', '记录未完整') : `${formatTokens(value)} token`}`} accessibilityState={{ selected, disabled: cell.future }} disabled={cell.future} onPress={() => setSelectedDate(cell.date)} style={({ pressed }) => ({ width: '100%', height: layout.compact ? 44 : 56, borderRadius: 8, overflow: 'hidden', justifyContent: 'center', alignItems: 'center', backgroundColor: cell.future ? 'transparent' : level ? theme.colors.surface1 : theme.colors.surface0, opacity: pressed ? 0.7 : 1 })}>
               {level ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: theme.colors.accent, opacity: opacity[level] }} /> : null}
               <Text style={{ width: '100%', textAlign: 'center', color: ink, opacity: cell.future ? 0.4 : 1, fontSize: 12, lineHeight: 18, includeFontPadding: false, fontWeight: '500', fontVariant: ['tabular-nums'] }}>{cell.day}</Text>
               {unknown ? <Text style={{ position: 'absolute', bottom: 2, left: 0, right: 0, textAlign: 'center', color: theme.colors.foregroundMuted, fontSize: 8, lineHeight: 8, includeFontPadding: false }}>—</Text> : null}
@@ -120,17 +118,17 @@ export function MonthlyHeatmap({ theme, layout, query, timezone }: Pick<PluginHo
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{ui('Daily usage', '当日消耗')}</Text>
       </View>
       {totalTokens(day) > 0 ? <>
-        <Text accessibilityLabel={`${dayEstimated ? '≈ ' : ''}${ui(`Heatmap daily total ${formatTokens(totalTokens(day))} tokens`, `热力图当日合计 ${formatTokens(totalTokens(day))} token`)}`} selectable style={{ color: theme.colors.foreground, fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] }}>{dayEstimated ? '≈ ' : ''}{compactTokens(totalTokens(day))}<Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontWeight: '400' }}> token{incomplete ? ui(' · loaded', ' · 已读取') : ''}</Text></Text>
+        <Text accessibilityLabel={ui(`Heatmap daily total ${formatTokens(totalTokens(day))} tokens`, `热力图当日合计 ${formatTokens(totalTokens(day))} token`)} selectable style={{ color: theme.colors.foreground, fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] }}>{compactTokens(totalTokens(day))}<Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontWeight: '400' }}> token{incomplete ? ui(' · loaded', ' · 已读取') : ''}</Text></Text>
         <View style={{ flexDirection: 'row', gap: 12 }}>
-          <SmallStat label={dayEstimated ? ui('Input · estimate included', '输入 · 含估算') : ui('Input · cached', '输入 · 含缓存')} value={compactTokens(day.input)} theme={theme} />
-          <SmallStat label={dayEstimated ? ui('Output · estimate included', '输出 · 含估算') : ui('Output · reasoning', '输出 · 含推理')} value={compactTokens(day.output)} theme={theme} />
+          <SmallStat label={ui('Input · cached', '输入 · 含缓存')} value={compactTokens(day.input)} theme={theme} />
+          <SmallStat label={ui('Output · reasoning', '输出 · 含推理')} value={compactTokens(day.output)} theme={theme} />
         </View>
         {!selectedModel ? day.models.map(model => <View key={model.key} style={{ gap: 4, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 10 }}>
           <Text selectable style={{ color: theme.colors.foreground, fontSize: 12, lineHeight: 18 }}>{localizeModelLabel(model.model)}{model.inferredModel ? ui(' · inferred model', ' · 模型推定') : ''}</Text>
           <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{modelOrigin(model)} · {compactTokens(totalTokens(model))} token</Text>
         </View>) : null}
         <Pressable accessibilityRole="button" accessibilityLabel={ui('Daily token details', '当日 token 明细')} aria-expanded={detail} accessibilityState={{ expanded: detail }} onPress={() => setDetail(value => !value)} style={{ minHeight: 44, justifyContent: 'center', borderTopWidth: 1, borderTopColor: theme.colors.border }}><Text style={{ color: theme.colors.accent, fontSize: 12 }}>{detail ? ui('Hide', '收起') : ui('View', '查看')} {ui('token details', 'token 明细')} {detail ? '−' : '+'}</Text></Pressable>
-        {detail ? <Breakdown tokens={day} theme={theme} estimated={dayEstimated} /> : null}
+        {detail ? <Breakdown tokens={day} theme={theme} /> : null}
       </> : <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 19 }}>{pending ? ui('Loading records…', '正在读取记录…') : relevantHosts?.some(host => host.status !== 'ready') ? ui('Host records are incomplete, so daily usage cannot yet be confirmed.', '主机记录尚不完整，暂不能确认当天消耗。') : !sources.length ? ui('No provider with usage tracking is currently enabled.', '当前未启用支持消耗统计的 Provider。') : incomplete ? ui('Records are incomplete, so daily usage cannot yet be confirmed.', '记录不完整，暂不能确认当天消耗。') : ui('No usage was recorded for this day.', '当天没有已记录的消耗。')}</Text>}
     </View>
     <ConsumptionSources report={report} theme={theme} />

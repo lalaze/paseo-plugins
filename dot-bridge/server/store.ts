@@ -3,7 +3,6 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { dotBridgeError, type DotBridgeFailure } from '../shared/errors';
 import { migrateStoreFile, storeFileSchema, STORE_VERSION, type StoreFile } from '../shared/schema';
-import { buildUsageEstimateLedger } from './usage-estimates';
 
 /**
  * A lock directory with no owner file is only reclaimed after this long. A concurrent `acquire`
@@ -29,8 +28,6 @@ export function dotBridgeDataDir(env: NodeJS.ProcessEnv = process.env): string {
 export interface StoreOptions {
   /** Test hook. Resolves only after the bytes are durable from the caller's point of view. */
   write?: (body: string) => Promise<void>;
-  /** Test hook for the derived numeric-only usage snapshot. */
-  writeUsageEstimates?: (body: string) => Promise<void>;
 }
 
 function isFailure(error: unknown, code: string): error is DotBridgeFailure {
@@ -50,9 +47,6 @@ export class BridgeStore {
   readonly file: string;
   readonly lockFile: string;
   readonly secretsFile: string;
-  readonly usageEstimatesFile: string;
-  /** Snapshot failures never roll back an already committed task mutation. */
-  usageEstimateError: string | null = null;
   loadError: string | null = null;
   private state: StoreFile = emptyState();
   private token: string | null = null;
@@ -64,7 +58,6 @@ export class BridgeStore {
     this.file = join(dir, 'state.json');
     this.lockFile = join(dir, 'state.lock');
     this.secretsFile = join(dir, 'secrets.json');
-    this.usageEstimatesFile = join(dir, 'usage-estimates.json');
   }
 
   static async open(dir: string, options?: StoreOptions): Promise<BridgeStore> {
@@ -73,7 +66,6 @@ export class BridgeStore {
       await store.acquire();
       await store.load();
       store.writable = store.loadError === null;
-      if (store.writable) await store.refreshUsageEstimates();
     } catch (error) {
       store.writable = false;
       store.loadError = isFailure(error, 'store-locked') ? 'store-locked' : error instanceof Error ? error.message : String(error);
@@ -146,7 +138,6 @@ export class BridgeStore {
       const parsed = storeFileSchema.parse(draft);
       await this.writeBody(JSON.stringify(parsed, null, 2));
       this.state = parsed;
-      await this.refreshUsageEstimates();
     });
     this.queue = run.then(() => undefined, () => undefined);
     await run;
@@ -350,34 +341,6 @@ export class BridgeStore {
       return (await readFile(join(this.lockFile, 'owner'), 'utf8')) === token;
     } catch {
       return false;
-    }
-  }
-
-  /**
-   * Derived cache, not a second transaction authority. Commit state first; atomically replace this
-   * snapshot afterward. A crash in between is repaired at open. On a write failure, invalidate the
-   * old snapshot rather than leave a silently stale total; the next mutation/open retries.
-   */
-  private async refreshUsageEstimates(): Promise<void> {
-    const tmp = join(this.dir, `usage-estimates.${process.pid}.${randomUUID()}.tmp`);
-    try {
-      const body = JSON.stringify(buildUsageEstimateLedger(this.state.tasks));
-      if (this.options.writeUsageEstimates) {
-        await this.options.writeUsageEstimates(body);
-      } else {
-        await writeFile(tmp, body, { mode: 0o600 });
-        await rename(tmp, this.usageEstimatesFile);
-      }
-      this.usageEstimateError = null;
-    } catch (error) {
-      this.usageEstimateError = error instanceof Error ? error.message : String(error);
-      try {
-        await rm(this.usageEstimatesFile, { force: true });
-      } catch (removeError) {
-        this.usageEstimateError += `; snapshot invalidation failed: ${String(removeError)}`;
-      }
-    } finally {
-      await rm(tmp, { force: true }).catch(() => undefined);
     }
   }
 

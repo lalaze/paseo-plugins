@@ -95,35 +95,6 @@ Store **v9** adds durable scoped permission requests and decisions; v8 added lar
 
 Historical Git tasks and verified results remain readable. The installed plugin has no Git adapter, does not dispatch/claim/continue those tasks, and exposes no Git result-submission or re-verification tool. Historical state schemas and compatibility tests are retained so upgrading does not erase prior deliveries. No Git fetch, commit, push, PR or merge is part of current task execution.
 
-## Visible-text usage estimates
-
-The Bridge exports `usage-estimates.json` beside `state.json` for usage-glance. This is a derived,
-numeric-only ledger (plus record identity, epoch-millisecond time, task ID, workspace ID and cwd);
-it contains no message bodies or credentials. Its contract is
-`{version:1, algorithm:"visible-text-v1", entries:[{id,at,taskId,workspaceId,cwd,input,output}]}`.
-`cwd` is the native provider's cwd, then the bound workspace root, or null.
-
-The fixed v1 heuristic is `ceil(ASCII code points / 4 + non-ASCII code points)` per visible message.
-It counts each stored user message once and Dot's visible progress, questions, errors and result
-summaries. Stable output update IDs replace prior estimates; repeated result-history snapshots
-and progress mirrors are not counted twice. A different result ID is a distinct visible result.
-Generated tool receipts, notes, images, attachment bodies, tool inputs/outputs, hidden reasoning,
-system instructions and repeated context are excluded. This is a trend estimate that can be
-substantially below actual usage, not billing usage, cost or remaining account quota.
-
-Opening the store backfills estimates from retained tasks; committed mutations rebuild the
-snapshot using temporary-file + rename with mode 0600. Replaying an operation or restarting does
-not accumulate duplicates. State remains authoritative: a crash between state and snapshot writes
-is repaired at next open. A snapshot write failure records `usageEstimateError` and attempts to
-remove stale estimates without rejecting an already committed conversation update; the next
-mutation/open retries. Snapshot and state are not a multi-file transaction. Existing history is
-included after upgrade, but deleted/unretained tasks cannot be recovered. No state migration or
-credentials access is needed for the export.
-
-Tests in `tests/usage-estimates.test.ts` cover the heuristic, stable-ID replacement, history/mirror
-deduplication, tool receipt exclusion, workspace attribution, persistence/rebuild, lock isolation
-and write-failure behavior.
-
 ## Validation and current limits
 
 Run `npm run check` for typecheck, tests and bundles. HTTP tests need permission to bind local test ports.

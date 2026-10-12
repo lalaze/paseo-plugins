@@ -13,19 +13,18 @@ function Metric({ label, value, theme }: { label: string; value: number | null; 
     <Text accessibilityLabel={`${label} ${value === null ? ui('Not provided', '未提供') : `${formatTokens(value)} token`}`} style={{ color: theme.colors.foreground, fontSize: 13, fontVariant: ['tabular-nums'] }}>{value === null ? ui('Not provided', '未提供') : formatTokens(value)}</Text>
   </View>;
 }
-export function Breakdown({ tokens, theme, estimated = false }: { tokens: Tokens; theme: Theme; estimated?: boolean }) {
+export function Breakdown({ tokens, theme }: { tokens: Tokens; theme: Theme }) {
   return <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14 }}>
-    <Metric label={estimated ? ui('Input (includes estimate)', '输入（含估算）') : ui('Input (including cache)', '输入（含缓存）')} value={tokens.input} theme={theme} />
-    <Metric label={estimated ? ui('Output (includes estimate)', '输出（含估算）') : ui('Output (including reasoning)', '输出（含推理）')} value={tokens.output} theme={theme} />
-    <Metric label={estimated ? ui('Recorded cache read only', '缓存读取（仅已记录）') : ui('Cache read', '其中缓存读取')} value={tokens.cacheRead} theme={theme} />
-    <Metric label={estimated ? ui('Recorded cache write only', '缓存写入（仅已记录）') : ui('Cache write', '其中缓存写入')} value={tokens.cacheWrite} theme={theme} />
+    <Metric label={ui('Input (including cache)', '输入（含缓存）')} value={tokens.input} theme={theme} />
+    <Metric label={ui('Output (including reasoning)', '输出（含推理）')} value={tokens.output} theme={theme} />
+    <Metric label={ui('Cache read', '其中缓存读取')} value={tokens.cacheRead} theme={theme} />
+    <Metric label={ui('Cache write', '其中缓存写入')} value={tokens.cacheWrite} theme={theme} />
     <Metric label={ui('Reasoning', '其中推理')} value={tokens.reasoning} theme={theme} />
   </View>;
 }
 export function ConsumptionSources({ report, theme }: { report?: ConsumptionReport; theme: Theme }) {
   const [expanded, setExpanded] = useState(false);
   const sources = report?.sources ?? [];
-  const estimatedHost = (id: string) => sources.some(source => source.host?.id === id && source.source === 'dot' && source.rows.some(row => row.input + row.output > 0));
   const issues = sources.filter(source => source.status === 'error' || source.status === 'partial');
   const loading = !report || report.scanning && !hasConsumptionReading(report);
   const hostIssues = report?.hosts?.filter(host => host.status === 'offline' || host.status === 'error') ?? [];
@@ -33,11 +32,10 @@ export function ConsumptionSources({ report, theme }: { report?: ConsumptionRepo
     {report?.hosts?.map(host => <View key={host.id} style={{ paddingTop: 10, gap: 4 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <Text style={{ color: theme.colors.foreground, fontSize: 12, flexShrink: 1 }}>{localizeHostLabel(host.label)}</Text>
-        <Text accessibilityLabel={`${estimatedHost(host.id) ? '≈ ' : ''}${ui(`${localizeHostLabel(host.label)} recorded usage ${host.total === null ? 'unknown' : `${formatTokens(host.total)} tokens`}`, `${localizeHostLabel(host.label)} 已记录消耗 ${host.total === null ? '未知' : `${formatTokens(host.total)} token`}`)}`} style={{ color: theme.colors.foreground, fontSize: 12 }}>{host.total === null ? '—' : `${estimatedHost(host.id) ? '≈ ' : ''}${compactTokens(host.total)}`}</Text>
+        <Text accessibilityLabel={ui(`${localizeHostLabel(host.label)} recorded usage ${host.total === null ? 'unknown' : `${formatTokens(host.total)} tokens`}`, `${localizeHostLabel(host.label)} 已记录消耗 ${host.total === null ? '未知' : `${formatTokens(host.total)} token`}`)} style={{ color: theme.colors.foreground, fontSize: 12 }}>{host.total === null ? '—' : compactTokens(host.total)}</Text>
       </View>
       <Text style={{ color: host.status === 'offline' || host.status === 'error' ? theme.colors.statusWarning : theme.colors.foregroundMuted, fontSize: 11, lineHeight: 17 }}>{{ ready: ui('Read', '已读取'), loading: ui('Updating', '更新中'), offline: ui('Offline · Previous record', '未连接 · 上次记录'), error: ui('Read failed · Previous record', '读取失败 · 上次记录') }[host.status]} · {dataAge(host.updatedAt)}</Text>
     </View>)}
-    {sources.some(source => source.source === 'dot') ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, lineHeight: 18 }}>{ui('dot: visible-text estimate (ASCII characters / 4 + non-ASCII code points, rounded up per message). Excludes tools, attachments, replayed context and hidden reasoning; not billing or remaining quota.', 'dot 为可见文本估算：ASCII 字符数 / 4 + 非 ASCII 码点数，每条向上取整。不含工具、附件、上下文重传和隐藏推理，不能用于账单或剩余额度。')}</Text> : null}
     {hostIssues.length ? <Text accessibilityRole="alert" style={{ fontSize: 11, lineHeight: 17, color: theme.colors.statusWarning }}>{ui('Some hosts are temporarily unavailable, so the current total may be incomplete.', '部分主机暂不可用，当前合计可能不完整。')}</Text> : null}
     <Pressable accessibilityRole="button" accessibilityLabel={ui('Data sources and calculation notes', '数据来源与统计说明')} aria-expanded={expanded} accessibilityState={{ expanded }} onPress={() => setExpanded(value => !value)} style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, minHeight: 44, opacity: pressed ? 0.65 : 1 })}>
       <Text style={{ color: theme.colors.foreground, fontSize: 12, fontWeight: '500' }}>{ui('Data Sources', '数据来源')}</Text>
