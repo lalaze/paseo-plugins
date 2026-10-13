@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, mkdir, rm, symlink, link, stat } from 'node:fs/promises';
@@ -130,6 +132,10 @@ test('MCP reviews user edits independently of Dot write receipts, including stag
   assert.match(main.unstagedDiff, /-export const value = 2;[\s\S]*\+export const value = 3;/);
   assert.match(changes.files.find((file: { path: string }) => file.path === 'new.ts').untrackedDiff, /\+export const added = true;/);
   assert.match(h.engine.activity.list(h.task.id).at(-1)!.detail, /main.ts/);
+  const single = await rpc('tools/call', { name: 'read_dot_workspace_changes', arguments: { ...h.identity, snapshotId: changes.snapshotId, path: 'main.ts', diffKind: 'unstaged', diffOffset: 0 } });
+  assert.equal(single.error, undefined); assert.equal(JSON.parse(single.result!.content[0]!.text).files[0].unstagedDiff, main.unstagedDiff);
+  const stale = await rpc('tools/call', { name: 'read_dot_workspace_changes', arguments: { ...h.identity, snapshotId: '0'.repeat(64), path: 'main.ts', diffKind: 'unstaged' } });
+  assert.ok(stale.error);
   const taskReply = await rpc('tools/call', { name: 'get_dot_task', arguments: { connectionId: h.identity.connectionId, taskId: h.task.id } });
   assert.match(JSON.parse(taskReply.result!.content[0]!.text).localFileInstructions, /read_dot_workspace_changes/);
   assert.equal(git('status', '--porcelain=v1'), beforeStatus); assert.equal(git('rev-parse', 'HEAD'), beforeHead);
@@ -239,4 +245,29 @@ test('a failed state save after file application recovers from the durable journ
   assert.equal((await engine.applyLocalFiles(input)).status, 'applied');
   assert.equal(engine.task(task.id).localChanges.length, 1);
   assert.equal(readSource(h.root, 'main.ts').content, 'later edit');
+});
+
+
+test('scoped workspace review never opens a file outside the exact read grant', async t => {
+  const h = await engineFixture(t); await h.claim();
+  execFileSync('git', ['init', '-q'], { cwd: h.root });
+  for (const path of ['allowed.ts', 'private.ts']) await writeFile(join(h.root, path), path + '\n');
+  const request = { ...h.identity, requestId: randomUUID(), userMessageSeq: 1, title: 'Read', description: 'Read one file', scope: { toolName: 'read_dot_file', action: 'Read', targets: ['allowed.ts'] } };
+  await h.engine.requestPermission(request);
+  await h.engine.respondPermission({ taskId: h.task.id, requestId: request.requestId, decision: 'approved' });
+  const original = fs.openSync; let privateReads = 0;
+  fs.openSync = ((...args: Parameters<typeof fs.openSync>) => {
+    if (String(args[0]) === join(h.root, 'private.ts')) privateReads++;
+    return original(...args);
+  }) as typeof fs.openSync;
+  syncBuiltinESMExports();
+  try {
+    const first = await h.engine.readLocalWorkspaceChanges({ ...h.identity, offset: 0 });
+    assert.deepEqual(first.files.map(file => file.path), ['allowed.ts']);
+    assert.equal(first.scopeLimited, true);
+    const next = await h.engine.readLocalWorkspaceChanges({ ...h.identity, offset: 0, snapshotId: first.snapshotId, path: 'allowed.ts' });
+    assert.deepEqual(next.files.map(file => file.path), ['allowed.ts']);
+    await assert.rejects(h.engine.readLocalWorkspaceChanges({ ...h.identity, offset: 0, snapshotId: first.snapshotId, path: 'private.ts' }), /permission/);
+    assert.equal(privateReads, 0);
+  } finally { fs.openSync = original; syncBuiltinESMExports(); }
 });

@@ -53,11 +53,11 @@ test('MCP Git review routes through the center to the originating workspace and 
   const identity = { connectionId: reply.task.connectionId, taskId: reply.task.id, roundId: reply.task.currentRoundId }; await engine.claimTask(identity);
   const server = createMcpServer({ engine, host: '127.0.0.1', port: 0, getToken: () => engine.mcpToken(), remoteFiles: (kind, input) => center.requestFile(kind, input) });
   const { endpoint } = await server.start(); t.after(() => server.stop());
-  const call = async () => {
-    const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${engine.mcpToken()}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'read_dot_workspace_changes', arguments: identity } }) });
+  const call = async (options: Record<string, unknown> = {}) => {
+    const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${engine.mcpToken()}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'read_dot_workspace_changes', arguments: { ...identity, ...options } } }) });
     return await response.json() as { error?: unknown; result?: { content: Array<{ text: string }> } };
   };
-  let notify!: () => void; const queued = new Promise<void>(resolve => { notify = resolve; });
+  let notify!: () => void; let queued = new Promise<void>(resolve => { notify = resolve; });
   const mutate = state.mutate.bind(state);
   state.mutate = async fn => { const result = await mutate(fn); if (state.read().jobs.some(job => job.kind === 'changes' && job.status === 'queued')) notify(); return result; };
   const pending = call();
@@ -66,6 +66,17 @@ test('MCP Git review routes through the center to the originating workspace and 
   const result = await pending; assert.equal(result.error, undefined);
   const data = JSON.parse(result.result!.content[0]!.text);
   assert.equal(data.isGitRepository, true); assert.match(data.files[0].untrackedDiff, /remote source edit/);
+  queued = new Promise<void>(resolve => { notify = resolve; });
+  const continued = call({ snapshotId: data.snapshotId, path: 'remote.ts', diffKind: 'untracked', diffOffset: 0 });
+  await Promise.race([queued, continued.then(() => { throw new Error('Continuation ended before remote routing'); })]);
+  await client.pump();
+  const part = await continued; assert.equal(part.error, undefined);
+  assert.equal(JSON.parse(part.result!.content[0]!.text).files[0].untrackedDiff, data.files[0].untrackedDiff);
+  await writeFile(join(root, 'remote.ts'), 'changed after first snapshot\n');
+  queued = new Promise<void>(resolve => { notify = resolve; });
+  const stale = call({ snapshotId: data.snapshotId, path: 'remote.ts', diffKind: 'untracked', diffOffset: 0 });
+  await Promise.race([queued, stale.then(() => { throw new Error('Stale snapshot ended before remote routing'); })]);
+  await client.pump(); assert.match(JSON.stringify((await stale).error), /snapshot changed/i);
   assert.equal(engine.task(reply.task.id).workspaceRoot, null); assert.deepEqual(engine.task(reply.task.id).localChanges, []);
   await state.mutate(draft => { draft.devices[0]!.capabilities.readFiles = false; });
   assert.ok((await call()).error);

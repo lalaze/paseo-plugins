@@ -51,10 +51,15 @@ export function consumePermission(task: Task, permission: DotPermission | undefi
   task.permissions = task.permissions.map(p => p.requestId === permission.requestId ? { ...p, consumedAt: at } : p);
 }
 
+/** Resolve the exact file-read scope before workspace scanning or blob access. */
+export function workspaceReviewPaths(task: Task): string[] | null {
+  // An explicit root grant authorizes this diff read only, without renewing file tools.
+  if (assertPermissionAccess(task, 'read_dot_workspace_changes', ['/'])) return null;
+  assertPermissionAccess(task, 'list_dot_files', ['/']);
+  return assertPermissionAccess(task, 'read_dot_file', [])?.scope.targets ?? null;
+}
+
 /** A workspace diff must not become a second route around guarded file/list reads. */
 export function assertWorkspaceReviewAccess(task: Task, paths: string[] = []): void {
-  // An explicit current root review grant authorizes this diff read only. It does not renew file tools.
-  if (assertPermissionAccess(task, 'read_dot_workspace_changes', ['/'])) return;
-  assertPermissionAccess(task, 'list_dot_files', ['/']);
-  assertPermissionAccess(task, 'read_dot_file', paths);
+  if (workspaceReviewPaths(task) !== null) assertPermissionAccess(task, 'read_dot_file', paths);
 }

@@ -3,8 +3,8 @@ import { AttachmentStore, decodeAttachment } from './attachments';
 import { clearTransfer, decodeChunk, receiveChunk, saveDeliveredFile } from './attachment-transfers';
 import { ActivityLog } from './activity';
 import { applyLocalChanges, listSources, readChangeJournal, readSource, sourceHash } from './local-files';
-import { assertPermissionAccess, assertWorkspaceReviewAccess, consumePermission, validatePermissionIntent } from './permissions';
-import { readWorkspaceChanges } from './workspace-changes';
+import { assertPermissionAccess, assertWorkspaceReviewAccess, workspaceReviewPaths, consumePermission, validatePermissionIntent } from './permissions';
+import { readWorkspaceChanges, type WorkspaceReviewOptions } from './workspace-changes';
 import type { LocalChange, LocalReceipt } from '../shared/local-files';
 import { ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, MAX_TASK_ATTACHMENTS, type Attachment, type AttachmentContent, type AttachmentChunk } from '../shared/attachments';
 import { dotBridgeError } from '../shared/errors';
@@ -253,10 +253,17 @@ export class BridgeEngine {
     return { ...file, userMessageSeq: task.userMessageSeq };
   }
 
-  async readLocalWorkspaceChanges(input: { connectionId: string; taskId: string; roundId: string; offset: number }) {
+  async readLocalWorkspaceChanges(input: { connectionId: string; taskId: string; roundId: string; offset: number } & WorkspaceReviewOptions) {
     const task = this.localTask(input);
-    assertWorkspaceReviewAccess(task);
-    const result = await readWorkspaceChanges(task.workspaceRoot!, input.offset, this.abort.signal);
+    assertWorkspaceReviewAccess(task, input.path ? [input.path] : []);
+    const result = await readWorkspaceChanges(task.workspaceRoot!, input.offset, this.abort.signal, {
+      ...input, allowedPaths: workspaceReviewPaths(task),
+      authorizePaths: paths => {
+        const latest = this.localTask(input);
+        if (latest.userMessageSeq !== task.userMessageSeq || latest.workspaceRoot !== task.workspaceRoot) throw dotBridgeError('revision-conflict');
+        assertWorkspaceReviewAccess(latest, paths);
+      },
+    });
     const latest = this.localTask(input);
     if (latest.userMessageSeq !== task.userMessageSeq || latest.workspaceRoot !== task.workspaceRoot) throw dotBridgeError('revision-conflict', 'Task changed during the workspace read; read the task again');
     assertWorkspaceReviewAccess(latest, result.files.flatMap(file => file.previousPath ? [file.path, file.previousPath] : [file.path]));

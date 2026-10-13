@@ -3,13 +3,13 @@ import { z } from 'zod';
 import { currentRound, taskSchema, type Task } from '../shared/schema';
 import { remoteDeviceSchema } from '../shared/remote';
 import { attachmentSchema, ATTACHMENT_CHUNK_BYTES } from '../shared/attachments';
-import { canonicalJson } from '../shared/mcp';
+import { canonicalJson, toolInputSchemas } from '../shared/mcp';
 import type { PermissionOperation } from '../shared/permissions';
-import { assertPermissionAccess, assertWorkspaceReviewAccess } from './permissions';
+import { assertPermissionAccess, assertWorkspaceReviewAccess, workspaceReviewPaths } from './permissions';
 import type { BridgeEngine } from './engine';
 import { ActivityLog } from './activity';
 import { canonicalWorkspace, listSources, readSource, applyLocalChanges, readChangeJournal, readChangeReceipt, sourceHash } from './local-files';
-import { readWorkspaceChanges } from './workspace-changes';
+import { readWorkspaceChanges, WorkspaceSnapshotChanged } from './workspace-changes';
 import { AttachmentStore } from './attachments';
 import { receiveChunk, clearTransfer, saveDeliveredFile } from './attachment-transfers';
 import { RemoteStateStore, fileJobSchema, type FileJob } from './remote-state';
@@ -231,14 +231,23 @@ export class RemoteClient {
       if (job.kind === 'list') result = { ...listSources(binding.cwd, String(job.input.directory ?? ''), Number(job.input.offset ?? 0)), userMessageSeq: job.userMessageSeq };
       else if (job.kind === 'read') { const { mode: _mode, ...file } = readSource(binding.cwd, String(job.input.path)); result = { ...file, userMessageSeq: job.userMessageSeq }; }
       else if (job.kind === 'changes') {
-        const changes = await readWorkspaceChanges(binding.cwd, Number(job.input.offset ?? 0), this.lifecycle.signal);
+        const input = toolInputSchemas.read_dot_workspace_changes.parse(job.input);
+        assertWorkspaceReviewAccess(latest, input.path ? [input.path] : []);
+        const changes = await readWorkspaceChanges(binding.cwd, input.offset, this.lifecycle.signal, {
+          ...input, allowedPaths: workspaceReviewPaths(latest),
+          authorizePaths: paths => {
+            const current = this.task(job.taskId);
+            this.validateJob(confirmed.job, current);
+            assertWorkspaceReviewAccess(current, paths);
+          },
+        });
         // Git reads await child processes. Honor new input, stops, expiry and changed device scope before returning content.
         this.validateJob(confirmed.job, this.task(job.taskId));
         assertWorkspaceReviewAccess(this.task(job.taskId), changes.files.flatMap(file => file.previousPath ? [file.path, file.previousPath] : [file.path]));
         result = { ...changes, userMessageSeq: job.userMessageSeq };
       }
       else result = applyLocalChanges({ dataDir: this.dataDir, root: binding.cwd, taskId: job.taskId, roundId: job.roundId, userMessageSeq: job.userMessageSeq, operationId: z.string().uuid().parse(job.input.operationId), changes: job.input.changes as Parameters<typeof applyLocalChanges>[0]['changes'], at: Date.now() });
-    } catch { result = undefined; error = 'Remote file operation refused or failed; inspect workspace, permission, stop state and hashes'; }
+    } catch (cause) { result = undefined; error = cause instanceof WorkspaceSnapshotChanged ? cause.message : 'Remote file operation refused or failed; inspect workspace, permission, stop state and hashes'; }
     await this.state.mutate(draft => {
       let item = draft.results.find(value => value.job.id === job.id);
       if (!item) { item = { job, phase: 'ready', error }; draft.results.push(item); }

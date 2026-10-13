@@ -11,7 +11,8 @@ import type { RemoteDevice } from '../shared/remote';
 import type { BridgeEngine } from './engine';
 import { RemoteStateStore, type FileJob } from './remote-state';
 import { readRemoteBody, REMOTE_PATH, REMOTE_MAX_BYTES } from './remote-http';
-import { sourceHash } from './local-files';
+import { sourceHash, validateLocalPath } from './local-files';
+import { assertWorkspaceReviewAccess } from './permissions';
 
 const envelope = z.object({ action: z.string().max(80), input: z.unknown() }).strict();
 const promptSchema = z.object({
@@ -208,16 +209,33 @@ export class RemoteCenter {
 
   async requestFile(kind: FileJob['kind'], raw: unknown): Promise<unknown> {
     const input = kind === 'apply' ? toolInputSchemas.apply_dot_changes.parse(raw) : kind === 'read' ? toolInputSchemas.read_dot_file.parse(raw) : kind === 'changes' ? toolInputSchemas.read_dot_workspace_changes.parse(raw) : toolInputSchemas.list_dot_files.parse(raw);
-    const task = this.validateFile(kind, input);
+    const task = this.engine.getForConnection(input.connectionId, input.taskId);
+    if (!task.remoteOrigin || task.workspaceRoot !== null) throw new Error('Not a remote task');
     const device = this.device(task.remoteOrigin!.deviceId);
     this.owned(device, task.id, kind === 'apply' ? 'writeFiles' : 'readFiles');
     const fingerprint = hash(canonicalJson({ kind, input }));
+    // A receipt is history, not permission to execute another write. Check identity and payload
+    // before active-round/consumed-grant checks, including a crash between receipt and job saves.
+    if (kind === 'apply') {
+      const operationId = toolInputSchemas.apply_dot_changes.parse(input).operationId;
+      const prior = this.state.read().jobs.find(job => job.deviceId === device.id && job.kind === 'apply' && job.input.operationId === operationId);
+      if (prior) {
+        if (prior.hash !== fingerprint) throw new Error('Operation content changed');
+        if (this.hasRecordedWrite(prior)) {
+          const replay = await this.recordedWrite(prior);
+          this.owned(this.device(device.id), task.id, 'writeFiles');
+          if (replay.found) return replay.result;
+        }
+      }
+    }
+    this.validateFile(kind, input);
     const job = await this.state.mutate(draft => {
       if (kind === 'apply') {
         const operationId = (input as { operationId: string }).operationId;
         const prior = draft.jobs.find(item => item.deviceId === device.id && item.kind === 'apply' && item.input.operationId === operationId);
         if (prior) { if (prior.hash !== fingerprint) throw new Error('Operation content changed'); return prior; }
       }
+      this.validateFile(kind, input);
       if (draft.jobs.length >= 5000) throw new Error('Remote operation journal full; review before continuing');
       const value: FileJob = { id: randomUUID(), deviceId: device.id, taskId: task.id, roundId: task.currentRoundId, userMessageSeq: task.userMessageSeq, kind, input: input as unknown as Record<string, unknown>, hash: fingerprint, expiresAt: Date.now() + 60000, status: 'queued', error: null };
       draft.jobs.push(value); return value;
@@ -225,14 +243,52 @@ export class RemoteCenter {
     const controller = new AbortController(); this.controllers.add(controller);
     try {
       for (;;) {
-        this.device(device.id);
+        this.owned(this.device(device.id), task.id, kind === 'apply' ? 'writeFiles' : 'readFiles');
         const current = this.state.read().jobs.find(item => item.id === job.id)!;
-        if (current.status === 'done') return current.result;
+        if (kind === 'apply' && this.hasRecordedWrite(current)) {
+          const replay = await this.recordedWrite(current);
+          this.owned(this.device(device.id), task.id, 'writeFiles');
+          if (replay.found) return replay.result;
+        }
+        if (current.status === 'done') {
+          if (Date.now() >= current.expiresAt) throw new Error('Remote read expired before delivery');
+          const latest = this.validateFile(kind, input, job.userMessageSeq);
+          if (kind === 'changes') {
+            const result = z.object({ files: z.array(z.object({ path: z.string(), previousPath: z.string().nullable() })).max(20) }).parse(current.result);
+            const paths = result.files.flatMap(file => file.previousPath ? [file.path, file.previousPath] : [file.path]);
+            paths.forEach(path => validateLocalPath(path));
+            assertWorkspaceReviewAccess(latest, paths);
+          }
+          return current.result;
+        }
         if (current.status === 'failed') throw new Error(current.error ?? 'Remote operation failed');
         if (Date.now() >= current.expiresAt) throw new Error('Remote operation timed out; its outcome may need checking before retry');
         this.validateFile(kind, input, job.userMessageSeq);
         await delay(400, undefined, { signal: controller.signal });
       }
     } finally { this.controllers.delete(controller); }
+  }
+
+  private async recordedWrite(job: FileJob): Promise<{ found: boolean; result?: unknown }> {
+    const task = this.engine.getForConnection(String(job.input.connectionId), job.taskId);
+    const receipt = task.localChanges.find(receipt => receipt.operationId === job.input.operationId && receipt.roundId === job.roundId);
+    if (job.status === 'done' && job.result !== undefined) {
+      const saved = localReceiptSchema.parse(job.result);
+      if (saved.operationId !== job.input.operationId || saved.roundId !== job.roundId || (receipt && canonicalJson(saved) !== canonicalJson(receipt))) throw new Error('Recorded write receipt changed');
+      return { found: true, result: saved };
+    }
+    if (!receipt) { if (job.status === 'done') throw new Error('Recorded write receipt unavailable'); return { found: false }; }
+    await this.state.mutate(draft => {
+      const current = draft.jobs.find(item => item.id === job.id);
+      if (!current || current.hash !== job.hash || current.deviceId !== job.deviceId) throw new Error('Recorded operation identity changed');
+      if (current.status === 'done' && current.result !== undefined && canonicalJson(current.result) !== canonicalJson(receipt)) throw new Error('Recorded write receipt changed');
+      current.status = 'done'; current.result = receipt; current.error = null;
+    });
+    return { found: true, result: receipt };
+  }
+
+  private hasRecordedWrite(job: FileJob): boolean {
+    if (job.status === 'done') return true;
+    return this.engine.getForConnection(String(job.input.connectionId), job.taskId).localChanges.some(receipt => receipt.operationId === job.input.operationId && receipt.roundId === job.roundId);
   }
 }

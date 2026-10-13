@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -182,4 +184,42 @@ test('a user message still in flight blocks an older file operation', async t =>
   try { await h.harness.execute(h.job); } finally { release(); }
   await saved;
   assert.equal(refused, true); assert.equal(readSource(h.root, 'new.ts').content, null);
+});
+
+
+test('remote scoped Git review does not open unapproved source or blob baselines', async t => {
+  const h = await fixture(t); execFileSync('git', ['init', '-q'], { cwd: h.root });
+  for (const path of ['allowed.ts', 'private.ts']) await writeFile(join(h.root, path), 'before ' + path + '\n');
+  execFileSync('git', ['add', '.'], { cwd: h.root });
+  execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'baseline'], { cwd: h.root });
+  const privateOid = execFileSync('git', ['rev-parse', 'HEAD:private.ts'], { cwd: h.root, encoding: 'utf8' }).trim();
+  for (const path of ['allowed.ts', 'private.ts']) await writeFile(join(h.root, path), 'after ' + path + '\n');
+  h.task.permissions.push({ requestId: randomUUID(), roundId: h.task.currentRoundId, userMessageSeq: h.task.userMessageSeq, title: 'Read', description: 'One file', scope: { toolName: 'read_dot_file', action: 'Read', targets: ['allowed.ts'], operation: null }, consumedAt: null, status: 'approved', requestedAt: 1, resolvedAt: 2, decisionMessageSeq: h.task.userMessageSeq, platformBlock: null });
+  const input = { connectionId: h.task.connectionId, taskId: h.task.id, roundId: h.task.currentRoundId, offset: 0 };
+  const job: FileJob = { ...h.job, kind: 'changes', input, hash: createHash('sha256').update(canonicalJson({ kind: 'changes', input })).digest('hex') };
+  const reported: Array<{ result?: { files: Array<{ path: string; unstagedDiff: string }>; scopeLimited: boolean }; error: string | null }> = [];
+  h.harness.call = async (action, input) => {
+    if (action === 'file-confirm') return { job, task: h.task };
+    if (action === 'file-status') return job;
+    if (action === 'file-result') { reported.push(input as typeof reported[number]); return {}; }
+    throw new Error('Unexpected action: ' + action);
+  };
+  const original = fs.openSync; let privateReads = 0;
+  fs.openSync = ((...args: Parameters<typeof fs.openSync>) => {
+    if (String(args[0]) === join(h.root, 'private.ts')) privateReads++;
+    return original(...args);
+  }) as typeof fs.openSync;
+  syncBuiltinESMExports();
+  // Record Git blob reads as well as direct disk opens.
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+  const bin = join(h.dir, 'bin'); await mkdir(bin);
+  const marker = join(h.dir, 'private-blob-read'), quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+  await writeFile(join(bin, 'git'), `#!/bin/sh\ncase " $* " in *' cat-file blob ${privateOid} '*) touch ${quote(marker)};; esac\nexec ${quote(realGit)} "$@"\n`, { mode: 0o755 });
+  const previousPath = process.env.PATH; process.env.PATH = bin + ':' + previousPath;
+  try { await h.harness.execute(job); }
+  finally { process.env.PATH = previousPath; fs.openSync = original; syncBuiltinESMExports(); }
+  assert.equal(privateReads, 0); assert.equal(fs.existsSync(marker), false);
+  assert.equal(reported[0]!.error, null); assert.equal(reported[0]!.result!.scopeLimited, true);
+  assert.deepEqual(reported[0]!.result!.files.map(file => file.path), ['allowed.ts']);
+  assert.match(reported[0]!.result!.files[0]!.unstagedDiff, /-before allowed.ts[\s\S]*\+after allowed.ts/);
 });
