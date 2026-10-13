@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from 'node:fs';
 import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import type { PaseoApi } from '@getpaseo/client';
 import { nameSchema, providerAccessSchema, type FoundSkill, type McpConfig, type McpServer, type ProviderAccess, type ProviderRow, type SharedState, type SkillRow } from '../shared/rpc';
 import type { GatewayConfig, GatewayState } from '../shared/gateway';
@@ -46,6 +46,18 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 const WATCH_DEBOUNCE_MS = 1500;
+
+/** Resolve existing parents too, so a new folder below a symlink cannot bypass the check. */
+async function physicalPath(path: string): Promise<string> {
+  const absolute = resolve(path);
+  try { return await realpath(absolute); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    const parent = dirname(absolute);
+    if (parent === absolute) throw error;
+    return join(await physicalPath(parent), absolute.slice(parent.length));
+  }
+}
 
 export class SharedTools {
   readonly libraryDir: string;
@@ -147,6 +159,15 @@ export class SharedTools {
       .sort((a, b) => Number(b.present) - Number(a.present) || a.label.localeCompare(b.label));
   }
 
+  private async targetDir(path: string): Promise<string> {
+    const dir = await physicalPath(path);
+    const library = await physicalPath(this.libraryDir);
+    if (dir === library || dir.startsWith(library + sep) || library.startsWith(dir.endsWith(sep) ? dir : dir + sep)) {
+      throw new Error(`Skills folder ${path} overlaps the shared library; choose a separate provider folder.`);
+    }
+    return dir;
+  }
+
   /** Records which providers Paseo has enabled now, with their labels and commands. */
   private async refreshProviders(stored: Stored, paseo: Paseo): Promise<boolean> {
     const snapshot = await paseo.providers.snapshot();
@@ -182,17 +203,19 @@ export class SharedTools {
     }));
     const names = new Set(library.skills.map(skill => skill.name));
     const rows = this.rows(stored).filter(row => row.present && row.skillsDir);
+    const notes = [...library.notes, ...policyNotes];
     // Providers can share a folder; each folder is synced once, with every provider that uses it.
     const targets = new Map<string, { dir: string; providers: string[] }>();
     for (const row of rows) {
-      const dir = await realpath(row.skillsDir!).catch(() => resolve(row.skillsDir!));
+      let dir: string;
+      try { dir = await this.targetDir(row.skillsDir!); }
+      catch (error) { notes.push(`${row.label}: ${message(error)}`); continue; }
       const target = targets.get(dir) ?? { dir, providers: [] };
       target.providers.push(row.id);
       targets.set(dir, target);
     }
     const placements = new Map<string, Map<string, Placement>>();
     const found: FoundSkill[] = [];
-    const notes = [...library.notes, ...policyNotes];
     for (const target of targets.values()) {
       const blocked = new Map<string, Placement>();
       const skills: readonly LibrarySkill[] = library.skills.filter(skill => {
@@ -207,7 +230,7 @@ export class SharedTools {
       });
       const forced = force && target.providers.includes(force.provider) ? new Set([force.name]) : undefined;
       try {
-        const result = await syncTarget({ ...target, skills }, names, this.backupDir, forced);
+        const result = await syncTarget({ ...target, skills, unavailable: library.unavailable }, names, this.backupDir, forced);
         for (const [name, placement] of blocked) result.placements.set(name, placement);
         for (const provider of target.providers) placements.set(provider, result.placements);
         found.push(...result.found);
@@ -387,7 +410,12 @@ export class SharedTools {
       skipped = [...parsed.skipped];
       for (const [name, config] of Object.entries(parsed.servers)) {
         if (name in stored.mcpServers && !replace) { skipped.push(`${name}: already shared`); continue; }
-        stored.mcpServers[name] = config;
+        // Import replaces the transport, not the sharing policy selected on this host.
+        // Keep even malformed policy fields so validation continues to fail closed.
+        const previous = record(stored.mcpServers[name]);
+        const policy = Object.fromEntries(['enabled', 'providers', 'excludedProviders']
+          .filter(key => previous && Object.hasOwn(previous, key)).map(key => [key, previous![key]]));
+        stored.mcpServers[name] = { ...config, ...policy };
         imported.push(name);
       }
       return { save: imported.length > 0, resync: false };
@@ -400,7 +428,10 @@ export class SharedTools {
       if (input.mcp !== undefined) prefs.mcp = input.mcp;
       if (input.skills !== undefined) prefs.skills = input.skills;
       if (input.skillsDir !== undefined) {
-        if (input.skillsDir.trim()) prefs.skillsDir = input.skillsDir.trim();
+        if (input.skillsDir.trim()) {
+          await this.targetDir(expandHome(input.skillsDir.trim(), this.home));
+          prefs.skillsDir = input.skillsDir.trim();
+        }
         else delete prefs.skillsDir;
       }
       stored.providers[input.provider] = prefs;

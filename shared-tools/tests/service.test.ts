@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
@@ -209,4 +209,45 @@ test('deleting a library skill clears its policy and unknown skill policy update
   const config = JSON.parse(await readFile(join(tools.root, 'config.json'), 'utf8'));
   assert.equal(config.skillAccess.restricted, undefined);
   await assert.rejects(tools.updateSkillAccess({ name: 'missing', providers: null }), /No library skill/);
+});
+
+test('reimporting MCP transport settings preserves local enablement and permissions', async () => {
+  await tools.state(paseo);
+  await tools.saveServer({ name: 'docs', previousName: null, enabled: false, providers: ['claude'], excludedProviders: ['kimi'], config: { type: 'stdio', command: 'old' } });
+  const { state } = await tools.importServers('json', '{"docs":{"command":"new"}}', true);
+  assert.deepEqual(state.mcpServers[0], {
+    name: 'docs', enabled: false, providers: ['claude'], excludedProviders: ['kimi'], config: { type: 'stdio', command: 'new' },
+  });
+  assert.equal(await tools.mcpFor('claude', undefined, paseo), null);
+  await tools.saveServer({ ...state.mcpServers[0]!, previousName: 'docs', enabled: true });
+  assert.equal(await tools.mcpFor('kimi', undefined, paseo), null);
+});
+
+test('unavailable library skills keep their last synced copies', async () => {
+  await skill(tools.libraryDir, 'tdd');
+  await tools.state(paseo);
+  await rm(join(tools.libraryDir, 'tdd/SKILL.md'));
+  const state = await tools.syncNow();
+  assert.match(state.notes.join('\n'), /library.*unavailable/i);
+  assert.ok((await readdir(join(home, '.claude/skills'))).includes('tdd'));
+});
+
+test('rejects library overlap as a provider target, including symlink aliases', async () => {
+  await skill(tools.libraryDir, 'tdd');
+  await tools.state(paseo);
+  const alias = join(home, 'library-alias');
+  await symlink(tools.libraryDir, alias);
+  for (const skillsDir of [tools.libraryDir, tools.root, join(tools.libraryDir, 'tdd'), alias, join(alias, 'new-target')]) {
+    await assert.rejects(tools.updateProvider({ provider: 'claude', skillsDir }), /overlap.*library/i);
+  }
+  // A hand-edited path must also be refused before sync can adopt or remove library files.
+  const path = join(tools.root, 'config.json');
+  const config = JSON.parse(await readFile(path, 'utf8'));
+  config.providers.claude.skillsDir = alias;
+  await writeFile(path, JSON.stringify(config));
+  let state = await tools.syncNow();
+  assert.match(state.notes.join('\n'), /overlap.*library/i);
+  state = await tools.updateProvider({ provider: 'claude', skills: false });
+  assert.ok((await readdir(join(tools.libraryDir, 'tdd'))).includes('SKILL.md'));
+  assert.equal((await readdir(join(tools.libraryDir, 'tdd'))).includes('.paseo-shared-tools.json'), false);
 });

@@ -16,6 +16,7 @@ Shared servers are added to each new agent as Paseo creates it, through the same
 - Each server's **Provider permissions** button (people icon), also available in its add/edit form, offers **Allow all**, **Allowlist**, and **Denylist**. An allowlist permits only the selected providers; an empty allowlist permits nobody. A denylist excludes the selected providers and allows the rest, including future providers. An empty denylist allows everyone. The provider's **MCP** switch must also be on. Existing configurations keep their original behavior.
 - Each provider has an **MCP** switch. Pi starts with it off: Pi only runs MCP servers with the `pi-mcp-adapter` extension, and Paseo refuses to start an agent whose provider cannot run the servers it is given. Turn it on once the adapter is installed.
 - A server the agent was created with under the same name (by a schedule, a delegation or another plugin) is kept as given. The names `paseo` and `director` belong to Paseo and are never used.
+- Replacing an existing server through the import RPC updates its connection settings while preserving this host's enabled switch and provider permissions.
 - Only new agents get the servers. Agents that are already running, and resumed agents, keep the servers they were created with.
 
 ### Signing in
@@ -51,13 +52,14 @@ The library is `$PASEO_HOME/shared-tools/skills` (by default `~/.paseo/shared-to
 | Gemini | `~/.gemini/skills` |
 | Cursor | `~/.cursor/skills` |
 
-A custom provider is matched by its id, then by the executable it runs (`kimi acp` → Kimi Code). For any other provider, set a folder on its row. Providers that share a folder are synced once.
+A custom provider is matched by its id, then by the executable it runs (`kimi acp` → Kimi Code). For any other provider, set a folder on its row. Providers that share a folder are synced once. A provider folder must not overlap the shared library (including through a symbolic link); overlapping paths are refused to protect the original skills.
 
 - **Provider permissions:** each library skill has the same **Allow all / Allowlist / Denylist** controls as MCP servers. Saving applies the rule immediately and removes untouched managed copies from denied providers. Edited copies and independent skills or links remain, with a note explaining that they are still on disk; these rules control plugin sharing rather than a CLI's independently installed tools. If providers share a folder but have different effective permissions, the skill is withheld from that folder and a warning asks you to set separate folders. The plugin removes its untouched copy there to prevent sharing through the common folder.
 - **Getting started:** the screen lists skills it finds in the providers' folders. **Add to library** copies one in; any other folder from disk can be added by path. The provider's own copy, being identical, is adopted rather than duplicated.
 - **Editing:** edit the files in the library. Changes reach every provider within a couple of seconds, or on **Sync now**.
 - **Ownership:** every copy has a `.paseo-shared-tools.json` manifest. The plugin only updates or removes copies with a manifest that have not been edited since it wrote them. A skill of your own with the same name shows as **name taken**, and a copy edited in a provider's folder shows as **edited there**; both are left alone until you choose **Replace**, which first moves the existing copy to `~/.paseo/shared-tools/backups`.
 - **Removing:** removing a skill moves it from the library to the backups and removes the untouched copies. Switching **Skills** off for a provider removes the plugin's untouched copies from its folder.
+- **Read errors:** an existing library entry that cannot be read or temporarily lacks `SKILL.md` is reported and its existing copies are kept. Fix the entry or remove its library folder to resume syncing and cleanup. A provider copy containing unreadable entries or broken links is also kept rather than treated as untouched.
 - Skills are copied, not linked, since not every CLI follows links. A link you made yourself from a provider's folder into the library counts as in sync.
 
 ## Multi-machine: sign in once, use it everywhere

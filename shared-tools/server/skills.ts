@@ -13,7 +13,7 @@ const MAX_FILES = 5000;
 type Files = Map<string, string>;
 
 export interface LibrarySkill { name: string; dir: string; description: string | null; files: Files }
-export interface Target { dir: string; providers: string[]; skills: readonly LibrarySkill[] }
+export interface Target { dir: string; providers: string[]; skills: readonly LibrarySkill[]; unavailable?: ReadonlySet<string> }
 export interface Placement { status: TargetStatus; message: string | null }
 export interface TargetReport { placements: Map<string, Placement>; found: FoundSkill[]; notes: string[] }
 
@@ -30,12 +30,14 @@ async function hashTree(root: string): Promise<Files> {
       const full = join(dir, name);
       const rel = relative(root, full).split(sep).join('/');
       if (rel === MANIFEST) continue;
-      const info = await stat(full).catch(() => null);
-      if (info?.isDirectory()) await walk(full, depth + 1);
-      else if (info?.isFile()) {
+      // An unreadable entry is not an absent entry: skipping it could mark a local edit
+      // as untouched and allow the next sync to delete it.
+      const info = await stat(full);
+      if (info.isDirectory()) await walk(full, depth + 1);
+      else if (info.isFile()) {
         if (files.size >= MAX_FILES) throw new Error(`${root} has more than ${MAX_FILES} files.`);
         files.set(rel, createHash('sha256').update(await readFile(full)).digest('hex'));
-      }
+      } else throw new Error(`${full} is not a regular file or folder.`);
     }
   };
   await walk(root, 0);
@@ -91,20 +93,25 @@ async function readDescription(dir: string): Promise<string | null> {
 }
 
 /** Every folder in the library with a SKILL.md and a name every CLI accepts. */
-export async function readLibrary(libraryDir: string): Promise<{ skills: LibrarySkill[]; notes: string[] }> {
+export async function readLibrary(libraryDir: string): Promise<{ skills: LibrarySkill[]; notes: string[]; unavailable: Set<string> }> {
   await mkdir(libraryDir, { recursive: true });
   const skills: LibrarySkill[] = [];
   const notes: string[] = [];
+  const unavailable = new Set<string>();
   for (const name of (await readdir(libraryDir)).sort()) {
     if (name.startsWith('.')) continue;
     const dir = join(libraryDir, name);
-    if (!(await stat(dir).catch(() => null))?.isDirectory()) continue;
     if (!nameSchema.safeParse(name).success) { notes.push(`Library folder "${name}" was skipped: use letters, digits, "_" and "-" only.`); continue; }
-    if (!(await isSkillDir(dir))) { notes.push(`Library folder "${name}" was skipped: it has no ${SKILL_FILE}.`); continue; }
-    try { skills.push({ name, dir, description: await readDescription(dir), files: await hashTree(dir) }); }
-    catch (error) { notes.push(`Library skill "${name}" was skipped: ${message(error)}`); }
+    try {
+      if (!(await stat(dir)).isDirectory()) throw new Error('It is not a folder.');
+      if (!(await isSkillDir(dir))) throw new Error(`It has no readable ${SKILL_FILE}.`);
+      skills.push({ name, dir, description: await readDescription(dir), files: await hashTree(dir) });
+    } catch (error) {
+      unavailable.add(name);
+      notes.push(`Library skill "${name}" was skipped: ${message(error)}`);
+    }
   }
-  return { skills, notes };
+  return { skills, notes, unavailable };
 }
 
 async function moveAside(from: string, backupDir: string, label: string): Promise<string> {
@@ -201,6 +208,10 @@ export async function syncTarget(target: Target, librarySkillNames: ReadonlySet<
     if (/^\..+\.paseo-tmp-[0-9a-f]{8}$/.test(name)) { await rm(join(target.dir, name), { recursive: true, force: true }); continue; }
     if (name.startsWith('.') || wanted.has(name)) continue;
     const path = join(target.dir, name);
+    if (target.unavailable?.has(name)) {
+      notes.push(`${path} was kept: its library skill is unavailable; fix the library entry or remove its folder to finish syncing.`);
+      continue;
+    }
     const info = await lstat(path).catch(() => null);
     const manifest = info?.isDirectory() ? await readManifest(path) : null;
     if (manifest) {

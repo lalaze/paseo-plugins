@@ -20,8 +20,8 @@ async function skill(dir: string, name: string, body = 'Do the thing.', extra: R
 }
 
 async function sync(force?: string[]) {
-  const { skills } = await readLibrary(library);
-  return syncTarget({ dir: target, providers: ['claude'], skills }, new Set(skills.map(s => s.name)), backups, new Set(force));
+  const { skills, unavailable } = await readLibrary(library);
+  return syncTarget({ dir: target, providers: ['claude'], skills, unavailable }, new Set(skills.map(s => s.name)), backups, new Set(force));
 }
 
 beforeEach(async () => {
@@ -127,4 +127,35 @@ test('leaves a missing folder alone when there is nothing to put in it', async (
   const result = await sync();
   assert.equal(result.placements.size, 0);
   await assert.rejects(readdir(target));
+});
+
+test('keeps managed copies while a library skill is temporarily unreadable or incomplete', async () => {
+  await skill(library, 'tdd');
+  await sync();
+  const original = await readFile(join(target, 'tdd/SKILL.md'), 'utf8');
+  await symlink(join(root, 'missing'), join(library, 'tdd/reference'));
+  let result = await sync();
+  assert.equal(await readFile(join(target, 'tdd/SKILL.md'), 'utf8'), original);
+  assert.match(result.notes.join('\n'), /library.*unavailable/i);
+  await rm(join(library, 'tdd/reference'));
+  await rm(join(library, 'tdd/SKILL.md'));
+  result = await sync();
+  assert.equal(await readFile(join(target, 'tdd/SKILL.md'), 'utf8'), original);
+  assert.match(result.notes.join('\n'), /library.*unavailable/i);
+  await rm(join(library, 'tdd'), { recursive: true });
+  await sync();
+  assert.deepEqual(await readdir(target), []);
+});
+
+test('does not discard an unhashable local addition during an update or removal', async () => {
+  await skill(library, 'tdd');
+  await sync();
+  await symlink(join(root, 'missing'), join(target, 'tdd/local-reference'));
+  await skill(library, 'tdd', 'updated');
+  const result = await sync();
+  assert.equal(result.placements.get('tdd')?.status, 'error');
+  assert.ok((await readdir(join(target, 'tdd'))).includes('local-reference'));
+  await removeFromLibrary(library, 'tdd', backups);
+  await sync();
+  assert.ok((await readdir(join(target, 'tdd'))).includes('local-reference'));
 });
