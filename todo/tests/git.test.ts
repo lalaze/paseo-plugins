@@ -445,3 +445,15 @@ describe('git merge and capture', () => {
   });
 });
 
+
+describe('repository identity', () => {
+  it('shares identity between a repository and its linked worktree while preserving their working paths', async () => {
+    const root = await initRepo();
+    try {
+      const tool = createGit({ worktreeRoot: await worktreeRoot() });
+      const linked = await tool.ensureWorktree({ root, taskId: 'identity', branch: 'paseo-todo/identity', targetBranch: 'main', existingPath: null });
+      assert.notEqual(await tool.resolveRepository(root), await tool.resolveRepository(linked.worktree));
+      assert.equal(await tool.repositoryIdentity(root), await tool.repositoryIdentity(linked.worktree));
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});

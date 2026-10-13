@@ -21,6 +21,7 @@ import { createHostRegistry, hostLabel, type HostRegistry, type TodoHost } from 
 import { parseTodoError, ui } from './i18n';
 import { Button, outline, Pill, tint, type Colors } from './kit';
 import { TaskSheet } from './sheet';
+import { LatestRequests } from './requests';
 
 type Rpc = PluginClientContext['rpc'];
 
@@ -140,12 +141,14 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
   const fail = useCallback((error: unknown) => { toast.error(parseTodoError(error)); }, [toast]);
 
   // Each host is asked on its own, so a slow or offline host never holds the others back.
-  const inflight = useRef(new Set<string>());
+  const requests = useMemo(() => new LatestRequests(), [scoped]);
+  useEffect(() => () => requests.clear(), [requests]);
   const fetchHost = useCallback(async (host: TodoHost, force = false) => {
-    if (inflight.current.has(host.id) && !force) return;
-    inflight.current.add(host.id);
+    const request = requests.begin(host.id, force);
+    if (!request) return;
     try {
       const listed = await withTimeout(host.rpc(listTasks, scoped ? { repository: scoped } : {}));
+      if (!request.current()) return;
       const next = { tasks: listed.tasks, loadError: listed.loadError };
       const key = `${host.id}\0${scoped ?? ''}`;
       const kept = sameList(listCache.get(key), next) ? listCache.get(key) as HostList : next;
@@ -158,13 +161,14 @@ export function TodoPanel(props: PluginHostProps & Pick<PluginSurfaceProps, 'nav
       });
       setNow(Date.now());
     } catch (error) {
+      if (!request.current()) return;
       setUnreachable(previous => ({ ...previous, [host.id]: parseTodoError(error) }));
       // An unreachable host still counts as answered, so it cannot keep the board from drawing.
       setLists(previous => (host.id in previous ? previous : { ...previous, [host.id]: { tasks: [], loadError: null } }));
     } finally {
-      inflight.current.delete(host.id);
+      request.finish();
     }
-  }, [scoped]);
+  }, [scoped, requests]);
 
   const hostsRef = useRef(hosts);
   hostsRef.current = hosts;

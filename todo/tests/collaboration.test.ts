@@ -67,6 +67,7 @@ function git(): GitPort {
   const failure: GitFailure = { ok: false, reason: 'conflict', detail: 'unused' };
   return {
     resolveRepository: async path => path,
+    repositoryIdentity: async path => path,
     listBranches: async () => ({ branches: ['main'], head: 'main' }),
     branchExists: async () => true,
     ensureWorktree: async input => ({ worktree: `/wt/${input.taskId}`, branch: input.branch, baseCommit: sha }),

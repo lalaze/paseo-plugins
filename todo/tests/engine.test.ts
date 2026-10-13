@@ -45,6 +45,7 @@ function harness(options: {
   capture?: GitPort['capture'];
   prepare?: GitPort['prepareMerge'];
   resolve?: GitPort['resolveRepository'];
+  identity?: GitPort['repositoryIdentity'];
   apply?: GitPort['applyMerge'];
   send?: AgentPort['send'];
   verifyMerge?: GitPort['verifyAgentMerge'];
@@ -97,6 +98,7 @@ function harness(options: {
   });
   const git: GitPort = {
     resolveRepository: options.resolve ?? (async path => path),
+    repositoryIdentity: options.identity ?? (async path => path),
     async listBranches() { return { branches: ['main'], head: 'main' }; },
     async branchExists() { return true; },
     ensureWorktree: options.ensure ?? (async input => ({ worktree: `/wt/${input.taskId}`, branch: input.branch, baseCommit: B })),
@@ -847,14 +849,18 @@ describe('engine failure paths', () => {
   });
 
   it('keeps a cancel across a restart while the session is still running, then finishes it as canceled', async () => {
-    const box = harness({ inspect: async () => ({ exists: true, active: true, permission: false, status: 'running' }) });
+    let active = true;
+    const box = harness({ inspect: async () => ({ exists: true, active, permission: false, status: active ? 'running' : 'idle' }) });
     let seeded: Task | null = null;
     await withEngine(box, async engine => {
       await engine.recover();
       const task = seeded as unknown as Task;
       assert.equal(statusOf(engine, task.id), 'canceling');
-      assert.deepEqual(box.cancels, ['agent-seeded']);
+      assert.ok(box.cancels.includes('agent-seeded'));
       await engine.onTurnEnded({ agentId: 'agent-seeded', turnId: 'late', outcome: { kind: 'completed' } });
+      assert.equal(statusOf(engine, task.id), 'canceling', 'a late outcome cannot prove the live turn stopped');
+      active = false;
+      await engine.cancel(task.id);
       assert.equal(statusOf(engine, task.id), 'canceled');
       assert.equal(box.captures.length, 0);
     }, async dir => { seeded = await seed(dir, { status: 'canceling' }); });
@@ -1945,7 +1951,7 @@ describe('collaboration lifecycle', () => {
       });
     });
 
-    it('deletes a merged task through the merged-branch check, never the force delete', async () => {
+    it('deletes a fully cleaned merged task without repeating external cleanup', async () => {
       const box = harness();
       await withEngine(box, async engine => {
         const task = await reviewed(box, engine, 'merged-task');
@@ -1955,19 +1961,27 @@ describe('collaboration lifecycle', () => {
         assert.equal(box.deleted.length, 1);
         await engine.deleteTask(task.id);
         assert.equal(engine.list().tasks.length, 0);
-        assert.equal(box.deleted.length, 2);
+        assert.equal(box.deleted.length, 1);
+        assert.equal(box.archived.length, 1);
+        assert.equal(box.removed.length, 1);
         assert.equal(box.forceDeleted.length, 0);
       });
     });
 
-    it('keeps the branch when the worktree cannot be removed during delete', async () => {
-      const box = harness({ removeWorktree: async () => { throw new Error('contains untracked files'); } });
+    it('keeps the task and branch when worktree removal fails, then allows deletion to be retried', async () => {
+      let dirty = true;
+      const box = harness({ removeWorktree: async () => { if (dirty) throw new Error('contains untracked files'); } });
       await withEngine(box, async engine => {
         const task = await reviewed(box, engine, 'dirty-delete');
-        await engine.deleteTask(task.id);
-        assert.equal(engine.list().tasks.length, 0);
+        await assert.rejects(engine.deleteTask(task.id), /delete-failed/);
+        assert.equal(engine.list().tasks.length, 1);
+        assert.equal(engine.list().tasks[0]?.errorCode, 'delete-failed');
         assert.equal(box.forceDeleted.length, 0);
         assert.equal(box.deleted.length, 0);
+        dirty = false;
+        await engine.deleteTask(task.id);
+        assert.equal(engine.list().tasks.length, 0);
+        assert.equal(box.forceDeleted.length, 1);
       });
     });
 
@@ -2175,4 +2189,317 @@ describe('draft editing', () => {
     } finally { release(true); await box.engine.dispose(); await rm(dir, { recursive: true, force: true }); }
   });
 
+});
+
+describe('safe session transitions', () => {
+  it('keeps a resumed single-agent task canceling until the session really stops', async () => {
+    let active = true;
+    let unavailable = false;
+    const box = harness({ inspect: async () => {
+      if (unavailable) throw new Error('offline');
+      return { exists: true, active, permission: false, status: active ? 'running' : 'idle' };
+    } });
+    await withEngine(box, async engine => {
+      const task = await reviewed(box, engine, 'resumed');
+      await engine.onTurnStarted({ agentId: task.agentId!, turnId: 'new-turn' });
+      assert.equal((await engine.cancel(task.id)).status, 'canceling');
+      assert.ok(box.cancels.includes(task.agentId!));
+      const next = await draft(engine, 'next');
+      await engine.startTask(next.id);
+      assert.equal(statusOf(engine, next.id), 'queued');
+      unavailable = true;
+      active = false;
+      assert.equal((await engine.cancel(task.id)).status, 'canceling');
+      unavailable = false;
+      await engine.cancel(task.id);
+      await waitFor(() => statusOf(engine, task.id) === 'canceled');
+      await waitFor(() => statusOf(engine, next.id) === 'running');
+    });
+  });
+
+  for (const action of ['retry', 'continue'] as const) {
+    it(`refuses ${action} while the previous single agent is still active or cannot be inspected`, async () => {
+      let active = true;
+      let unavailable = false;
+      const box = harness({ inspect: async () => {
+        if (unavailable) throw new Error('offline');
+        return { exists: true, active, permission: false, status: active ? 'running' : 'idle' };
+      } });
+      await withEngine(box, async engine => {
+        const task = await reviewed(box, engine, action);
+        await engine.onTurnStarted({ agentId: task.agentId!, turnId: 'resumed' });
+        if (action === 'retry') {
+          box.git.snapshot = async () => ({ head: OTHER, tree: T, clean: true, targetHead: H });
+          await engine.read(task.id);
+          assert.equal(statusOf(engine, task.id), 'needs_check');
+        }
+        const perform = () => action === 'retry' ? engine.retry(task.id) : engine.continue(task.id, 'follow up');
+        await assert.rejects(perform(), /agent-busy/);
+        unavailable = true;
+        active = false;
+        await assert.rejects(perform(), /gateway-unavailable/);
+        assert.equal(box.created.length, 1);
+        assert.ok(box.cancels.includes(task.agentId!));
+        unavailable = false;
+        await perform();
+        await waitFor(() => box.created.length === 2);
+      });
+    });
+  }
+
+  it('keeps the record and worktree when stopping or archiving fails during deletion', async () => {
+    let active = true;
+    let archiveFailed = true;
+    const box = harness({
+      inspect: async () => ({ exists: true, active, permission: false, status: active ? 'running' : 'idle' }),
+      archive: async () => { if (archiveFailed) throw new Error('archive unavailable'); },
+    });
+    await withEngine(box, async (engine, dir) => {
+      const task = await reviewed(box, engine, 'delete-stop');
+      await assert.rejects(engine.deleteTask(task.id), /agent-busy/);
+      assert.equal(box.archived.length, 0);
+      assert.equal(box.removed.length, 0);
+      active = false;
+      await assert.rejects(engine.deleteTask(task.id), /archive unavailable/);
+      assert.equal(box.removed.length, 0);
+      assert.equal(box.forceDeleted.length, 0);
+      const saved = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')).tasks;
+      assert.equal(saved.length, 1);
+      assert.equal(saved[0].errorCode, 'delete-failed');
+      archiveFailed = false;
+      await engine.deleteTask(task.id);
+      assert.equal(engine.list().tasks.length, 0);
+    });
+  });
+
+  it('keeps a collaboration task when the host cannot confirm cancellation', async () => {
+    const host = new CollaborationHost();
+    const box = harness({ collaboration: host.port });
+    await withEngine(box, async engine => {
+      const task = await engine.createTask({
+        title: 'stop-before-delete', prompt: 'work', repository: REPO, projectId: null, projectName: null,
+        targetBranch: 'main', provider: 'stub/model', modeId: null, collaboration: collaborationSnapshot(),
+      });
+      await engine.startTask(task.id);
+      await waitFor(() => statusOf(engine, task.id) === 'running');
+      host.phase = 'executing';
+      host.control = 'needs_attention';
+      await settled(engine, task.id);
+      host.port.control = async () => { throw new Error('cannot stop'); };
+      await assert.rejects(engine.deleteTask(task.id), /delete-failed/);
+      assert.equal(engine.list().tasks.length, 1);
+      assert.equal(box.archived.length, 0);
+      assert.equal(box.removed.length, 0);
+    });
+  });
+});
+
+describe('linked worktree scheduling', () => {
+  const OTHER_CHECKOUT = '/tmp/paseo-todo-linked';
+  const identity = async (path: string) => path === REPO || path === OTHER_CHECKOUT ? '/tmp/shared.git' : path;
+  const linkedDraft = (engine: TodoEngine) => engine.createTask({
+    title: 'linked', prompt: 'linked work', repository: OTHER_CHECKOUT, projectId: null, projectName: null,
+    targetBranch: 'main', provider: 'stub/model', modeId: null,
+  });
+
+  it('serializes execution across different checkouts of the same Git repository', async () => {
+    const box = harness({ identity });
+    await withEngine(box, async engine => {
+      const first = await draft(engine, 'main');
+      const second = await linkedDraft(engine);
+      await engine.startQueue(null);
+      await waitFor(() => statusOf(engine, first.id) === 'running');
+      assert.equal(statusOf(engine, second.id), 'queued');
+      assert.equal(box.created.length, 1);
+      const running = engine.list().tasks.find(task => task.id === first.id)!;
+      await engine.onTurnEnded({ agentId: running.agentId!, turnId: 'done', outcome: { kind: 'completed' } });
+      await waitFor(() => statusOf(engine, second.id) === 'running');
+      assert.equal(box.created.length, 2);
+    });
+  });
+
+  it('refuses concurrent merges from different checkouts', async () => {
+    const box = harness({ identity });
+    await withEngine(box, async engine => {
+      const first = await reviewed(box, engine, 'main');
+      const second = await linkedDraft(engine);
+      await engine.startTask(second.id);
+      await waitFor(() => statusOf(engine, second.id) === 'running');
+      const running = engine.list().tasks.find(task => task.id === second.id)!;
+      await engine.onTurnEnded({ agentId: running.agentId!, turnId: 'linked-done', outcome: { kind: 'completed' } });
+      const review = engine.list().tasks.find(task => task.id === second.id)!.review!;
+      await engine.accept(first.id, reviewOf(first));
+      await assert.rejects(engine.accept(second.id, review), /merge-busy/);
+      assert.equal(box.sent.length, 1);
+    });
+  });
+
+  it('resolves repository identities for saved tasks before restart dispatch', async () => {
+    const box = harness({ identity, inspect: async () => ({ exists: true, active: true, permission: false, status: 'running' }) });
+    await withEngine(box, async engine => {
+      await engine.recover();
+      const second = await linkedDraft(engine);
+      await engine.startTask(second.id);
+      assert.equal(statusOf(engine, second.id), 'queued');
+      assert.equal(box.created.length, 0);
+    }, async dir => { await seed(dir, {}); });
+  });
+});
+
+it('keeps the store locked while a retry is still stopping its previous session', async () => {
+  let release: () => void = () => undefined;
+  let entered: () => void = () => undefined;
+  const stopped = new Promise<void>(resolve => { release = resolve; });
+  const stopping = new Promise<void>(resolve => { entered = resolve; });
+  const box = harness({ cancel: async () => { entered(); await stopped; } });
+  await withEngine(box, async (engine, dir) => {
+    const task = await reviewed(box, engine, 'stop-during-dispose');
+    const continuing = engine.continue(task.id, 'next round');
+    await stopping;
+    let closed = false;
+    const closing = engine.dispose().then(() => { closed = true; });
+    try {
+      const contender = await TaskStore.open(dir);
+      assert.equal(contender.loadError, 'store-locked');
+      await contender.dispose();
+      assert.equal(closed, false);
+    } finally { release(); }
+    await continuing;
+    await closing;
+    assert.equal(box.created.length, 1, 'shutdown does not dispatch the new session');
+    const reopened = await TaskStore.open(dir);
+    assert.equal(reopened.loadError, null);
+    assert.equal(reopened.get(task.id).status, 'queued');
+    await reopened.dispose();
+  });
+});
+
+describe('deleting already cleaned tasks', () => {
+  it('removes a fully cleaned record while the daemon and repository are unavailable', async () => {
+    const box = harness();
+    await withEngine(box, async (engine, dir) => {
+      const task = await reviewed(box, engine, 'offline-delete');
+      const merged = await acceptAndFinish(engine, task.id, reviewOf(task));
+      assert.deepEqual([merged.cleanup?.sessions, merged.cleanup?.worktree, merged.cleanup?.branch], [true, true, true]);
+      let externalCalls = 0;
+      const unavailable = async (): Promise<never> => { externalCalls++; throw new Error('resource no longer available'); };
+      box.agents.cancel = unavailable;
+      box.agents.inspect = unavailable;
+      box.agents.archiveTask = unavailable;
+      box.git.repositoryIdentity = unavailable;
+      box.git.removeWorktree = unavailable;
+      box.git.deleteMergedBranch = unavailable;
+      box.git.deleteBranch = unavailable;
+      await engine.deleteTask(task.id);
+      assert.equal(externalCalls, 0);
+      assert.equal(engine.list().tasks.length, 0);
+      assert.equal(JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')).tasks.length, 0);
+    });
+  });
+
+  it('skips archived sessions but still verifies and removes remaining merged resources', async () => {
+    let dirty = true;
+    const box = harness({ removeWorktree: async () => { if (dirty) throw new Error('dirty worktree'); } });
+    await withEngine(box, async engine => {
+      const task = await reviewed(box, engine, 'partial-cleanup');
+      const merged = await acceptAndFinish(engine, task.id, reviewOf(task));
+      assert.deepEqual([merged.cleanup?.sessions, merged.cleanup?.worktree, merged.cleanup?.branch], [true, false, false]);
+      box.agents.cancel = async () => { throw new Error('archived session unavailable'); };
+      box.agents.inspect = async () => { throw new Error('archived session unavailable'); };
+      box.agents.archiveTask = async () => { throw new Error('archived session unavailable'); };
+      await assert.rejects(engine.deleteTask(task.id), /dirty worktree/);
+      assert.equal(engine.list().tasks.length, 1);
+      dirty = false;
+      await engine.deleteTask(task.id);
+      assert.equal(engine.list().tasks.length, 0);
+      assert.deepEqual(box.deleted, [{ branch: task.branch!, expectedHead: R, targetBranch: 'main' }]);
+      assert.equal(box.forceDeleted.length, 0);
+      assert.equal(box.archived.length, 1);
+    });
+  });
+});
+
+describe('repository lookup failures', () => {
+  it('persists a restart lookup failure, keeps other repositories running and retries under the shared lock', async () => {
+    let unavailable = true;
+    const linked = '/tmp/lookup-linked';
+    const box = harness({ identity: async path => {
+      if (path === REPO && unavailable) throw new Error('repository moved or unavailable');
+      return path === REPO || path === linked ? '/tmp/shared-lookup.git' : path;
+    } });
+    await withEngine(box, async (engine, dir) => {
+      const saved = engine.list().tasks[0];
+      await engine.recover();
+      await waitFor(() => statusOf(engine, saved.id) === 'failed');
+      const failed = engine.list().tasks.find(task => task.id === saved.id)!;
+      assert.equal(failed.errorCode, 'prepare-failed');
+      assert.match(failed.errorDetail!, /repository moved/);
+      assert.equal(failed.operationId, null);
+      assert.equal(box.created.length, 0);
+      assert.equal(JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')).tasks[0].status, 'failed');
+      const other = await engine.createTask({
+        title: 'independent', prompt: 'work', repository: '/tmp/independent-repo', projectId: null, projectName: null,
+        targetBranch: 'main', provider: 'stub/model', modeId: null,
+      });
+      await engine.startTask(other.id);
+      await waitFor(() => statusOf(engine, other.id) === 'running');
+      unavailable = false;
+      await engine.retry(saved.id);
+      await waitFor(() => statusOf(engine, saved.id) === 'running');
+      assert.equal(engine.list().tasks.find(task => task.id === saved.id)!.errorCode, null);
+      const sameRepo = await engine.createTask({
+        title: 'linked', prompt: 'work', repository: linked, projectId: null, projectName: null,
+        targetBranch: 'main', provider: 'stub/model', modeId: null,
+      });
+      await engine.startTask(sameRepo.id);
+      assert.equal(statusOf(engine, sameRepo.id), 'queued');
+      assert.equal(box.created.length, 2);
+    }, async dir => { await seed(dir, { status: 'queued', operationId: null, agentId: null, workspaceId: null, branch: null, worktree: null }); });
+  });
+
+  it('does not overwrite a cancellation when an earlier lookup fails late', async () => {
+    let rejectLookup: (error: Error) => void = () => undefined;
+    let entered: () => void = () => undefined;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const lookup = new Promise<string>((_, reject) => { rejectLookup = reject; });
+    const box = harness({ identity: () => { entered(); return lookup; } });
+    await withEngine(box, async engine => {
+      const task = engine.list().tasks[0];
+      await engine.startTask(task.id);
+      await started;
+      await engine.cancel(task.id);
+      rejectLookup(new Error('late failure'));
+      await engine.dispose();
+      assert.equal(statusOf(engine, task.id), 'canceled');
+      assert.equal(engine.list().tasks[0].errorCode, null);
+      assert.equal(box.created.length, 0);
+    }, async dir => { await seed(dir, { status: 'draft', operationId: null, agentId: null, workspaceId: null, branch: null, worktree: null }); });
+  });
+
+  it('drains an in-flight lookup and persists its failure before releasing storage', async () => {
+    let rejectLookup: (error: Error) => void = () => undefined;
+    let entered: () => void = () => undefined;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const lookup = new Promise<string>((_, reject) => { rejectLookup = reject; });
+    const box = harness({ identity: () => { entered(); return lookup; } });
+    await withEngine(box, async (engine, dir) => {
+      const task = engine.list().tasks[0];
+      await engine.startTask(task.id);
+      await started;
+      let closed = false;
+      const closing = engine.dispose().then(() => { closed = true; });
+      try {
+        const contender = await TaskStore.open(dir);
+        assert.equal(contender.loadError, 'store-locked');
+        await contender.dispose();
+        assert.equal(closed, false);
+      } finally { rejectLookup(new Error('repository unavailable')); }
+      await closing;
+      const reopened = await TaskStore.open(dir);
+      assert.equal(reopened.get(task.id).status, 'failed');
+      assert.equal(reopened.get(task.id).errorCode, 'prepare-failed');
+      await reopened.dispose();
+      assert.equal(box.created.length, 0);
+    }, async dir => { await seed(dir, { status: 'draft', operationId: null, agentId: null, workspaceId: null, branch: null, worktree: null }); });
+  });
 });

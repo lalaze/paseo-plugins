@@ -99,6 +99,8 @@ export type VerifiedAgentMerge = { ok: true; mergeCommit: string; taskHead: stri
 
 export interface GitPort {
   resolveRepository(path: string): Promise<string>;
+  /** Canonical shared Git directory: every linked worktree has the same identity. */
+  repositoryIdentity(root: string): Promise<string>;
   listBranches(root: string): Promise<{ branches: string[]; head: string | null }>;
   branchExists(root: string, branch: string): Promise<boolean>;
   ensureWorktree(input: EnsureWorktreeInput): Promise<{ worktree: string; branch: string; baseCommit: string }>;
@@ -299,6 +301,7 @@ export function createGit(options: { run?: GitRun; worktreeRoot?: string } = {})
   }
 
   return {
+    repositoryIdentity: commonDir,
     async resolveRepository(path: string) {
       const result = await text(path, ['rev-parse', '--show-toplevel']);
       if (result.code !== 0) throw todoError('not-git', clip(result.stderr || result.stdout));

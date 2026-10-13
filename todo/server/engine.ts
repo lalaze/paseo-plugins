@@ -131,6 +131,8 @@ export class TodoEngine {
   private readonly startedTurnLimit: number;
   private readonly listeners = new Set<() => void>();
   private readonly repoTails = new Map<string, Promise<void>>();
+  private readonly repositoryIds = new Map<string, string>();
+  private readonly repositoryLookups = new Map<string, Promise<string>>();
   private readonly gitTails = new Map<string, Promise<void>>();
   private readonly taskTails = new Map<string, Promise<void>>();
   private readonly turns: TurnEvent[] = [];
@@ -144,6 +146,7 @@ export class TodoEngine {
   private readonly reconciledAt = new Map<string, number>();
   private readonly collaborationRecoveries = new Map<string, Promise<void>>();
   private readonly mergeSyncs = new Map<string, Promise<void>>();
+  private readonly cancelSyncs = new Map<string, Promise<void>>();
   private readonly collaborationPoll: ReturnType<typeof setInterval>;
   private readonly idleWaiters: Array<() => void> = [];
   private spanDepth = 0;
@@ -182,6 +185,7 @@ export class TodoEngine {
     if (!title || !prompt) throw todoError('empty-prompt');
     if (!isAbsolute(input.repository)) throw todoError('not-git');
     const repository = await this.options.git.resolveRepository(input.repository);
+    await this.repositoryId(repository);
     if (!await this.options.git.branchExists(repository, input.targetBranch)) throw todoError('branch-missing');
     const now = this.now();
     const task = taskSchema.parse({
@@ -304,7 +308,7 @@ export class TodoEngine {
       // A paused or blocked collaboration is not in the execution slot, but its host run can still
       // have child sessions. Cancel those before the task is marked canceled.
       const liveCollaboration = Boolean(task.collaboration && task.operationId && (task.collaborationConversationId || task.collaborationRunId));
-      if (!isExecution(task.status) && !liveCollaboration) {
+      if (!isExecution(task.status) && !liveCollaboration && !task.agentId && !task.operationId) {
         await this.write({ ...task, status: 'canceled', errorCode: null, errorDetail: null });
         return;
       }
@@ -337,38 +341,45 @@ export class TodoEngine {
         const task = this.options.store.get(id);
         if (!canDelete(task.status)) throw todoError('delete-rejected');
 
-        if (task.collaboration && (task.collaborationRunId || task.collaborationConversationId)) {
-          await this.cancelCollaborationRun(task).catch(() => undefined);
-        }
-        if (task.workspaceId || task.worktree || task.agentId) {
-          await this.options.agents.archiveTask({
-            taskId: task.id,
-            workspaceId: task.workspaceId,
-            worktree: task.worktree,
-          }).catch(() => undefined);
-        }
-        // Branch deletion needs the worktree gone first: git will not delete a checked-out branch.
-        const worktreeGone = !task.worktree || !task.branch || await this.gitSerial(task.repository, () =>
-          this.options.git.removeWorktree({
-            root: task.repository,
-            worktree: task.worktree!,
-            branch: task.branch!,
-          })
-        ).then(() => true, () => false);
-        if (worktreeGone && task.branch) {
-          const branch = task.branch;
-          await this.gitSerial(task.repository, async () => {
-            if (task.status === 'merged' && task.review) {
-              await this.options.git.deleteMergedBranch({
-                root: task.repository, branch, expectedHead: task.mergedTaskHead ?? task.review.resultCommit, targetBranch: task.review.targetBranch,
+        try {
+          // A verified merge may have already removed every external resource. Its
+          // saved cleanup steps remain valid even if the daemon or repository is gone.
+          const done = task.status === 'merged' ? task.cleanup : null;
+          if (!done?.sessions) {
+            await this.releaseRun(task);
+            if (task.workspaceId || task.worktree || task.agentId) {
+              await this.options.agents.archiveTask({
+                taskId: task.id,
+                workspaceId: task.workspaceId,
+                worktree: task.worktree,
               });
-            } else {
-              await this.options.git.deleteBranch({ root: task.repository, branch });
             }
-          }).catch(() => undefined);
-        }
+          }
+          // Branch deletion needs the worktree gone first: git will not delete a checked-out branch.
+          if (!done?.worktree && task.worktree && task.branch) {
+            await this.gitSerial(task.repository, () => this.options.git.removeWorktree({
+              root: task.repository, worktree: task.worktree!, branch: task.branch!,
+            }));
+          }
+          if (!done?.branch && task.branch) {
+            const branch = task.branch;
+            await this.gitSerial(task.repository, async () => {
+              if (task.status === 'merged' && task.review) {
+                await this.options.git.deleteMergedBranch({
+                  root: task.repository, branch, expectedHead: task.mergedTaskHead ?? task.review.resultCommit, targetBranch: task.review.targetBranch,
+                });
+              } else {
+                await this.options.git.deleteBranch({ root: task.repository, branch });
+              }
+            });
+          }
 
-        removedTask = await this.options.store.remove(id);
+          removedTask = await this.options.store.remove(id);
+        } catch (error) {
+          const detail = errorText(error).slice(0, 4000);
+          await this.write({ ...this.options.store.get(id), errorCode: 'delete-failed', errorDetail: detail });
+          throw todoError('delete-failed', detail);
+        }
         this.collaborationSyncs.delete(id);
         this.collaborationSyncedAt.delete(id);
         this.reconciles.delete(id);
@@ -400,7 +411,7 @@ export class TodoEngine {
         await this.write({ ...current, status: 'queued', review: null, lastOutcome: null, errorCode: null, errorDetail: null });
         return;
       }
-      if (current.collaboration) await this.releaseCollaboration(current);
+      await this.releaseRun(current);
       const latest = this.options.store.get(id);
       if (!canRetry(latest.status)) throw todoError('retry-rejected');
       await this.write(this.requeue(latest, null));
@@ -423,7 +434,7 @@ export class TodoEngine {
       if (current.collaboration && followUpPrompt(current.prompt, pendingPrompt).length > 32_000) {
         throw todoError('collaboration-invalid', '原任务和修改意见合计超过主机协作目标的 32000 字限制');
       }
-      if (current.collaboration) await this.releaseCollaboration(current);
+      await this.releaseRun(current);
       const latest = this.options.store.get(id);
       if (!canContinue(latest.status)) throw todoError('continue-rejected');
       await this.write(this.requeue(latest, pendingPrompt));
@@ -580,9 +591,12 @@ export class TodoEngine {
   /** Reattach sessions after a restart. Does not send the prompt again. */
   async recover(): Promise<void> {
     if (this.options.store.loadError) return;
+    // Rebuild identities for old archives too; display/working paths remain unchanged.
+    await Promise.all([...new Set(this.options.store.list().map(task => task.repository))]
+      .map(repository => this.repositoryId(repository).catch(() => undefined)));
     for (const task of this.options.store.list()) await this.recoverOne(task.id);
     for (const task of this.options.store.list()) {
-      if (isExecution(task.status)) void this.exclusive(task.repository, () => this.waitUntil(task.id, item => !isExecution(item.status)));
+      if (isExecution(task.status)) void this.exclusive(task.repository, () => this.waitUntil(task.id, item => !isExecution(item.status))).catch(() => undefined);
     }
     this.tick();
   }
@@ -625,7 +639,9 @@ export class TodoEngine {
       if (main.agentId !== task.agentId) task = await this.write({ ...task, agentId: main.agentId });
     }
     if (!task.agentId) throw todoError('merge-agent-missing');
-    if (this.options.store.list().some(other => other.id !== id && other.repository === task.repository && other.status === 'merging')) {
+    const repositoryId = await this.repositoryId(task.repository);
+    const merging = this.options.store.list().filter(other => other.id !== id && other.status === 'merging');
+    if ((await Promise.all(merging.map(other => this.repositoryId(other.repository)))).includes(repositoryId)) {
       throw todoError('merge-busy');
     }
     await this.assertAgentIdle(task.agentId, true);
@@ -816,14 +832,39 @@ export class TodoEngine {
   private tick(): void {
     if (this.disposed || this.closed || this.options.store.loadError) return;
     const tasks = this.options.store.list().sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
-    const busy = new Set(tasks.filter(task => isExecution(task.status) || task.status === 'merging').map(task => task.repository));
+    const busy = new Set(tasks.filter(task => isExecution(task.status) || task.status === 'merging').map(task => this.repositoryKey(task.repository)));
     const seen = new Set<string>();
     for (const task of tasks) {
-      if (task.status !== 'queued' || busy.has(task.repository) || seen.has(task.repository)) continue;
-      seen.add(task.repository);
-      void this.exclusive(task.repository, () => this.execute(task.id));
+      const key = this.repositoryKey(task.repository);
+      if (task.status !== 'queued' || busy.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      void this.schedule(task).catch(error => console.error('[paseo-todo] scheduling failed', error));
     }
     for (const task of tasks) if (task.status === 'awaiting_review') this.watchReconcile(task.id);
+  }
+
+  /** Resolve identity before taking the shared queue lock, but keep lookup failures visible and retryable. */
+  private async schedule(queued: Task): Promise<void> {
+    const release = this.enter();
+    if (!release) return;
+    try {
+      try {
+        await this.repositoryId(queued.repository);
+      } catch (error) {
+        await this.lockTask(queued.id, async () => {
+          const task = this.options.store.tryGet(queued.id);
+          // A late lookup failure must not overwrite cancellation or a newer queue attempt.
+          if (!task || task.status !== 'queued' || task.updatedAt !== queued.updatedAt || task.operationId !== queued.operationId) return;
+          await this.write({ ...task, status: 'failed', errorCode: 'prepare-failed', errorDetail: errorText(error).slice(0, 4000) });
+        });
+        this.tick();
+        return;
+      }
+    } finally {
+      release();
+    }
+    // Waiting for another task's entire execution is not an in-flight storage operation.
+    if (!this.disposed) await this.exclusive(queued.repository, () => this.execute(queued.id));
   }
 
   /** A tick-triggered reconcile at most every few seconds per task; read() and accept() still verify every time. */
@@ -858,6 +899,10 @@ export class TodoEngine {
       if (this.disposed) return false;
       const task = this.options.store.tryGet(id);
       if (!task || task.status !== 'queued') return false;
+      // A queued callback may have waited behind a merge or a recovered execution.
+      if (this.options.store.list().some(other => other.id !== id
+        && this.repositoryKey(other.repository) === this.repositoryKey(task.repository)
+        && (isExecution(other.status) || other.status === 'merging'))) return false;
       if (task.collaboration && task.operationId && task.collaborationRunId && task.collaborationControl === 'needs_attention') {
         await this.write({ ...task, status: 'preparing', errorCode: null, errorDetail: null });
         return true;
@@ -993,7 +1038,17 @@ export class TodoEngine {
     }
   }
 
-  private async settleCancel(id: string, operationId: string, knownAgent: string | null): Promise<void> {
+  private settleCancel(id: string, operationId: string, knownAgent: string | null): Promise<void> {
+    const pending = this.cancelSyncs.get(id);
+    if (pending) return pending;
+    const run = this.settleCancelNow(id, operationId, knownAgent).finally(() => {
+      if (this.cancelSyncs.get(id) === run) this.cancelSyncs.delete(id);
+    });
+    this.cancelSyncs.set(id, run);
+    return run;
+  }
+
+  private async settleCancelNow(id: string, operationId: string, knownAgent: string | null): Promise<void> {
     const release = this.enter();
     if (!release) return;
     try {
@@ -1118,6 +1173,8 @@ export class TodoEngine {
       await this.lockTask(id, async () => {
         const task = this.options.store.get(id);
         if (task.agentId !== event.agentId || !task.operationId) return;
+        // A completion event alone cannot prove that cancellation stopped the current turn.
+        if (task.status === 'canceling') { consume = true; return; }
         const started = this.startedTurn.get(event.agentId);
         if (started && event.turnId && started !== event.turnId) {
           consume = true;
@@ -1227,6 +1284,10 @@ export class TodoEngine {
           consume = true;
         }
       });
+      const canceling = this.options.store.tryGet(id);
+      if (canceling?.status === 'canceling' && canceling.operationId) {
+        await this.settleCancel(id, canceling.operationId, canceling.agentId);
+      }
       if (!this.disposed) this.tick();
       return consume;
     } finally {
@@ -1269,14 +1330,17 @@ export class TodoEngine {
     };
   }
 
-  private async releaseCollaboration(task: Task): Promise<void> {
-    if (!task.collaboration) return;
-    if (!this.options.collaboration) throw todoError('collaboration-unavailable');
-    const stopped = await this.cancelCollaborationRun(task);
-    if (!stopped) throw todoError('gateway-unavailable', '协作还在运行，没有重新启动');
-    if (task.agentId) {
-      await this.options.agents.cancel(task.agentId).catch(() => undefined);
-      await this.assertAgentIdle(task.agentId);
+  private async releaseRun(task: Task): Promise<void> {
+    if (task.collaboration) {
+      if (!this.options.collaboration) throw todoError('collaboration-unavailable');
+      const stopped = await this.cancelCollaborationRun(task);
+      if (!stopped) throw todoError('gateway-unavailable', '无法确认协作已停止');
+    }
+    // A lost create response can leave only the operation id. Do not abandon that session.
+    const agentId = task.agentId ?? (task.operationId ? await this.options.agents.findByOperation(task.operationId) : null);
+    if (agentId) {
+      await this.options.agents.cancel(agentId).catch(() => undefined);
+      await this.assertAgentIdle(agentId);
     }
   }
 
@@ -1380,11 +1444,11 @@ export class TodoEngine {
         void this.syncAgentMerge(task.id).catch(() => undefined);
         continue;
       }
-      if (!task.collaboration) continue;
       if (task.status === 'canceling') {
         if (!this.preparing.has(task.id)) this.watchCollaborationRecovery(task.id);
         continue;
       }
+      if (!task.collaboration) continue;
       if (!task.collaborationConversationId) {
         if (!isExecution(task.status) || !task.operationId || this.preparing.has(task.id) || this.collaborationRecoveries.has(task.id)) continue;
         this.watchCollaborationRecovery(task.id);
@@ -1770,7 +1834,25 @@ export class TodoEngine {
     });
   }
 
-  private exclusive<T>(repository: string, fn: () => Promise<T>): Promise<T> {
+  private repositoryKey(repository: string): string {
+    return this.repositoryIds.get(repository) ?? repository;
+  }
+
+  private repositoryId(repository: string): Promise<string> {
+    const cached = this.repositoryIds.get(repository);
+    if (cached) return Promise.resolve(cached);
+    const pending = this.repositoryLookups.get(repository);
+    if (pending) return pending;
+    const lookup = this.options.git.repositoryIdentity(repository).then(id => {
+      this.repositoryIds.set(repository, id);
+      return id;
+    }).finally(() => this.repositoryLookups.delete(repository));
+    this.repositoryLookups.set(repository, lookup);
+    return lookup;
+  }
+
+  private async exclusive<T>(repository: string, fn: () => Promise<T>): Promise<T> {
+    repository = await this.repositoryId(repository);
     const previous = this.repoTails.get(repository) ?? Promise.resolve();
     const run = previous.then(fn, fn);
     this.repoTails.set(repository, run.then(() => undefined, () => undefined));
@@ -1778,7 +1860,8 @@ export class TodoEngine {
   }
 
   /** Short per-repository lock for git writes: worktree setup, capture and merge. Always taken inside a task lock, never the reverse. */
-  private gitSerial<T>(repository: string, fn: () => Promise<T>): Promise<T> {
+  private async gitSerial<T>(repository: string, fn: () => Promise<T>): Promise<T> {
+    repository = await this.repositoryId(repository);
     const previous = this.gitTails.get(repository) ?? Promise.resolve();
     const run = previous.then(fn, fn);
     this.gitTails.set(repository, run.then(() => undefined, () => undefined));
@@ -1786,16 +1869,20 @@ export class TodoEngine {
   }
 
   private lockTask<T>(id: string, fn: () => Promise<T> | T): Promise<T> {
+    // Stop/inspect now belongs to ordinary task actions too. Shutdown must drain the
+    // whole action, including time spent waiting for this lock, before releasing storage.
+    const leave = this.enter();
+    if (!leave) return Promise.reject(todoError('store-invalid'));
     const previous = this.taskTails.get(id) ?? Promise.resolve();
     let release: () => void = () => undefined;
     const gate = new Promise<void>(resolve => { release = resolve; });
     this.taskTails.set(id, previous.then(() => gate, () => gate));
     return previous.then(async () => {
       try { return await fn(); }
-      finally { release(); }
+      finally { release(); leave(); }
     }, async () => {
       try { return await fn(); }
-      finally { release(); }
+      finally { release(); leave(); }
     });
   }
 }
