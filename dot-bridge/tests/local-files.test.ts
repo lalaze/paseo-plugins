@@ -102,9 +102,47 @@ async function engineFixture(t: TestContext) {
   return { ...h, store, engine, task, identity, claim };
 }
 
+test('MCP reviews user edits independently of Dot write receipts, including staged and new files', async t => {
+  const h = await engineFixture(t); await h.claim();
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: h.root, encoding: 'utf8' });
+  git('init', '-q');
+  await writeFile(join(h.root, 'main.ts'), 'export const value = 1;\n');
+  git('add', 'main.ts'); git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'baseline');
+  await writeFile(join(h.root, 'main.ts'), 'export const value = 2;\n'); git('add', 'main.ts');
+  await writeFile(join(h.root, 'main.ts'), 'export const value = 3;\n');
+  await writeFile(join(h.root, 'new.ts'), 'export const added = true;\n');
+  assert.deepEqual(h.engine.task(h.task.id).localChanges, []);
+  const beforeStatus = git('status', '--porcelain=v1'); const beforeHead = git('rev-parse', 'HEAD');
+  const server = createMcpServer({ engine: h.engine, host: '127.0.0.1', port: 0, getToken: () => h.engine.mcpToken() });
+  const { endpoint } = await server.start(); t.after(() => server.stop());
+  const rpc = async (method: string, params: unknown) => {
+    const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${h.engine.mcpToken()}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+    return await response.json() as { error?: unknown; result?: { content: Array<{ text: string }>; tools?: Array<{ name: string; annotations: { readOnlyHint: boolean } }> } };
+  };
+  const listed = await rpc('tools/list', {});
+  assert.equal(listed.result?.tools?.find(tool => tool.name === 'read_dot_workspace_changes')?.annotations.readOnlyHint, true);
+  const reply = await rpc('tools/call', { name: 'read_dot_workspace_changes', arguments: h.identity });
+  assert.equal(reply.error, undefined);
+  const changes = JSON.parse(reply.result!.content[0]!.text);
+  assert.equal(changes.isGitRepository, true); assert.equal(changes.totalFiles, 2);
+  const main = changes.files.find((file: { path: string }) => file.path === 'main.ts');
+  assert.match(main.stagedDiff, /-export const value = 1;[\s\S]*\+export const value = 2;/);
+  assert.match(main.unstagedDiff, /-export const value = 2;[\s\S]*\+export const value = 3;/);
+  assert.match(changes.files.find((file: { path: string }) => file.path === 'new.ts').untrackedDiff, /\+export const added = true;/);
+  assert.match(h.engine.activity.list(h.task.id).at(-1)!.detail, /main.ts/);
+  const taskReply = await rpc('tools/call', { name: 'get_dot_task', arguments: { connectionId: h.identity.connectionId, taskId: h.task.id } });
+  assert.match(JSON.parse(taskReply.result!.content[0]!.text).localFileInstructions, /read_dot_workspace_changes/);
+  assert.equal(git('status', '--porcelain=v1'), beforeStatus); assert.equal(git('rev-parse', 'HEAD'), beforeHead);
+  assert.deepEqual(h.engine.task(h.task.id).localChanges, []);
+});
+
 test('local tools enforce connection, active claim, current round, current user input and stop', async t => {
   const h = await engineFixture(t); const args = { ...h.identity, path: 'main.ts' };
+  const review = { ...h.identity, offset: 0 };
+  await assert.rejects(h.engine.readLocalWorkspaceChanges(review), /claim/i);
   assert.throws(() => h.engine.readLocalFile(args), /claim/i); await h.claim();
+  await assert.rejects(h.engine.readLocalWorkspaceChanges({ ...review, connectionId: '0'.repeat(32) }));
+  await assert.rejects(h.engine.readLocalWorkspaceChanges({ ...review, roundId: randomUUID() }));
   assert.throws(() => h.engine.readLocalFile({ ...args, connectionId: '0'.repeat(32) }));
   assert.throws(() => h.engine.readLocalFile({ ...args, roundId: randomUUID() }));
   assert.equal(h.engine.readLocalFile(args).sha256, null);
@@ -115,6 +153,7 @@ test('local tools enforce connection, active claim, current round, current user 
   const latest = h.engine.task(current.id);
   await h.engine.cancelRequest({ id: latest.id, revision: latest.revision, operationId: randomUUID() });
   assert.throws(() => h.engine.readLocalFile(args), /stop request/);
+  await assert.rejects(h.engine.readLocalWorkspaceChanges(review), /stop request/);
   await assert.rejects(h.engine.applyLocalFiles({ ...apply, userMessageSeq: latest.userMessageSeq }), /stop request/);
   assert.equal(readSource(h.root, 'main.ts').content, null);
 });
@@ -160,6 +199,28 @@ test('authenticated MCP reads current source and applies a change; retired Git t
   assert.equal(apply.error, undefined); assert.equal(apply.data.status, 'applied');
   assert.equal(await readFile(join(h.root, 'main.ts'), 'utf8'), 'export const n = 2;');
   assert.ok((await call('submit_dot_result', {})).error);
+});
+
+test('a lost payload rebuild needs fresh operation-bound approval and stale rebuilt writes conflict', async t => {
+  const h = await engineFixture(t); await h.claim();
+  await writeFile(join(h.root, 'lost.ts'), 'lost 1');
+  const approve = async (operationId: string, expectedSha256: string, content: string) => {
+    const requestId = randomUUID();
+    await h.engine.requestPermission({ ...h.identity, requestId, userMessageSeq: h.engine.task(h.task.id).userMessageSeq,
+      title: 'Rebuild requested edit', description: 'Exact rebuilt payload', scope: { toolName: 'apply_dot_changes', action: 'Edit', targets: ['lost.ts'],
+        operation: { kind: 'files', operationId, changes: [{ path: 'lost.ts', expectedSha256, contentSha256: sourceHash(content) }] } } });
+    await h.engine.respondPermission({ taskId: h.task.id, requestId, decision: 'approved' });
+    return { ...h.identity, operationId, userMessageSeq: h.engine.task(h.task.id).userMessageSeq, changes: [{ path: 'lost.ts', expectedSha256, content }] };
+  };
+  const original = await approve(randomUUID(), sourceHash('lost 1'), 'lost 2');
+  const rebuiltId = randomUUID();
+  await assert.rejects(h.engine.applyLocalFiles({ ...original, operationId: rebuiltId }), /permission-required/);
+  const rebuilt = await approve(rebuiltId, sourceHash('lost 1'), 'lost 2');
+  assert.equal((await h.engine.applyLocalFiles(rebuilt)).status, 'applied');
+  const stale = await approve(randomUUID(), sourceHash('lost 2'), 'lost 4');
+  await writeFile(join(h.root, 'lost.ts'), 'lost 3');
+  assert.equal((await h.engine.applyLocalFiles(stale)).status, 'conflict');
+  assert.equal(readSource(h.root, 'lost.ts').content, 'lost 3');
 });
 
 test('a failed state save after file application recovers from the durable journal without overwriting', async t => {

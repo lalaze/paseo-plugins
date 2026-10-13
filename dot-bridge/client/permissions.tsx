@@ -25,7 +25,7 @@ export function PermissionPanel(props: { task: Task; roundId: string; colors: Co
   return <View style={{ gap: 8 }}>
     <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui('Task access follows your request. Additional Paseo confirmations are scoped below. ChatGPT platform approval is separate and is reported by Dot.', '任务访问以你的请求为范围；额外的 Paseo 确认列在下方。ChatGPT 平台审批独立处理，其阻塞状态由 Dot 回报。')}</Text>
     {permissions.map(p => {
-    const current = permissionCurrent(task, p), pending = p.status === 'pending' && current;
+    const current = permissionCurrent(task, p), pending = p.status === 'pending' && !p.platformBlock && current;
     const state = permissionState(task, p);
     const title = ({ pending: ui('Your confirmation is needed', '等待 Paseo 确认'), approved: ui('Allowed in Paseo', 'Paseo 已允许 · 当前有效'), denied: ui('Denied; explicit approval required', '已拒绝 · 需明确重新授权'), expired: ui('Request expired', '授权已失效'), consumed: ui('Operation authorization used', '本次操作授权已使用'), 'platform-blocked': ui('Blocked by ChatGPT', 'ChatGPT 平台仍阻塞'), superseded: ui('Replaced by a newer request', '历史请求 · 已由新请求替代') })[state];
     return <View key={p.requestId} style={{ borderWidth: 1, borderColor: pending || (p.platformBlock && current) ? colors.statusWarning : outline(colors), borderRadius: 8, padding: 12, gap: 8 }}>
@@ -39,7 +39,7 @@ export function PermissionPanel(props: { task: Task; roundId: string; colors: Co
       {p.platformBlock ? <>
         <Text selectable style={{ color: colors.statusWarning, fontSize: 12 }}>{p.platformBlock.reason}</Text>
         {current ? <>
-          <Text style={{ color: colors.foreground, fontSize: 12 }}>{ui('Review the specific operation in Your dot, then return to this conversation.', '请在 Your dot 核对具体操作，完成确认后回到原会话告知 Dot。')}</Text>
+          <Text style={{ color: colors.foreground, fontSize: 12 }}>{ui('Check the actual refusal and available next steps in Your dot, then return here. Local approval cannot clear platform restrictions.', '请在 Your dot 查看实际拒绝原因和可用的处理方式，再回到本会话。本地允许不能解除平台限制，也不保证平台提供确认入口。')}</Text>
           <Button colors={colors} label={ui('Open Your dot', '打开 Your dot')} variant="outline" onPress={() => props.open(DOT_CONFIRMATION_URL)} />
         </> : null}
       </> : null}

@@ -14,6 +14,8 @@ export const settingsSchema = z
     /** Where the plugin's MCP HTTP server binds. Prefer loopback plus a Secure MCP Tunnel. */
     listenHost: z.string().min(1).max(200).default('127.0.0.1'),
     listenPort: z.number().int().min(0).max(65535).default(0),
+    /** Explicit host-user opt-in; never infer approval from installation or a tool call. */
+    appendTaskAuthorization: z.boolean().default(false),
   })
   .strict();
 
@@ -24,7 +26,7 @@ export const SETTINGS_ID = 'dot-bridge';
 export const dotBridgeSettingsDefinition = defineSettings({
   id: SETTINGS_ID,
   scope: 'host',
-  version: 3,
+  version: 4,
   schema: settingsSchema,
   /**
    * v1 stored `connectionName` and `publicBaseUrl` alongside the connection. They are now owned by

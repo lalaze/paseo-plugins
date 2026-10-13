@@ -5,6 +5,7 @@ import type { PluginClientContext, PluginSurfaceProps } from '@getpaseo/plugin/c
 import { ScrollView } from '@getpaseo/plugin/client/react-native';
 import { Pressable, Text, View } from 'react-native';
 import { currentRound, type Task } from '../shared/schema';
+import { RemotePanel } from './remote';
 import { ConnectionCard } from './connection';
 import { TaskDetail } from './detail';
 import { TaskEditor } from './editor';
@@ -35,7 +36,7 @@ function TaskRow(props: { task: Task; colors: Colors; onOpen(): void }) {
       <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
         <Pill colors={colors}><Text style={{ color: colors.foreground, fontSize: 11 }}>{remoteStatusLabel(round.remoteStatus, { localCancel })}</Text></Pill>
         {props.task.mode === 'git' ? <Pill colors={colors}><Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{verifyStatusLabel(round.verification.status)}</Text></Pill> : null}
-        <Text style={{ color: tint(colors.foregroundMuted, 0.8), fontSize: 11, alignSelf: 'center' }}>{props.task.mode === 'text' ? ui('Local workspace', '本地工作区') : ui('Historical Git task', '旧 Git 记录')}</Text>
+        <Text style={{ color: tint(colors.foregroundMuted, 0.8), fontSize: 11, alignSelf: 'center' }}>{props.task.remoteOrigin ? '远端设备 ' + props.task.remoteOrigin.deviceId : props.task.mode === 'text' ? ui('Local workspace', '本地工作区') : ui('Historical Git task', '旧 Git 记录')}</Text>
       </View>
     </Pressable>
   );
@@ -44,7 +45,7 @@ function TaskRow(props: { task: Task; colors: Colors; onOpen(): void }) {
 /** The Dot tasks panel: connection settings, task list, creation and per-task conversation and results. */
 export function DotBridgePanel(props: DotBridgePanelProps) {
   const { colors } = props.theme;
-  const [tab, setTab] = useState<'tasks' | 'connection'>('tasks');
+  const [tab, setTab] = useState<'tasks' | 'connection' | 'machines'>('tasks');
   const [openId, setOpenId] = useState<string | null>(null);
   const [choices, setChoices] = useState<WorkspaceChoice[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<string | null>(props.workspaceId);
@@ -84,9 +85,10 @@ export function DotBridgePanel(props: DotBridgePanelProps) {
         <Pill colors={colors} active={tab === 'connection'} onPress={() => setTab('connection')} label="connection">
           <Text style={{ color: colors.foreground, fontSize: 12, fontWeight: '600' }}>{ui('Connection', '连接')}</Text>
         </Pill>
+        <Pill colors={colors} active={tab === 'machines'} onPress={() => setTab('machines')} label="machines"><Text style={{ color: colors.foreground, fontSize: 12 }}>多机</Text></Pill>
       </View>
 
-      {tab === 'connection' ? (
+      {tab === 'machines' ? <RemotePanel rpc={props.rpc} colors={colors} workspaceId={selectedWorkspace} /> : tab === 'connection' ? (
         <ConnectionCard theme={props.theme} host={props.host} layout={props.layout} rpc={props.rpc} query={props.query} />
       ) : open ? (
         <TaskDetail

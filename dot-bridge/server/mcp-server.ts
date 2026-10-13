@@ -25,6 +25,8 @@ export interface McpServerOptions {
   port: number;
   path?: string;
   getToken: () => string;
+  settleRemoteStop?: (taskId: string) => Promise<void>;
+  remoteFiles?: (kind: 'list' | 'read' | 'changes' | 'apply', input: unknown) => Promise<unknown>;
 }
 
 export interface McpServerHandle {
@@ -179,6 +181,12 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
   }
 
   async function invoke(name: ToolName, input: unknown): Promise<unknown> {
+    const args = input as Record<string, unknown>;
+    const remoteTask = typeof args.taskId === 'string' ? options.engine.tasks().find(task => task.id === args.taskId && task.connectionId === args.connectionId && task.remoteOrigin) : undefined;
+    if (remoteTask && ['list_dot_files', 'read_dot_file', 'read_dot_workspace_changes', 'apply_dot_changes'].includes(name)) {
+      if (!options.remoteFiles) throw dotBridgeError('task-rejected', 'Remote file routing is unavailable');
+      return options.remoteFiles(name === 'list_dot_files' ? 'list' : name === 'read_dot_file' ? 'read' : name === 'read_dot_workspace_changes' ? 'changes' : 'apply', input);
+    }
     switch (name) {
       case 'list_dot_tasks': {
         const args = input as z.infer<typeof toolInputSchemas.list_dot_tasks>;
@@ -187,7 +195,7 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
       case 'get_dot_task': {
         const args = input as z.infer<typeof toolInputSchemas.get_dot_task>;
         const task = options.engine.getForConnection(args.connectionId, args.taskId);
-        return { task, ...(task.mode === 'text' ? { ...(task.provider ? { conversationInstructions: PROVIDER_CONVERSATION_INSTRUCTIONS } : {}), permissionInstructions: PERMISSION_HANDOFF_INSTRUCTIONS, attachmentInstructions: ATTACHMENT_DELIVERY_INSTRUCTIONS, localFileInstructions: LOCAL_FILE_INSTRUCTIONS, localFilesAvailable: task.workspaceRoot !== null } : { legacyReadOnly: true }) };
+        return { task, ...(task.mode === 'text' ? { ...(task.provider ? { conversationInstructions: PROVIDER_CONVERSATION_INSTRUCTIONS } : {}), permissionInstructions: PERMISSION_HANDOFF_INSTRUCTIONS, attachmentInstructions: ATTACHMENT_DELIVERY_INSTRUCTIONS + (task.remoteOrigin ? ' This task originated on a remote device. Upload success means the center received the file; confirm remote delivery from a later task attachment localPath before claiming it was saved on the originating device.' : ''), localFileInstructions: LOCAL_FILE_INSTRUCTIONS, localFilesAvailable: task.workspaceRoot !== null || task.remoteOrigin !== null } : { legacyReadOnly: true }) };
       }
       case 'claim_dot_task': {
         const args = input as z.infer<typeof toolInputSchemas.claim_dot_task>;
@@ -198,16 +206,24 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
       case 'report_dot_permission_blocked': return { permission: await options.engine.reportPermissionBlocked(input as z.infer<typeof toolInputSchemas.report_dot_permission_blocked>) };
       case 'report_dot_progress': {
         const args = input as z.infer<typeof toolInputSchemas.report_dot_progress>;
+        if (remoteTask && args.kind === 'stopped') { if (!options.settleRemoteStop) throw new Error('Remote stop confirmation unavailable'); await options.settleRemoteStop(args.taskId); }
         return options.engine.reportProgress(args);
       }
       case 'list_dot_files': return options.engine.listLocalFiles(input as z.infer<typeof toolInputSchemas.list_dot_files>);
       case 'read_dot_file': return options.engine.readLocalFile(input as z.infer<typeof toolInputSchemas.read_dot_file>);
+      case 'read_dot_workspace_changes': return options.engine.readLocalWorkspaceChanges(input as z.infer<typeof toolInputSchemas.read_dot_workspace_changes>);
       case 'apply_dot_changes': return options.engine.applyLocalFiles(input as z.infer<typeof toolInputSchemas.apply_dot_changes>);
       case 'upload_dot_attachment': {
         const { taskId, ...args } = input as z.infer<typeof toolInputSchemas.upload_dot_attachment>;
-        return options.engine.uploadAttachment({ ...args, id: taskId, actor: 'dot' });
+        const result = await options.engine.uploadAttachment({ ...args, id: taskId, actor: 'dot' });
+        if (remoteTask) delete result.attachment.localPath;
+        return result;
       }
-      case 'upload_dot_attachment_chunk': return options.engine.uploadAttachmentChunk(input as z.infer<typeof toolInputSchemas.upload_dot_attachment_chunk>);
+      case 'upload_dot_attachment_chunk': {
+        const result = await options.engine.uploadAttachmentChunk(input as z.infer<typeof toolInputSchemas.upload_dot_attachment_chunk>);
+        if (remoteTask && result.attachment) delete result.attachment.localPath;
+        return result;
+      }
       case 'read_dot_attachment_chunk': {
         const args = input as z.infer<typeof toolInputSchemas.read_dot_attachment_chunk>;
         return options.engine.readAttachmentChunk(args.taskId, args.attachmentId, args.index, args.connectionId);

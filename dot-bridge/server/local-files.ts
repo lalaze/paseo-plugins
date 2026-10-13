@@ -183,3 +183,17 @@ export function applyLocalChanges(input: { dataDir: string; root: string; taskId
   journal.finished = true; persist(journalPath, journal);
   return receipt;
 }
+
+/** Recover only the recorded outcome; never resume an interrupted file mutation. */
+export function readChangeReceipt(dataDir: string, operationId: string): LocalReceipt | null {
+  if (!/^[0-9a-f-]{36}$/i.test(operationId)) return null;
+  try {
+    const journal = JSON.parse(readFileSync(join(dataDir, 'local-changes', `${operationId}.json`), 'utf8')) as Journal;
+    const receipt = localReceiptSchema.parse(journal.receipt);
+    if (!journal.finished) {
+      receipt.status = receipt.files.length ? 'partial' : 'conflict';
+      receipt.conflicts.push('Interrupted operation: a write may have completed before its receipt; inspect current files. No writes were resumed.');
+    }
+    return receipt;
+  } catch { return null; }
+}

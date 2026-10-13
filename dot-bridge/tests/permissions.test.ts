@@ -11,6 +11,9 @@ import { createMcpServer } from '../server/mcp-server';
 import { sourceHash } from '../server/local-files';
 import { permissionState } from '../shared/permissions';
 import { withDispatch } from '../shared/machine';
+import { assertRemoteWritePermission } from '../server/remote-client';
+import { pendingPermissions, permissionCurrent } from '../shared/permissions';
+import { toolInputSchemas } from '../shared/mcp';
 import { ProviderEventSchema, type ProviderEvent } from '@getpaseo/plugin/server/provider';
 
 async function fixture(t: TestContext) {
@@ -47,6 +50,7 @@ test('native permission approval is scoped, durable and wakes Dot without finish
   await assert.rejects(h.engine.applyLocalFiles({ ...h.identity, operationId: randomUUID(), userMessageSeq: 1, changes: [{ path: 'one.ts', expectedSha256: null, content: 'a' }] }), /permission/);
   await h.connection.send({ type: 'session.permission', sessionId: 'chat', permissionId: event.request.id, response: { behavior: 'allow' } });
   await h.wait(() => h.events.some(e => e.type === 'session.permission_resolved'));
+  await h.wait(() => h.events.some(e => e.type === 'timeline.item' && e.item.type === 'tool_call' && e.item.detail.type === 'plain_text' && e.item.detail.label === '已记录你的授权决定，等待 Dot 继续处理。'));
   const task = h.engine.task(h.identity.taskId), p = task.permissions[0];
   assert.equal(p.status, 'approved'); assert.equal(p.decisionMessageSeq, task.userMessageSeq);
   assert.match(task.messages.at(-1)!.body, /one.ts/);
@@ -244,6 +248,25 @@ test('file and directory read requests enforce pending, denied, scoped approval 
   }
 });
 
+test('workspace diff reads cannot bypass file denial or renew it through a follow-up; an explicit review grant is separate', async t => {
+  const h = await fixture(t);
+  const request = { ...h.request, scope: { toolName: 'read_dot_file', action: 'Read', targets: ['one.ts'] } };
+  const review = () => h.engine.readLocalWorkspaceChanges({ ...h.identity, offset: 0 });
+  await h.engine.requestPermission(request);
+  await assert.rejects(review(), /permission-required/);
+  await h.engine.respondPermission({ taskId: h.identity.taskId, requestId: request.requestId, decision: 'denied' });
+  await assert.rejects(review(), /permission-required/);
+  let task = h.engine.task(h.identity.taskId);
+  await h.engine.addMessage({ id: task.id, revision: task.revision, operationId: randomUUID(), body: 'Review local changes', kind: 'answer' });
+  await assert.rejects(review(), /permission-required/);
+  task = h.engine.task(task.id);
+  const fresh = { ...request, requestId: randomUUID(), userMessageSeq: task.userMessageSeq, scope: { toolName: 'read_dot_workspace_changes', action: 'Review Git diffs', targets: ['/'] } };
+  await h.engine.requestPermission(fresh);
+  await h.engine.respondPermission({ taskId: task.id, requestId: fresh.requestId, decision: 'approved' });
+  assert.equal((await review()).isGitRepository, false);
+  assert.throws(() => h.engine.readLocalFile({ ...h.identity, path: 'one.ts' }), /permission-required/);
+});
+
 test('attachment read aliases cannot bypass denial and local UI can still read its own attachment', async t => {
   const h = await fixture(t);
   const { attachment } = await h.engine.uploadAttachment({ id: h.identity.taskId, roundId: h.identity.roundId, connectionId: h.identity.connectionId, operationId: randomUUID(), actor: 'dot', name: 'test.txt', mediaType: 'text/plain', encoding: 'utf8', content: 'synthetic' });
@@ -354,4 +377,53 @@ test('explicit local close releases a claimed slot, expires buttons and fences l
   await h.engine.reportProgress({ ...h.identity, updateId: randomUUID(), kind: 'stopped', note: 'Remote stopped later', processedThroughSeq: stopped.userMessageSeq });
   assert.equal(h.engine.task(stopped.id).status, 'queued');
   assert.equal(h.engine.task(stopped.id).rounds[0].stop.reported, true);
+});
+
+test('platform refusal before a local request is visible without manufacturing approval or local buttons', async t => {
+  const h = await fixture(t);
+  const { connectionId, taskId, roundId, requestId, ...intent } = h.request;
+  const input = toolInputSchemas.report_dot_permission_blocked.parse({ connectionId, taskId, roundId, requestId, intent, reason: 'Platform refused before local confirmation' });
+  const blocked = await h.engine.reportPermissionBlocked(input);
+  assert.notEqual(blocked.status, 'approved');
+  assert.equal(blocked.platformBlock?.reason, input.reason);
+  const task = h.engine.task(taskId);
+  assert.deepEqual(pendingPermissions(task), []);
+  assert.match(task.messages.at(-1)!.body, /Platform refused before local confirmation/);
+  assert.doesNotMatch(task.messages.at(-1)!.body, /Paseo 已记录你的允许/);
+  await assert.rejects(h.engine.respondPermission({ taskId, requestId, decision: 'approved' }), /permission/);
+  await assert.rejects(h.engine.applyLocalFiles({ ...h.identity, operationId: randomUUID(), userMessageSeq: task.userMessageSeq, changes: [{ path: 'one.ts', expectedSha256: null, content: 'a' }] }), /permission/);
+  assert.deepEqual(await h.engine.reportPermissionBlocked(input), blocked);
+  await assert.rejects(h.engine.reportPermissionBlocked({ ...input, intent: { ...intent, scope: { ...intent.scope, targets: ['outside.ts'] } } }), /duplicate-mismatch/);
+  await assert.rejects(h.engine.requestPermission({ ...h.request, requestId: randomUUID() }), /permission-required/);
+  await h.wait(() => h.events.some(e => e.type === 'session.turn' && e.state === 'completed'));
+  assert.ok(!h.events.some(e => e.type === 'session.permission'));
+});
+
+test('late progress cannot show an obsolete permission question after a decision was processed', async t => {
+  const h = await fixture(t);
+  await h.engine.requestPermission(h.request);
+  await h.engine.respondPermission({ taskId: h.identity.taskId, requestId: h.request.requestId, decision: 'approved' });
+  const task = h.engine.task(h.identity.taskId);
+  await h.engine.reportProgress({ ...h.identity, updateId: randomUUID(), kind: 'running', note: 'Continuing approved work', processedThroughSeq: task.userMessageSeq });
+  await h.engine.reportProgress({ ...h.identity, updateId: randomUUID(), kind: 'waiting_user', note: 'Old permission question', processedThroughSeq: h.request.userMessageSeq });
+  await h.wait(() => h.events.some(e => e.type === 'timeline.item' && e.item.type === 'assistant_message' && e.item.text === 'Old permission question'));
+  assert.ok(!h.events.some(e => e.type === 'session.turn' && e.state === 'completed'));
+  assert.equal(h.engine.task(task.id).status, 'running');
+});
+
+test('platform block replaces pending local buttons and rejects stale or denied scopes', async t => {
+  const h = await fixture(t);
+  await h.engine.requestPermission(h.request);
+  await h.wait(() => h.events.some(e => e.type === 'session.permission'));
+  const blocked = await h.engine.reportPermissionBlocked({ ...h.identity, requestId: h.request.requestId, reason: 'Platform refuses this operation' });
+  assert.equal(blocked.status, 'pending');
+  await h.wait(() => h.events.some(e => e.type === 'session.permission_resolved'));
+  const task = h.engine.task(h.identity.taskId);
+  await h.engine.addMessage({ id: task.id, revision: task.revision, operationId: randomUUID(), body: 'Use a different scope', kind: 'answer' });
+  const { requestId: _requestId, connectionId: _connectionId, taskId: _taskId, roundId: _roundId, ...intent } = h.request;
+  await assert.rejects(h.engine.reportPermissionBlocked({ ...h.identity, requestId: randomUUID(), reason: 'Old rejection', intent }), /permission-stale/);
+  const request = { ...h.request, requestId: randomUUID(), userMessageSeq: h.engine.task(task.id).userMessageSeq };
+  await h.engine.requestPermission(request);
+  await h.engine.respondPermission({ taskId: task.id, requestId: request.requestId, decision: 'denied' });
+  await assert.rejects(h.engine.reportPermissionBlocked({ ...h.identity, requestId: request.requestId, reason: 'Do not replace denial' }), /permission-required/);
 });

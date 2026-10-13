@@ -71,6 +71,11 @@ export function describeToolCall(name: ToolName, input: Record<string, unknown>,
     }
     case 'read_dot_file':
       return { ...base, id: randomUUID(), kind: 'read', target: String(input.path), status, detail: error };
+    case 'read_dot_workspace_changes': {
+      const result = outcome.result as { isGitRepository: boolean; files: Array<{ path: string; indexStatus: string; worktreeStatus: string; omittedReason: string | null; diffTruncated: boolean }>; nextOffset: number | null; note: string } | undefined;
+      const listing = result ? (result.isGitRepository ? [...result.files.map(file => `${file.indexStatus}${file.worktreeStatus} ${file.path}${file.omittedReason ? ' (diff unavailable)' : file.diffTruncated ? ' (diff truncated)' : ''}`), ...(result.nextOffset !== null ? ['…'] : [])].join('\n') : result.note) : '';
+      return { ...base, id: randomUUID(), kind: 'list', target: 'Git changes', status, detail: (failed ? error : listing).slice(0, MAX_DETAIL) };
+    }
     case 'read_dot_attachment':
     case 'read_dot_attachment_chunk': {
       if (failed) return null;

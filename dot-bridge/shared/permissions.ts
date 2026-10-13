@@ -53,6 +53,8 @@ export const permissionSchema = permissionIntentSchema.extend({
 }).strict();
 export type DotPermission = z.infer<typeof permissionSchema>;
 export type PermissionIntent = z.input<typeof permissionIntentSchema>;
+export const permissionBlockIntentSchema = permissionIntentSchema.omit({ requestId: true });
+export type PermissionBlockIntent = z.input<typeof permissionBlockIntentSchema>;
 
 /** A saved decision is evidence of a scoped user choice, never a ChatGPT platform approval. */
 export function permissionCurrent(task: Task, permission: DotPermission): boolean {
@@ -64,7 +66,7 @@ export function permissionCurrent(task: Task, permission: DotPermission): boolea
 }
 
 export function pendingPermissions(task: Task): DotPermission[] {
-  return task.permissions.filter(p => p.status === 'pending' && permissionCurrent(task, p));
+  return task.permissions.filter(p => p.status === 'pending' && !p.platformBlock && permissionCurrent(task, p));
 }
 
 export function permissionDescription(p: PermissionIntent): string {

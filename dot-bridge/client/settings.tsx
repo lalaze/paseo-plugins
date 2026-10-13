@@ -65,6 +65,17 @@ export function DotBridgeSettingsScreen(props: PluginSurfaceProps) {
         ))}
       </View>
 
+      <SectionTitle colors={colors}>{ui('Task authorization', '任务授权说明')}</SectionTitle>
+      <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui(
+        'When enabled, future prompts authorize relevant workspace reads and sending their contents to the connected Your dot / ChatGPT for this task; edits are authorized only when requested. Secrets, security changes, publishing and unrelated work remain excluded. This does not approve ChatGPT platform checks or retry blocked calls. Existing messages are unchanged.',
+        '启用后，未来提示词会附带授权：读取本任务所需的相关工作区文件，并将内容传回当前连接的 Your dot / ChatGPT；只有明确要求修改代码时才授权相关写入。不包含凭据、安全设置、发布或无关操作，不代替平台审批，也不重试被拦截的调用。已有消息保持不变。',
+      )}</Text>
+      <View style={{ flexDirection: 'row', gap: 6 }}>
+        {[false, true].map(value => <Pill key={String(value)} colors={colors} active={draft.appendTaskAuthorization === value} onPress={() => set('appendTaskAuthorization', value)} label={value ? ui('Enabled', '已启用') : ui('Disabled', '已关闭')}>
+          <Text style={{ color: colors.foreground, fontSize: 13 }}>{value ? ui('Enabled', '已启用') : ui('Disabled', '已关闭')}</Text>
+        </Pill>)}
+      </View>
+
       <SectionTitle colors={colors}>{ui('Bridge HTTP server', '桥接 HTTP 服务')}</SectionTitle>
       <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui('Listen host', '监听地址')}</Text>
       <TextInput value={draft.listenHost} onChangeText={value => set('listenHost', value)} autoCapitalize="none" style={row(colors)} placeholderTextColor={tint(colors.foregroundMuted, 0.7)} />

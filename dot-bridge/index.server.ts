@@ -22,6 +22,9 @@ import {
 } from './shared/rpc';
 import { defaultSettings, dotBridgeSettingsDefinition, type DotBridgeSettings } from './shared/settings';
 import { BridgeEngine } from './server/engine';
+import { RemoteRuntime } from './server/remote-runtime';
+import { RemoteClient } from './server/remote-client';
+import { remoteState, remoteConfigure, remoteCreateDevice, remoteRevokeDevice } from './shared/remote';
 import { canonicalWorkspace } from './server/local-files';
 import { createMcpServer } from './server/mcp-server';
 import { BridgeListener } from './server/listener';
@@ -37,6 +40,7 @@ function report(error: unknown): void {
 /** Opens the store, starts the bridge, then serves the RPCs. Daemon events that fail are logged, not rethrown. */
 export default function contribute(server: PluginServerContext) {
   let engine: BridgeEngine | null = null;
+  let remote: RemoteRuntime | null = null;
   let store: BridgeStore | null = null;
   let bridge: BridgeListener | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -73,11 +77,17 @@ export default function contribute(server: PluginServerContext) {
     engine = new BridgeEngine({
       store,
       getMaxInFlight: () => current.maxInFlightTasks,
+      getAppendTaskAuthorization: () => current.appendTaskAuthorization,
       signal: lifecycle.signal,
     });
     await engine.init();
+    remote = new RemoteRuntime(engine, dir, tick);
+    await remote.start();
     bridge = new BridgeListener({
-      create: (host, port) => createMcpServer({ engine: engine!, host, port, getToken: () => engine?.mcpToken() ?? '' }),
+      create: (host, port) => createMcpServer({ engine: engine!, host, port, getToken: () => engine?.mcpToken() ?? '',
+        settleRemoteStop: taskId => { if (!remote) throw new Error('Remote gateway unavailable'); return remote.center.settleStop(taskId); },
+        remoteFiles: (kind, input) => { if (!remote) throw new Error('Remote gateway unavailable'); return remote.center.requestFile(kind, input); },
+      }),
       listening: value => engine?.setBridgeListening(value),
       report,
     });
@@ -114,6 +124,13 @@ export default function contribute(server: PluginServerContext) {
     return engine;
   };
 
+  const useBackend = async () => { await useEngine(); return remote ? remote.backend() : engine!; };
+  const useRemote = async () => { await useEngine(); if (!remote) throw new Error('Remote service unavailable'); return remote; };
+  server.handle(remoteState, async () => (await useRemote()).status());
+  server.handle(remoteConfigure, async ({ config, token }) => (await useRemote()).configure(config, token));
+  server.handle(remoteCreateDevice, async ({ confirm: _confirm, ...input }) => (await useRemote()).center.createDevice(input));
+  server.handle(remoteRevokeDevice, async ({ id }) => { const service = await useRemote(); await service.center.revokeDevice(id); return service.status(); });
+
   const removeProviderHook = server.before('agent.session_open', async ({ request }, context) => {
     if (request.provider !== DOT_PROVIDER_ID) return;
     const listing = await context.paseo.workspaces.list();
@@ -123,7 +140,7 @@ export default function contribute(server: PluginServerContext) {
     if (!workspace || !directory || canonicalWorkspace(directory) !== canonicalWorkspace(request.cwd)) throw dotBridgeError('workspace-missing', request.cwd);
     return { ...request, cwd: canonicalWorkspace(directory), env: { ...request.env, [WORKSPACE_ENV]: workspace.id } };
   });
-  server.registerProvider(createDotProvider({ engine: useEngine, tick, signal: lifecycle.signal }));
+  server.registerProvider(createDotProvider({ engine: useBackend, tick, signal: lifecycle.signal }));
 
   server.handle(connectionStatus, async () => {
     const current = await useEngine();
@@ -150,11 +167,15 @@ export default function contribute(server: PluginServerContext) {
     return { token: current.mcpToken(), configured: current.mcpToken().length > 0 };
   });
   server.handle(taskCreate, async (input, context) => {
-    const current = await useEngine();
+    const current = await useBackend();
     const listing = await context.paseo.workspaces.list();
     const workspace = listing.entries.find(entry => entry.id === input.workspaceId);
     const directory = workspace?.workspaceDirectory ?? workspace?.projectRootPath;
     if (!directory) throw dotBridgeError('workspace-missing', input.workspaceId);
+    if (current instanceof RemoteClient) {
+      const result = await current.providerPrompt({ id: input.operationId, operationId: input.operationId, clientMessageId: 'panel:' + input.operationId, workspaceId: input.workspaceId, cwd: canonicalWorkspace(directory), body: input.requirement, systemPrompt: input.acceptance, attachments: [] });
+      return { task: result.task };
+    }
     const task = await current.createTask({ ...input, mode: 'text', repository: null, remoteName: null, baseSha: null, targetBranch: null, environmentHint: '', workspaceRoot: canonicalWorkspace(directory) });
     void tick();
     return { task };
@@ -162,45 +183,45 @@ export default function contribute(server: PluginServerContext) {
   server.handle(taskList, async ({ workspaceId }) => {
     await ready;
     if (!engine) return { tasks: [], dataDir: resolveDataDir() ?? '', loadError: dataDirError ?? store?.loadError ?? null };
-    const tasks = engine.tasks().filter(task => (workspaceId ? task.workspaceId === workspaceId : true));
+    const tasks = (await useBackend()).tasks().filter(task => (workspaceId ? task.workspaceId === workspaceId : true));
     return { tasks, dataDir: store?.dir ?? '', loadError: store?.loadError ?? null };
   });
-  server.handle(taskGet, async ({ id }) => ({ task: (await useEngine()).task(id) }));
+  server.handle(taskGet, async ({ id }) => ({ task: (await useBackend()).task(id) }));
   server.handle(taskPermissionRespond, async input => {
-    const permission = await (await useEngine()).respondPermission(input);
+    const permission = await (await useBackend()).respondPermission(input);
     void tick();
     return { permission };
   });
-  server.handle(taskHistory, async ({ id, cursor }) => (await useEngine()).historyForTask(id, cursor));
+  server.handle(taskHistory, async ({ id, cursor }) => (await useBackend()).historyForTask(id, cursor));
   server.handle(taskMessageAdd, async input => {
-    const task = await (await useEngine()).addMessage(input);
+    const task = await (await useBackend()).addMessage(input);
     void tick();
     return { task };
   });
   server.handle(taskAttachmentUpload, async input => {
-    const result = await (await useEngine()).uploadAttachment({ ...input, actor: 'user' });
+    const result = await (await useBackend()).uploadAttachment({ ...input, actor: 'user' });
     void tick();
     return result;
   });
-  server.handle(taskAttachmentRead, async input => (await useEngine()).readAttachment(input.id, input.attachmentId));
-  server.handle(taskAttachmentChunkRead, async input => (await useEngine()).readAttachmentChunk(input.id, input.attachmentId, input.index));
+  server.handle(taskAttachmentRead, async input => (await useBackend()).readAttachment(input.id, input.attachmentId));
+  server.handle(taskAttachmentChunkRead, async input => (await useBackend()).readAttachmentChunk(input.id, input.attachmentId, input.index));
   server.handle(taskCancelRequest, async input => {
-    const task = await (await useEngine()).cancelRequest(input);
+    const task = await (await useBackend()).cancelRequest(input);
     void tick();
     return { task };
   });
   server.handle(taskLocalClose, async input => {
-    const task = await (await useEngine()).closeLocal(input);
+    const task = await (await useBackend()).closeLocal(input);
     void tick();
     return { task };
   });
   server.handle(taskRoundCreate, async input => {
-    const task = await (await useEngine()).createRound(input);
+    const task = await (await useBackend()).createRound(input);
     void tick();
     return { task };
   });
   server.handle(taskRoundRetry, async input => {
-    const task = await (await useEngine()).retryRound(input);
+    const task = await (await useBackend()).retryRound(input);
     void tick();
     return { task };
   });
@@ -216,6 +237,7 @@ export default function contribute(server: PluginServerContext) {
     // signal cannot interrupt on its own. `dispose` waits for pending writes before releasing the
     // lock, and cleanup never starts a new listen or runs a task (startBridge/tick re-check stopped).
     lifecycle.abort();
+    if (remote) void remote.close().catch(report);
     engine?.dispose();
     engine?.setBridgeListening(false);
     const bridgeNow = bridge;
@@ -225,6 +247,7 @@ export default function contribute(server: PluginServerContext) {
     if (storeNow) void storeNow.dispose().catch(report);
     // If startup opens the store/bridge after this point, stop them as soon as they appear.
     void ready.catch(() => undefined).then(async () => {
+      await remote?.close().catch(report);
       engine?.dispose();
       const lateBridge = bridge;
       bridge = null;

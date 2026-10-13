@@ -18,6 +18,7 @@ export function validatePermissionIntent(p: PermissionIntent): void {
     if ((toolName === 'upload_dot_attachment' && operation.size > MAX_ATTACHMENT_BYTES) || (toolName === 'upload_dot_attachment_chunk' && operation.size === 0)) throw dotBridgeError('attachment-invalid', 'Choose an upload tool that supports this size');
   } else {
     if (operation) throw dotBridgeError('permission-required', 'Operation binding is only supported for Bridge mutations');
+    if (toolName === 'read_dot_workspace_changes' && (targets.length !== 1 || targets[0] !== '/')) throw dotBridgeError('permission-required', 'Workspace review uses the exact workspace root target /');
     if (toolName === 'read_dot_file' || toolName === 'list_dot_files') targets.forEach(path => validateLocalPath(path === '/' && toolName === 'list_dot_files' ? '' : path, toolName === 'list_dot_files'));
     if (attachments.has(toolName)) targets.forEach(id => attachmentIdSchema.parse(id));
   }
@@ -48,4 +49,12 @@ export function assertPermissionAccess(task: Task, toolName: string, targets: st
 export function consumePermission(task: Task, permission: DotPermission | undefined, at: number): void {
   if (!permission) return;
   task.permissions = task.permissions.map(p => p.requestId === permission.requestId ? { ...p, consumedAt: at } : p);
+}
+
+/** A workspace diff must not become a second route around guarded file/list reads. */
+export function assertWorkspaceReviewAccess(task: Task, paths: string[] = []): void {
+  // An explicit current root review grant authorizes this diff read only. It does not renew file tools.
+  if (assertPermissionAccess(task, 'read_dot_workspace_changes', ['/'])) return;
+  assertPermissionAccess(task, 'list_dot_files', ['/']);
+  assertPermissionAccess(task, 'read_dot_file', paths);
 }

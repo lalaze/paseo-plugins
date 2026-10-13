@@ -28,7 +28,7 @@ async function fixture(t: TestContext, workspace = false) {
   const provider = createDotProvider({ engine: async () => engine, tick: async () => {}, signal: lifecycle.signal, pollMs: 5 });
   const events: ProviderEvent[] = [];
   const connect = async () => {
-    const connection = await provider.connect({ versions: [1], capabilities: ['prompt.message', 'prompt.image', 'session.persistence', 'timeline.plugin'] });
+    const connection = await provider.connect({ versions: [1], capabilities: ['prompt.message', 'prompt.image', 'prompt.steer', 'session.persistence', 'timeline.plugin'] });
     connection.onEvent(event => { ProviderEventSchema.parse(event); events.push(event); });
     return connection;
   };
@@ -413,4 +413,89 @@ test('persistence refuses a missing committed task and invalid file input leaves
   message.input.content.push({ type: 'image', mimeType: 'image/png', data: 'invalid' });
   await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: message });
   assert.equal(h.engine.tasks().length, 0);
+});
+
+test('steering an active Dot turn preserves the round, wakes Dot and deduplicates retries', async t => {
+  const h = await fixture(t); await h.openSession();
+  assert.ok(h.connection.capabilities.includes('prompt.steer'));
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Implement the feature') });
+  const before = await h.claim();
+  const started = h.events.find(e => e.type === 'session.turn' && e.state === 'started');
+  assert.ok(started?.type === 'session.turn');
+  const steer = { ...prompt('Only review the tests first'), delivery: 'steer' as const };
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: steer });
+  const response = h.events.find(e => e.type === 'session.prompt_result' && e.clientMessageId === steer.clientMessageId);
+  assert.ok(response?.type === 'session.prompt_result');
+  assert.deepEqual(response.result, { type: 'steer', turnId: started.turnId });
+  const task = h.engine.task(before.id);
+  assert.equal(task.currentRoundId, before.currentRoundId);
+  assert.equal(task.messages.at(-1)?.body, 'Only review the tests first');
+  assert.equal(task.rounds.length, 1);
+  assert.equal(h.store.read().events.at(-1)?.data.messageSeq, task.messageSeq);
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: steer });
+  assert.equal(h.engine.task(before.id).messages.length, task.messages.length);
+  assert.equal(h.events.filter(e => e.type === 'session.turn' && e.state === 'started').length, 1);
+  await h.result('Reviewed the tests');
+  await h.wait(() => h.events.some(e => e.type === 'session.turn' && e.state === 'completed' && e.turnId === started.turnId));
+});
+
+test('a reconnected active turn accepts an ordinary follow-up without starting duplicate work', async t => {
+  const h = await fixture(t); await h.openSession();
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Start') });
+  const before = await h.claim();
+  const saved = h.events.find(e => e.type === 'session.persistence'); assert.ok(saved?.type === 'session.persistence');
+  await h.connection.send({ type: 'session.close', sessionId: 'chat', requestId: randomUUID() });
+  await h.openSession('restored', saved.persistence);
+  const follow = prompt('Continue the existing request');
+  await h.connection.send({ type: 'session.prompt', sessionId: 'restored', prompt: follow });
+  const response = h.events.find(e => e.type === 'session.prompt_result' && e.clientMessageId === follow.clientMessageId);
+  assert.ok(response?.type === 'session.prompt_result' && response.result.type === 'steer');
+  assert.equal(h.engine.task(before.id).currentRoundId, before.currentRoundId);
+  assert.equal(h.engine.task(before.id).rounds.length, 1);
+});
+
+test('stopped or finished turns reject steer without creating another round', async t => {
+  const h = await fixture(t); await h.openSession();
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Start') });
+  const task = await h.claim();
+  await h.engine.cancelRequest({ id: task.id, revision: task.revision, operationId: randomUUID() });
+  const follow = { ...prompt('continue'), delivery: 'steer' as const };
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: follow });
+  assert.ok(h.events.some(e => e.type === 'session.prompt_result' && e.clientMessageId === follow.clientMessageId && e.result.type === 'failed'));
+  assert.equal(h.engine.task(task.id).messages.length, task.messages.length);
+  assert.equal(h.engine.task(task.id).rounds.length, 1);
+});
+
+test('completion racing a steer cannot silently start a new round', async t => {
+  const h = await fixture(t); await h.openSession();
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Start') });
+  const task = await h.claim();
+  const save = h.engine.providerPrompt.bind(h.engine);
+  h.engine.providerPrompt = async input => {
+    await h.result('Finished before steer was saved');
+    return save(input);
+  };
+  const follow = { ...prompt('additional instructions'), delivery: 'steer' as const };
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: follow });
+  const response = h.events.find(e => e.type === 'session.prompt_result' && e.clientMessageId === follow.clientMessageId);
+  assert.ok(response?.type === 'session.prompt_result' && response.result.type === 'failed');
+  const current = h.engine.task(task.id);
+  assert.equal(current.currentRoundId, task.currentRoundId);
+  assert.equal(current.rounds.length, 1);
+  assert.equal(current.userMessageSeq, task.userMessageSeq);
+  assert.equal(current.status, 'completed');
+});
+
+test('a new message during permission wait expires the old card without granting approval', async t => {
+  const h = await fixture(t); await h.openSession();
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Start') });
+  const task = await h.claim();
+  await h.engine.requestPermission({ taskId: task.id, connectionId: task.connectionId, roundId: task.currentRoundId, userMessageSeq: task.userMessageSeq, requestId: randomUUID(), title: 'Read file', description: 'Confirm exact scope', scope: { toolName: 'read_dot_file', action: 'read', targets: ['one.ts'] } });
+  const follow = { ...prompt('Do not modify files; explain only'), delivery: 'steer' as const, clearPendingPermissions: true };
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: follow });
+  const current = h.engine.task(task.id);
+  assert.equal(current.permissions[0].status, 'expired');
+  assert.equal(current.currentRoundId, task.currentRoundId);
+  assert.ok(!h.events.some(e => e.type === 'session.turn' && e.state === 'completed'));
+  await h.wait(() => cards(h.events).some(e => label(e) === '你的回复已发送，等待 Dot 继续处理。'));
 });

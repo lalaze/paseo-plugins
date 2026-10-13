@@ -13,8 +13,8 @@ import type { BridgeEngine } from './engine';
 
 export const DOT_PROVIDER_ID = 'dot';
 export const WORKSPACE_ENV = 'PASEO_DOT_WORKSPACE_ID';
-const supported = ['prompt.message', 'prompt.image', 'session.persistence', 'timeline.plugin', 'permission'];
-const bindingSchema = z.object({ taskId: uuidSchema, cwd: z.string(), workspaceId: z.string().min(1), taskCreated: z.boolean().default(false) }).strict();
+const supported = ['prompt.message', 'prompt.image', 'prompt.steer', 'session.persistence', 'timeline.plugin', 'permission'];
+const bindingSchema = z.object({ transportKey: z.string().default('local'), taskId: uuidSchema, cwd: z.string(), workspaceId: z.string().min(1), taskCreated: z.boolean().default(false) }).strict();
 type Binding = z.infer<typeof bindingSchema>;
 /** `changes` lists receipts whose edit cards this session already handled; receipts never change. */
 type Session = { id: string; binding: Binding; systemPrompt: string; seen: Map<string, string>; changes: Set<string>; permissions: Set<string>; turn: string | null; busy: boolean };
@@ -28,7 +28,7 @@ export function promptOperationId(taskId: string, clientMessageId: string): stri
 }
 
 export async function promptContents(prompt: ProviderPrompt): Promise<{ body: string; attachments: AttachmentContent[] }> {
-  if (prompt.input.type !== 'message' || prompt.outputSchema || prompt.delivery === 'steer') throw new Error('Dot currently supports ordinary messages and attachments.');
+  if (prompt.input.type !== 'message' || prompt.outputSchema) throw new Error('Dot currently supports messages and attachments.');
   const texts: string[] = [], attachments: AttachmentContent[] = [];
   for (const part of prompt.input.content) {
     if (part.type === 'text') texts.push(part.text);
@@ -79,7 +79,9 @@ function activityCard(task: Task, entry: DotActivity): ProviderTimelineItem {
   }
 }
 
-export function createDotProvider(options: { engine(): Promise<BridgeEngine>; tick(): Promise<void>; signal: AbortSignal; pollMs?: number }): ProviderRegistration {
+export type ProviderEngine = Pick<BridgeEngine, 'tasks' | 'task' | 'providerPrompt' | 'respondPermission' | 'cancelRequest' | 'readyToDispatch' | 'changeContents' | 'activity'> & { restoreTask?(id: string): Promise<void>; connectionError?(): string | null; transportKey?(): string };
+
+export function createDotProvider(options: { engine(): Promise<ProviderEngine>; tick(): Promise<void>; signal: AbortSignal; pollMs?: number }): ProviderRegistration {
   return {
     id: DOT_PROVIDER_ID, label: 'Dot', description: 'Chat with your connected Dot through Dot Bridge.',
     async connect(request): Promise<ProviderConnection> {
@@ -118,6 +120,8 @@ export function createDotProvider(options: { engine(): Promise<BridgeEngine>; ti
       };
       const refresh = (session: Session, task: Task, skip = false) => {
         const activity = engine.activity.list(task.id);
+        const connectionError = engine.connectionError?.();
+        if (connectionError) item(session, { type: 'notification', id: task.id + ':connection-error', level: 'info', message: connectionError }, undefined, skip);
         const permissions = pendingPermissions(task);
         if (capabilities.includes('permission')) {
           const current = new Set(permissions.map(p => permissionPromptId(task.id, p.requestId)));
@@ -164,9 +168,14 @@ export function createDotProvider(options: { engine(): Promise<BridgeEngine>; ti
           for (const operationId of built) session.changes.add(operationId);
         }
         const round = currentRound(task);
+        const waitingLabel = permissions.length ? 'Dot 等待你确认授权。'
+          : round.processedThroughSeq < task.userMessageSeq
+            ? task.permissions.some(p => p.decisionMessageSeq === task.userMessageSeq)
+              ? '已记录你的授权决定，等待 Dot 继续处理。' : '你的回复已发送，等待 Dot 继续处理。'
+            : 'Dot 等待你的回复。';
         const label = round.stop.requested && !['stopped', 'completed', 'failed'].includes(task.status)
           ? '已请求 Dot 停止，等待远端确认。'
-          : ({ queued: engine.readyToDispatch() ? '等待发送给 Dot。' : '等待 Dot Bridge 连接就绪；请在插件中检查连接。', dispatched: '已发送，等待 Dot 接单。', claimed: 'Dot 已接单。', running: 'Dot 正在处理。', waiting_user: 'Dot 等待你的回复。', completed: round.result?.coversLatest ? 'Dot 已完成。' : 'Dot 的回复尚未覆盖最新消息，等待补充回复。', failed: 'Dot 处理失败，可发消息重试。', stopped: round.stop.localClosedAt !== null && !round.stop.reported ? '本地轮次已终止；远端尚未确认停止。' : 'Dot 已停止。' }[task.status]);
+          : ({ queued: engine.readyToDispatch() ? '等待发送给 Dot。' : '等待 Dot Bridge 连接就绪；请在插件中检查连接。', dispatched: '已发送，等待 Dot 接单。', claimed: 'Dot 已接单。', running: 'Dot 正在处理。', waiting_user: waitingLabel, completed: round.result?.coversLatest ? 'Dot 已完成。' : 'Dot 的回复尚未覆盖最新消息，等待补充回复。', failed: 'Dot 处理失败，可发消息重试。', stopped: round.stop.localClosedAt !== null && !round.stop.reported ? '本地轮次已终止；远端尚未确认停止。' : 'Dot 已停止。' }[task.status]);
         const statusId = `${task.id}:status:${task.currentRoundId}:${task.userMessageSeq}`;
         const progress = ['running', 'waiting_user'].includes(task.status) && !round.stop.requested && round.lastProgress?.kind === task.status
           && round.lastProgress.processedThroughSeq >= task.userMessageSeq ? round.lastProgress.note.trim() : '';
@@ -207,8 +216,10 @@ export function createDotProvider(options: { engine(): Promise<BridgeEngine>; ti
             if (input.type === 'session.open') {
               if (sessions.has(input.sessionId)) throw new Error('Dot session is already open');
               if (input.persistence && input.persistence.version !== 1) throw new Error('Unsupported Dot session version');
-              const binding = input.persistence ? bindingSchema.parse(input.persistence.data) : bindingSchema.parse({ taskId: randomUUID(), cwd: input.config.cwd, workspaceId: input.config.env[WORKSPACE_ENV] });
+              const binding = input.persistence ? bindingSchema.parse(input.persistence.data) : bindingSchema.parse({ transportKey: engine.transportKey?.() ?? 'local', taskId: randomUUID(), cwd: input.config.cwd, workspaceId: input.config.env[WORKSPACE_ENV] });
               if (binding.cwd !== input.config.cwd || (input.config.env[WORKSPACE_ENV] && binding.workspaceId !== input.config.env[WORKSPACE_ENV])) throw new Error('Dot session workspace mismatch');
+              if (binding.transportKey !== (engine.transportKey?.() ?? 'local')) throw new Error('This conversation belongs to a different local/remote connection; switch back or start a new conversation.');
+              if (binding.taskCreated && engine.restoreTask) await engine.restoreTask(binding.taskId);
               const task = engine.tasks().find(task => task.id === binding.taskId);
               if (binding.taskCreated && !task) throw new Error('The saved Dot task is missing; restore the Bridge data before continuing.');
               if (task && (task.provider?.cwd !== binding.cwd || task.workspaceId !== binding.workspaceId)) throw new Error('Dot task binding mismatch');
@@ -248,22 +259,36 @@ export function createDotProvider(options: { engine(): Promise<BridgeEngine>; ti
               return;
             }
             if (input.type === 'session.prompt') {
-              if (session.busy || session.turn) throw new Error('Dot is still handling the previous message');
+              if (session.busy) throw new Error('Dot is still saving the previous message');
+              if (input.prompt.delivery === 'steer' && !capabilities.includes('prompt.steer')) throw new Error('This connection did not negotiate prompt.steer');
+              const existing = engine.tasks().find(task => task.id === session.binding.taskId);
+              if (existing) refresh(session, existing);
+              const activeTurn = session.turn;
+              if (input.prompt.delivery === 'steer' && !activeTurn) throw new Error('Dot has no active turn to steer; send a new message');
+              if (activeTurn && !capabilities.includes('prompt.steer')) throw new Error('Dot is still handling the previous message');
               session.busy = true;
               try {
                 const content = await promptContents(input.prompt);
                 if (session.systemPrompt.length > 20_000) throw new Error('Dot system instructions exceed 20,000 characters');
                 const outcome = await engine.providerPrompt({ id: session.binding.taskId, cwd: session.binding.cwd, workspaceId: session.binding.workspaceId,
                   operationId: promptOperationId(session.binding.taskId, input.prompt.clientMessageId), clientMessageId: input.prompt.clientMessageId,
-                  ...content, systemPrompt: session.systemPrompt });
+                  ...content, systemPrompt: session.systemPrompt,
+                  ...(activeTurn && existing ? { steerRoundId: existing.currentRoundId } : {}) });
                 const task = engine.task(session.binding.taskId);
                 if (outcome.duplicate) {
-                  emit({ type: 'session.prompt_result', sessionId: session.id, clientMessageId: input.prompt.clientMessageId, result: { type: 'completed' } });
+                  emit({ type: 'session.prompt_result', sessionId: session.id, clientMessageId: input.prompt.clientMessageId, result: activeTurn && outcome.task.currentRoundId === task.currentRoundId ? { type: 'steer', turnId: activeTurn } : { type: 'completed' } });
                   refresh(session, task);
                   return;
                 }
                 session.binding.taskCreated = true;
                 emit({ type: 'session.persistence', sessionId: session.id, persistence: { version: 1, data: session.binding } });
+                if (activeTurn) {
+                  // Append to the existing remote round, retaining its native turn identity.
+                  emit({ type: 'session.prompt_result', sessionId: session.id, clientMessageId: input.prompt.clientMessageId, result: { type: 'steer', turnId: activeTurn } });
+                  refresh(session, task);
+                  void options.tick();
+                  return;
+                }
                 session.turn = `${task.currentRoundId}:${task.userMessageSeq}`;
                 emit({ type: 'session.prompt_result', sessionId: session.id, clientMessageId: input.prompt.clientMessageId, result: { type: 'turn', turnId: session.turn } });
                 emit({ type: 'session.turn', sessionId: session.id, turnId: session.turn, state: 'started' });

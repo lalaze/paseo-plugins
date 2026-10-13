@@ -188,6 +188,7 @@ export const taskSchema = z
     branch: branchSchema.nullable(),
     environmentHint: z.string().max(2000).default(''),
     workspaceRoot: z.string().nullable().default(null),
+    remoteOrigin: z.object({ deviceId: uuidSchema, workspaceId: z.string().min(1).max(200) }).strict().nullable().default(null),
     localChanges: z.array(localReceiptSchema).default([]),
     permissions: z.array(permissionSchema).default([]),
     provider: z.object({ cwd: z.string(), clientMessageIds: z.record(z.string(), z.string()) }).strict().nullable().default(null),

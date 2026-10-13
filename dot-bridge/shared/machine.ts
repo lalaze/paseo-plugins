@@ -189,10 +189,12 @@ export function reduceProgress(task: Task, input: ProgressInput): ProgressOutcom
   if (!round.claim) throw dotBridgeError('claim-required', 'progress before claim');
   const isCurrent = round.roundId === task.currentRoundId;
   const terminal = round.remoteStatus === 'completed' || round.remoteStatus === 'failed' || round.remoteStatus === 'stopped';
-  const historyOnly = !isCurrent || terminal;
+  const processed = clampSeq(input.processedThroughSeq, task.messageSeq);
+  const staleProgress = (input.kind === 'running' || input.kind === 'waiting_user')
+    && processed < Math.min(round.processedThroughSeq, task.userMessageSeq);
+  const historyOnly = !isCurrent || terminal || staleProgress;
   const status = historyOnly ? round.remoteStatus : PROGRESS_STATUS[input.kind];
 
-  const processed = clampSeq(input.processedThroughSeq, task.messageSeq);
   let next: Task = task;
   if (input.note.trim()) {
     const kind = input.kind === 'waiting_user' ? 'question' : input.kind === 'failed' ? 'error' : 'progress';
@@ -204,14 +206,14 @@ export function reduceProgress(task: Task, input: ProgressInput): ProgressOutcom
   const nextRound: Round = {
     ...round,
     remoteStatus: status,
-    lastProgress: { updateId: input.updateId, kind: input.kind, note: input.note, processedThroughSeq: processed, at: input.at },
+    lastProgress: staleProgress ? round.lastProgress : { updateId: input.updateId, kind: input.kind, note: input.note, processedThroughSeq: processed, at: input.at },
     progressHistory: [...round.progressHistory, { updateId: input.updateId, kind: input.kind, note: input.note, processedThroughSeq: processed, at: input.at }].slice(-500),
     processedThroughSeq: Math.max(round.processedThroughSeq, processed),
     stop,
     updatedAt: input.at,
   };
   const replaced = replaceRoundRaw(next, nextRound, input.at);
-  if (historyOnly) return { task: replaced, applied: false, reason: isCurrent ? 'terminal' : 'history' };
+  if (historyOnly) return { task: replaced, applied: false, reason: isCurrent && terminal ? 'terminal' : 'history' };
   return { task: { ...replaced, status }, applied: true, reason: 'ok' };
 }
 
