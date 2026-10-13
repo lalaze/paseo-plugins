@@ -36,6 +36,8 @@ flowchart LR
 
 The plugin registers the provider in Paseo; it does not run a Dot CLI or forward arbitrary workspace tools. One conversation maps to one task. Follow-ups open another round after completion; answers to Dot's questions continue the current round. Persistence replays messages, results and files and reattaches to active work without dispatching another task. Closing a conversation detaches the local view. Stopping a queued or unclaimed task cancels it locally and releases its slot; a late claim is refused. Claimed work keeps its slot until Dot acknowledges the stop, and further local file operations are blocked. Startup also finishes old recorded stop requests for unclaimed tasks, so they cannot leave new conversations queued indefinitely. Stop requests do not undo files already applied.
 
+If claimed work no longer responds after a stop request, use **Dot tasks → task details → Close round locally**. This explicitly releases its slot and prevents further workspace access or uploads from that round. It does **not** assert that remote work or external tools stopped: the UI preserves that distinction until Dot acknowledges. Late results remain historical and cannot complete or revive the locally closed round. Retry or send a new message to open a fresh round; late calls from the old round cannot mutate it.
+
 ## Setup
 
 ```bash
@@ -49,6 +51,8 @@ This Git URL is an **installation source**, not a task delivery channel. `instal
 3. Connect the custom plugin in ChatGPT and copy the current connection instructions to Dot. It must subscribe to `paseo.dot.task_changed` and `paseo.dot.connection_test`, using the platform callback and signing secret.
 4. Run the two-way connection test. Dispatch waits for the local service, verified event route and successful Dot challenge response.
 5. After upgrading, refresh the connected plugin's tools in ChatGPT. The old `submit_dot_result` is removed; the local file tools and attachment chunk tools must be visible. Update existing subscription instructions to use local edits, not cloud Git delivery. Only requests from the selected workspace authorize relevant file changes; new permissions still require confirmation.
+
+Temporary listen failures (such as an occupied port) appear in connection status and retry automatically with a 2.5–30 second backoff. Settings changes trigger a new bind without waiting for that backoff; concurrent checks share the same start operation.
 
 A subscription originally limited to observing a connection test can receive events without executing them. Its task-handling instructions must permit processing the user's requests. The user's existing connection was previously enabled for native conversations; the current local-edit validation record states whether the upgraded tools and rules have been verified live.
 
@@ -72,9 +76,33 @@ event. Dot must read the latest task before continuing. There is deliberately no
 
 Pending requests survive reconnects/restarts. Stop, new user instructions or a finished round expire
 pending buttons. Duplicate decisions do not duplicate messages; conflicting decisions are refused.
-Pending, denied and platform-blocked current requests block Bridge file writes/uploads. An approved
-request constrains those mutations to its tool and exact paths or attachment names. These controls
-cover Bridge mutations, not unrelated tools available to Dot. They do not grant permanent access.
+Pending, denied and platform-blocked current requests block Bridge file writes/uploads. Mutation
+approvals bind the tool, exact targets, operation UUID and content. For `apply_dot_changes`, include
+`scope.operation: {kind: "files", operationId, changes: [{path, expectedSha256, contentSha256}]}`.
+`contentSha256` is the SHA-256 of the exact replacement UTF-8 bytes, or `null` for deletion; the
+expected hash is `null` only when creating a file. Approval cannot turn an update into a deletion.
+For either upload tool, use `{kind: "attachment", operationId, name, mediaType, size, sha256}`.
+The displayed actual operation distinguishes creation, modification, deletion and upload.
+
+One mutation approval permits one recorded operation outcome, including partial/conflict receipts.
+Exact retries return that outcome; different bytes or an operation UUID need a fresh confirmation.
+Chunked uploads consume approval only when the complete attachment is published. Once any scoped
+confirmation has been requested in a task, Bridge mutations require an explicit matching mutation
+approval. A read-only or external-tool approval never authorizes file writes or uploads; new messages
+and new rounds cannot silently restore unrestricted mutation access. Denied, expired and consumed
+requests require a fresh explicit approval.
+
+File reads, directory listings and attachment reads enforce requested permissions too, including
+while pending or denied. Read targets are exact relative file/directory paths (`/` denotes the root
+directory), or attachment UUIDs. Only `read_dot_attachment` and `read_dot_attachment_chunk` share
+their guard; external tool names cannot act as permission group names. A read approval
+allows repeated reads of those targets until new user input, a stop or round completion; ordinary
+follow-ups do not renew it. Reading an attachment from the local Paseo UI is unaffected.
+
+Task authorization, Paseo confirmation and ChatGPT platform approval are separate. The task panel
+shows pending, currently allowed, denied, expired, consumed, superseded and platform-blocked states.
+Bridge controls apply to its own file/upload tools. Requests for external tools only record the
+user's scoped decision; enforcement and actual execution remain with Dot and the platform.
 
 Paseo approval is **not ChatGPT platform approval**. If the platform still refuses an approved action,
 Dot calls `report_dot_permission_blocked` with the actual reason. The conversation and task details
@@ -87,11 +115,16 @@ After upgrading, refresh the ChatGPT plugin tools so `request_dot_permission` an
 permission instructions returned by `get_dot_task`. Older clients without native permission support
 can use the task-details buttons. Automated coverage is in `tests/permissions.test.ts`.
 
+For the v10 upgrade, refreshing tools is also necessary to expose `scope.operation` in permission
+requests. Existing pending/approved v9 requests are retained as expired history because they did
+not bind an operation or its content. Dot must submit a new request with the binding before access
+can resume. Existing denied decisions remain recorded and enforced.
+
 ## Persistence and compatibility
 
 Data lives in `PASEO_DOT_BRIDGE_DATA_DIR`, or `$PASEO_HOME/paseo-dot-bridge`; startup refuses to guess a fallback. State, private credentials and SHA-addressed attachments remain separate. `local-changes/<operationId>.json` holds original file contents, change intent and the durable receipt with mode 0600. Back up this directory with the state and attachments. Journals currently have no automatic pruning and may contain source code.
 
-Store **v9** adds durable scoped permission requests and decisions; v8 added larger attachment metadata and local delivery paths; v7 added the pinned workspace root and local code-change receipts. Older files are migrated with their original bytes backed up as `state.v<version>.json`. Older native conversations gain their local binding on the next message through Paseo. Older panel-only text tasks without a local binding should be recreated to edit files. Settings v3 removes repository, branch and cloud-environment defaults.
+Store **v10** adds operation-bound permission consumption and explicit local round closure; v9 added durable scoped permission requests and decisions; v8 added larger attachment metadata and local delivery paths; v7 added the pinned workspace root and local code-change receipts. Older files are migrated with their original bytes backed up as `state.v<version>.json`. Older native conversations gain their local binding on the next message through Paseo. Older panel-only text tasks without a local binding should be recreated to edit files. Settings v3 removes repository, branch and cloud-environment defaults.
 
 Historical Git tasks and verified results remain readable. The installed plugin has no Git adapter, does not dispatch/claim/continue those tasks, and exposes no Git result-submission or re-verification tool. Historical state schemas and compatibility tests are retained so upgrading does not erase prior deliveries. No Git fetch, commit, push, PR or merge is part of current task execution.
 

@@ -10,6 +10,7 @@ import {
   taskAttachmentChunkRead,
   taskAttachmentUpload,
   taskCancelRequest,
+  taskLocalClose,
   taskCreate,
   taskGet,
   taskHistory,
@@ -22,7 +23,8 @@ import {
 import { defaultSettings, dotBridgeSettingsDefinition, type DotBridgeSettings } from './shared/settings';
 import { BridgeEngine } from './server/engine';
 import { canonicalWorkspace } from './server/local-files';
-import { createMcpServer, type McpServerHandle } from './server/mcp-server';
+import { createMcpServer } from './server/mcp-server';
+import { BridgeListener } from './server/listener';
 import { BridgeStore, resolveDataDir } from './server/store';
 
 const settingsDefinition = dotBridgeSettingsDefinition;
@@ -36,7 +38,7 @@ function report(error: unknown): void {
 export default function contribute(server: PluginServerContext) {
   let engine: BridgeEngine | null = null;
   let store: BridgeStore | null = null;
-  let bridge: McpServerHandle | null = null;
+  let bridge: BridgeListener | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
   let settingsWatch: ReturnType<typeof setInterval> | null = null;
   let stopped = false;
@@ -44,8 +46,6 @@ export default function contribute(server: PluginServerContext) {
   const lifecycle = new AbortController();
   let current: DotBridgeSettings = defaultSettings;
   let dataDirError: string | null = null;
-  let lastHost = '';
-  let lastPort = -1;
   const pending: Array<() => void> = [];
 
   const settings = server.registerSettings(settingsDefinition);
@@ -76,6 +76,11 @@ export default function contribute(server: PluginServerContext) {
       signal: lifecycle.signal,
     });
     await engine.init();
+    bridge = new BridgeListener({
+      create: (host, port) => createMcpServer({ engine: engine!, host, port, getToken: () => engine?.mcpToken() ?? '' }),
+      listening: value => engine?.setBridgeListening(value),
+      report,
+    });
     await startBridge();
     for (const job of pending.splice(0)) job();
     await engine.recover().catch(report);
@@ -85,7 +90,7 @@ export default function contribute(server: PluginServerContext) {
     if (typeof timer.unref === 'function') timer.unref();
     settingsWatch = setInterval(() => {
       if (stopped || !engine || !bridge) return;
-      if (current.listenHost !== lastHost || current.listenPort !== lastPort) void startBridge().catch(report);
+      void startBridge().catch(report);
     }, TICK_MS);
     if (typeof settingsWatch.unref === 'function') settingsWatch.unref();
   })();
@@ -93,33 +98,8 @@ export default function contribute(server: PluginServerContext) {
 
   /** Builds a fresh server with the current listen settings; a settings change rebinds the socket. */
   async function startBridge(): Promise<void> {
-    if (!engine || stopped) return;
-    if (bridge) {
-      await bridge.stop();
-      bridge = null;
-    }
-    // The contribution may have been removed while the old server was stopping.
-    if (stopped) return;
-    lastHost = current.listenHost;
-    lastPort = current.listenPort;
-    bridge = createMcpServer({
-      engine,
-      host: current.listenHost,
-      port: current.listenPort,
-      getToken: () => engine?.mcpToken() ?? '',
-    });
-    try {
-      const bound = await bridge.start();
-      if (stopped) {
-        await bridge.stop();
-        return;
-      }
-      engine.setBridgeListening(true);
-      console.error(`[paseo-dot-bridge] MCP bridge listening at ${bound.endpoint}`);
-    } catch (error) {
-      engine.setBridgeListening(false);
-      report(error);
-    }
+    if (!bridge || stopped) return;
+    await bridge.ensure(current.listenHost, current.listenPort);
   }
 
   async function tick(): Promise<void> {
@@ -206,6 +186,11 @@ export default function contribute(server: PluginServerContext) {
   server.handle(taskAttachmentChunkRead, async input => (await useEngine()).readAttachmentChunk(input.id, input.attachmentId, input.index));
   server.handle(taskCancelRequest, async input => {
     const task = await (await useEngine()).cancelRequest(input);
+    void tick();
+    return { task };
+  });
+  server.handle(taskLocalClose, async input => {
+    const task = await (await useEngine()).closeLocal(input);
     void tick();
     return { task };
   });

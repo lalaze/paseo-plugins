@@ -118,6 +118,7 @@ export const stopRequestSchema = z
     at: z.number().int().nonnegative().nullable().default(null),
     reported: z.boolean().default(false),
     reportedAt: z.number().int().nonnegative().nullable().default(null),
+    localClosedAt: z.number().int().nonnegative().nullable().default(null),
     note: z.string().max(4000).nullable().default(null),
   })
   .strict();
@@ -338,7 +339,7 @@ export const dedupSchema = z
 // v5: attachments; v6: native-provider bindings; v7: pinned local workspace and file-operation receipts.
 // v8: chunked attachments up to 20 MiB and named local delivery paths.
 // v9: durable, round/message-bound local permission decisions.
-export const STORE_VERSION = 9;
+export const STORE_VERSION = 10;
 
 export const storeFileSchema = z
   .object({
@@ -490,6 +491,13 @@ function migrateTask(input: unknown): unknown {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
   const task = { ...(input as Record<string, unknown>) };
   if (Array.isArray(task.rounds)) task.rounds = task.rounds.map(round => migrateRound(round));
+  // Legacy approvals did not bind bytes or an operation. Preserve the record but never reuse it.
+  if (Array.isArray(task.permissions)) task.permissions = task.permissions.map(value => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const permission = { ...value } as Record<string, unknown>;
+    if (permission.status === 'pending' || permission.status === 'approved') permission.status = 'expired';
+    return permission;
+  });
   return task;
 }
 

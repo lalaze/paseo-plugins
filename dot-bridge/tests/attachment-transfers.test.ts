@@ -78,6 +78,28 @@ test('chunk transfer rejects changed bytes, manifests, size limits and whole-fil
   assert.equal(h.engine.task(h.identity.taskId).attachments.length, 0);
 });
 
+test('chunk approval binds the manifest, survives restart and is consumed only after final publication', async t => {
+  const h = await fixture(t);
+  const parts = chunks(h.identity, Buffer.alloc(ATTACHMENT_CHUNK_BYTES + 7, 42));
+  const first = parts[0]!;
+  const request = { ...h.identity, requestId: randomUUID(), userMessageSeq: h.engine.task(h.identity.taskId).userMessageSeq, title: 'Upload test.bin', description: 'Deliver synthetic bytes once', scope: { toolName: 'upload_dot_attachment_chunk', action: 'Upload', targets: [first.name], operation: { kind: 'attachment' as const, operationId: first.operationId, name: first.name, mediaType: first.mediaType, size: first.size, sha256: first.sha256 } } };
+  await h.engine.requestPermission(request);
+  await assert.rejects(h.engine.uploadAttachmentChunk(first), /permission-required/);
+  await h.engine.respondPermission({ taskId: h.identity.taskId, requestId: request.requestId, decision: 'approved' });
+  await assert.rejects(h.engine.uploadAttachmentChunk({ ...first, sha256: '0'.repeat(64) }), /permission-required/);
+  await assert.rejects(h.engine.uploadAttachmentChunk({ ...first, operationId: randomUUID() }), /permission-required/);
+  await assert.rejects(h.engine.uploadAttachmentChunk({ ...first, mediaType: 'text/plain' }), /permission-required/);
+  assert.equal((await h.engine.uploadAttachmentChunk(first)).complete, false);
+  assert.equal(h.engine.task(h.identity.taskId).permissions[0].consumedAt, null);
+  await h.restart();
+  const complete = await h.engine.uploadAttachmentChunk(parts[1]!);
+  assert.equal(complete.complete, true);
+  assert.notEqual(h.engine.task(h.identity.taskId).permissions[0].consumedAt, null);
+  await h.restart();
+  assert.deepEqual(await h.engine.uploadAttachmentChunk(first), complete);
+  await assert.rejects(h.engine.uploadAttachmentChunk({ ...first, operationId: randomUUID() }), /permission-required/);
+});
+
 test('connection, round, claim and stop protect chunk writes, including the final chunk', async t => {
   const h = await fixture(t); const parts = chunks(h.identity, Buffer.alloc(ATTACHMENT_CHUNK_BYTES + 7));
   await assert.rejects(h.engine.uploadAttachmentChunk({ ...parts[0]!, connectionId: '0'.repeat(32) }), /connection/);

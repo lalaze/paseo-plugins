@@ -86,7 +86,7 @@ describe('BridgeStore', () => {
     await store.dispose();
     const raw = await readFile(join(dir, 'state.json'), 'utf8');
     const parsed = JSON.parse(raw) as { version: number; tasks: unknown[] };
-    assert.equal(parsed.version, 9);
+    assert.equal(parsed.version, 10);
     assert.equal(parsed.tasks.length, 1);
   });
 
@@ -140,7 +140,7 @@ describe('BridgeStore migration', () => {
     const store = await BridgeStore.open(dir);
     assert.equal(store.loadError, null);
     const state = store.read();
-    assert.equal(state.version, 9);
+    assert.equal(state.version, 10);
     assert.equal(state.tasks.length, 1);
     assert.equal(state.tasks[0].id, task.id);
     assert.equal(state.dedup.updateIds['u1'].hash, 'hash');
@@ -182,7 +182,7 @@ describe('BridgeStore migration', () => {
     const store = await BridgeStore.open(dir);
     assert.equal(store.loadError, null);
     const state = store.read();
-    assert.equal(state.version, 9);
+    assert.equal(state.version, 10);
     assert.equal(state.tasks.length, 1);
     // The partial result outcome cannot be replayed, so it is dropped (a safe fallback is returned).
     assert.equal(state.dedup.updateIds['u-result'].response, null);

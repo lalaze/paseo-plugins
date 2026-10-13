@@ -8,6 +8,8 @@ import { BridgeStore } from '../server/store';
 import { BridgeEngine } from '../server/engine';
 import { createDotProvider, WORKSPACE_ENV } from '../server/provider';
 import { createMcpServer } from '../server/mcp-server';
+import { sourceHash } from '../server/local-files';
+import { permissionState } from '../shared/permissions';
 import { withDispatch } from '../shared/machine';
 import { ProviderEventSchema, type ProviderEvent } from '@getpaseo/plugin/server/provider';
 
@@ -27,7 +29,7 @@ async function fixture(t: TestContext) {
   const task = engine.tasks()[0];
   const identity = { taskId: task.id, connectionId: task.connectionId, roundId: task.currentRoundId };
   await engine.claimTask(identity);
-  const request = { ...identity, requestId: randomUUID(), userMessageSeq: task.userMessageSeq, title: '修改文件', description: '接入用量估算', scope: { toolName: 'apply_dot_changes', action: '修改两个文件，接入估算账本', targets: ['one.ts', 'two.ts'] } };
+  const request = { ...identity, requestId: randomUUID(), userMessageSeq: task.userMessageSeq, title: '修改文件', description: '接入用量估算', scope: { toolName: 'apply_dot_changes', action: '修改两个文件，接入估算账本', targets: ['one.ts'], operation: { kind: 'files' as const, operationId: randomUUID(), changes: [{ path: 'one.ts', expectedSha256: null as string | null, contentSha256: sourceHash('a') as string | null }] } } };
   const wait = async (fn: () => boolean) => { for (let i = 0; i < 100 && !fn(); i++) await new Promise(r => setTimeout(r, 5)); assert.ok(fn()); };
   t.after(async () => { life.abort(); await connection.close(); engine.dispose(); await store.dispose(); await rm(dir, { recursive: true, force: true }); });
   return { dir, store, engine, connection, events, identity, request, wait, config, provider };
@@ -55,7 +57,7 @@ test('native permission approval is scoped, durable and wakes Dot without finish
   assert.equal((await h.engine.requestPermission(h.request)).status, 'approved');
   await assert.rejects(h.engine.requestPermission({ ...h.request, scope: { ...h.request.scope, targets: ['other.ts'] } }), /duplicate-mismatch/);
   await assert.rejects(h.engine.applyLocalFiles({ ...h.identity, operationId: randomUUID(), userMessageSeq: task.userMessageSeq, changes: [{ path: 'other.ts', expectedSha256: null, content: 'a' }] }), /permission/);
-  await h.engine.applyLocalFiles({ ...h.identity, operationId: randomUUID(), userMessageSeq: task.userMessageSeq, changes: [{ path: 'one.ts', expectedSha256: null, content: 'a' }] });
+  await h.engine.applyLocalFiles({ ...h.identity, operationId: h.request.scope.operation.operationId, userMessageSeq: task.userMessageSeq, changes: [{ path: 'one.ts', expectedSha256: null, content: 'a' }] });
 });
 
 test('pending requests replay on reconnect; stop invalidates buttons and stale approvals fail', async t => {
@@ -122,11 +124,16 @@ test('file approval cannot authorize attachments; attachment names remain scoped
   await h.engine.respondPermission({ taskId: h.identity.taskId, requestId: h.request.requestId, decision: 'approved' });
   const upload = { id: h.identity.taskId, roundId: h.identity.roundId, connectionId: h.identity.connectionId, operationId: randomUUID(), actor: 'dot' as const, name: 'report.txt', mediaType: 'text/plain', encoding: 'utf8' as const, content: 'report' };
   await assert.rejects(h.engine.uploadAttachment(upload), /permission-required/);
-  const request = { ...h.request, requestId: randomUUID(), userMessageSeq: h.engine.task(h.identity.taskId).userMessageSeq, scope: { toolName: 'upload_dot_attachment', action: 'Deliver report', targets: ['report.txt'] } };
+  const request = { ...h.request, requestId: randomUUID(), userMessageSeq: h.engine.task(h.identity.taskId).userMessageSeq, scope: { toolName: 'upload_dot_attachment', action: 'Deliver report', targets: ['report.txt'], operation: { kind: 'attachment' as const, operationId: upload.operationId, name: upload.name, mediaType: upload.mediaType, size: Buffer.byteLength(upload.content), sha256: sourceHash(upload.content) } } };
   await h.engine.requestPermission(request);
   await h.engine.respondPermission({ taskId: h.identity.taskId, requestId: request.requestId, decision: 'approved' });
   await assert.rejects(h.engine.uploadAttachment({ ...upload, name: 'other.txt' }), /permission-required/);
-  assert.equal((await h.engine.uploadAttachment(upload)).attachment.name, 'report.txt');
+  await assert.rejects(h.engine.uploadAttachment({ ...upload, content: 'changed bytes' }), /permission-required/);
+  await assert.rejects(h.engine.uploadAttachment({ ...upload, operationId: randomUUID() }), /permission-required/);
+  const result = await h.engine.uploadAttachment(upload);
+  assert.equal(result.attachment.name, 'report.txt');
+  assert.deepEqual(await h.engine.uploadAttachment(upload), result);
+  await assert.rejects(h.engine.uploadAttachment({ ...upload, operationId: randomUUID() }), /permission-required/);
 });
 
 test('permissions survive disk reopen; v8 migration preserves original bytes', async t => {
@@ -145,7 +152,7 @@ test('permissions survive disk reopen; v8 migration preserves original bytes', a
   const migrated = await BridgeStore.open(h.dir);
   try {
     assert.equal(migrated.loadError, null);
-    assert.equal(migrated.read().version, 9);
+    assert.equal(migrated.read().version, 10);
     assert.deepEqual(migrated.read().tasks[0].permissions, []);
     assert.equal(await readFile(join(h.dir, 'state.v8.json'), 'utf8'), original);
     assert.equal(migrated.read().tasks[0].messages.length, legacy.tasks[0].messages.length);
@@ -176,4 +183,175 @@ test('authenticated MCP requests and reports permissions but cannot grant them',
   const fetched = await rpc('tools/call', { name: 'get_dot_task', arguments: { connectionId: h.identity.connectionId, taskId: h.identity.taskId } });
   assert.match(JSON.stringify(fetched.data), /Platform confirmation needed/);
   assert.match(JSON.stringify(fetched.data), /permissionInstructions/);
+});
+
+test('mutation approval binds bytes, action and operation id, is consumed once, and exact replay is safe', async t => {
+  const h = await fixture(t);
+  await h.engine.requestPermission(h.request);
+  await h.engine.respondPermission({ taskId: h.identity.taskId, requestId: h.request.requestId, decision: 'approved' });
+  const input = { ...h.identity, operationId: h.request.scope.operation.operationId, userMessageSeq: h.engine.task(h.identity.taskId).userMessageSeq, changes: [{ path: 'one.ts', expectedSha256: null, content: 'a' }] };
+  await assert.rejects(h.engine.applyLocalFiles({ ...input, operationId: randomUUID() }), /permission-required/);
+  await assert.rejects(h.engine.applyLocalFiles({ ...input, changes: [{ ...input.changes[0], content: 'different bytes' }] }), /permission-required/);
+  const receipt = await h.engine.applyLocalFiles(input);
+  const task = h.engine.task(h.identity.taskId);
+  assert.equal(permissionState(task, task.permissions[0]), 'consumed');
+  assert.deepEqual(await h.engine.applyLocalFiles(input), receipt);
+  await assert.rejects(h.engine.applyLocalFiles({ ...input, operationId: randomUUID(), changes: [{ path: 'one.ts', expectedSha256: sourceHash('a'), content: null }] }), /permission-required/);
+  assert.equal(await readFile(join(h.dir, 'one.ts'), 'utf8'), 'a');
+});
+
+test('denial, platform block and expired approval survive ordinary follow-ups until explicit renewed approval', async t => {
+  for (const decision of ['denied', 'approved', 'platform-blocked'] as const) {
+    const h = await fixture(t);
+    await h.engine.requestPermission(h.request);
+    await h.engine.respondPermission({ taskId: h.identity.taskId, requestId: h.request.requestId, decision: decision === 'denied' ? 'denied' : 'approved' });
+    if (decision === 'platform-blocked') await h.engine.reportPermissionBlocked({ ...h.identity, requestId: h.request.requestId, reason: 'Synthetic platform refusal' });
+    let task = h.engine.task(h.identity.taskId);
+    await h.engine.addMessage({ id: task.id, revision: task.revision, operationId: randomUUID(), body: 'Why is this needed?', kind: 'answer' });
+    const input = { ...h.identity, operationId: h.request.scope.operation.operationId, userMessageSeq: h.engine.task(task.id).userMessageSeq, changes: [{ path: 'one.ts', expectedSha256: null, content: 'a' }] };
+    await assert.rejects(h.engine.applyLocalFiles(input), /permission-required/);
+    task = h.engine.task(task.id);
+    assert.equal(permissionState(task, task.permissions[0]), decision === 'denied' ? 'denied' : 'expired');
+    const next = { ...h.request, requestId: randomUUID(), userMessageSeq: task.userMessageSeq };
+    await h.engine.requestPermission(next);
+    await h.engine.respondPermission({ taskId: task.id, requestId: next.requestId, decision: 'approved' });
+    assert.equal((await h.engine.applyLocalFiles({ ...input, userMessageSeq: h.engine.task(task.id).userMessageSeq })).status, 'applied');
+  }
+});
+
+test('file and directory read requests enforce pending, denied, scoped approval and expiration', async t => {
+  for (const toolName of ['read_dot_file', 'list_dot_files']) {
+    const h = await fixture(t);
+    await writeFile(join(h.dir, 'one.ts'), 'synthetic file');
+    const request = { ...h.request, scope: { toolName, action: 'Read synthetic data', targets: [toolName === 'list_dot_files' ? '/' : 'one.ts'] } };
+    const read = () => toolName === 'read_dot_file' ? h.engine.readLocalFile({ ...h.identity, path: 'one.ts' }) : h.engine.listLocalFiles({ ...h.identity, directory: '', offset: 0 });
+    await h.engine.requestPermission(request);
+    assert.throws(read, /permission-required/);
+    await h.engine.respondPermission({ taskId: h.identity.taskId, requestId: request.requestId, decision: 'denied' });
+    assert.throws(read, /permission-required/);
+    let task = h.engine.task(h.identity.taskId);
+    await h.engine.addMessage({ id: task.id, revision: task.revision, operationId: randomUUID(), body: 'Please ask again with that scope', kind: 'answer' });
+    assert.throws(read, /permission-required/);
+    const next = { ...request, requestId: randomUUID(), userMessageSeq: h.engine.task(task.id).userMessageSeq };
+    await h.engine.requestPermission(next);
+    await h.engine.respondPermission({ taskId: task.id, requestId: next.requestId, decision: 'approved' });
+    assert.doesNotThrow(read); assert.doesNotThrow(read);
+    if (toolName === 'read_dot_file') assert.throws(() => h.engine.readLocalFile({ ...h.identity, path: 'other.ts' }), /permission-required/);
+    else assert.throws(() => h.engine.listLocalFiles({ ...h.identity, directory: 'other', offset: 0 }), /permission-required/);
+    task = h.engine.task(task.id);
+    await h.engine.addMessage({ id: task.id, revision: task.revision, operationId: randomUUID(), body: 'One more question', kind: 'answer' });
+    assert.throws(read, /permission-required/);
+  }
+});
+
+test('attachment read aliases cannot bypass denial and local UI can still read its own attachment', async t => {
+  const h = await fixture(t);
+  const { attachment } = await h.engine.uploadAttachment({ id: h.identity.taskId, roundId: h.identity.roundId, connectionId: h.identity.connectionId, operationId: randomUUID(), actor: 'dot', name: 'test.txt', mediaType: 'text/plain', encoding: 'utf8', content: 'synthetic' });
+  const request = { ...h.request, userMessageSeq: h.engine.task(h.identity.taskId).userMessageSeq, scope: { toolName: 'read_dot_attachment', action: 'Read synthetic attachment', targets: [attachment.id] } };
+  await h.engine.requestPermission(request);
+  await assert.rejects(h.engine.readAttachment(h.identity.taskId, attachment.id, h.identity.connectionId), /permission-required/);
+  await assert.rejects(h.engine.readAttachmentChunk(h.identity.taskId, attachment.id, 0, h.identity.connectionId), /permission-required/);
+  await h.engine.respondPermission({ taskId: h.identity.taskId, requestId: request.requestId, decision: 'denied' });
+  await assert.rejects(h.engine.readAttachmentChunk(h.identity.taskId, attachment.id, 0, h.identity.connectionId), /permission-required/);
+  assert.equal((await h.engine.readAttachment(h.identity.taskId, attachment.id)).content, 'synthetic');
+});
+
+test('read-only and external approvals cannot authorize writes, including after an ordinary follow-up', async t => {
+  for (const toolName of ['read_dot_file', 'list_dot_files', 'external_tool', 'bridge-mutation']) {
+    const h = await fixture(t);
+    const request = { ...h.request, scope: { toolName, action: 'Only the stated operation', targets: [toolName === 'list_dot_files' ? '/' : 'one.ts'] } };
+    await h.engine.requestPermission(request);
+    await h.engine.respondPermission({ taskId: h.identity.taskId, requestId: request.requestId, decision: 'approved' });
+    const write = (path: string) => h.engine.applyLocalFiles({ ...h.identity, operationId: randomUUID(), userMessageSeq: h.engine.task(h.identity.taskId).userMessageSeq, changes: [{ path, expectedSha256: null, content: 'a' }] });
+    const upload = () => h.engine.uploadAttachment({ ...h.identity, id: h.identity.taskId, operationId: randomUUID(), actor: 'dot', name: 'one.ts', mediaType: 'text/plain', encoding: 'utf8', content: 'a' });
+    const chunk = () => h.engine.uploadAttachmentChunk({ ...h.identity, operationId: randomUUID(), name: 'one.ts', mediaType: 'text/plain', size: 1, sha256: sourceHash('a'), index: 0, content: 'YQ==' });
+    await assert.rejects(write('one.ts'), /permission-required/);
+    await assert.rejects(write('unapproved.ts'), /permission-required/);
+    await assert.rejects(upload(), /permission-required/);
+    await assert.rejects(chunk(), /permission-required/);
+    const task = h.engine.task(h.identity.taskId);
+    await h.engine.addMessage({ id: task.id, revision: task.revision, operationId: randomUUID(), body: 'What did you find?', kind: 'answer' });
+    await assert.rejects(write('one.ts'), /permission-required/);
+    await assert.rejects(upload(), /permission-required/);
+    await assert.rejects(chunk(), /permission-required/);
+    const mutation = { ...h.request, requestId: randomUUID(), userMessageSeq: h.engine.task(task.id).userMessageSeq };
+    await h.engine.requestPermission(mutation);
+    await h.engine.respondPermission({ taskId: task.id, requestId: mutation.requestId, decision: 'approved' });
+    assert.equal((await h.engine.applyLocalFiles({ ...h.identity, operationId: mutation.scope.operation.operationId, userMessageSeq: h.engine.task(task.id).userMessageSeq, changes: [{ path: 'one.ts', expectedSha256: null, content: 'a' }] })).status, 'applied');
+    await assert.rejects(readFile(join(h.dir, 'unapproved.ts')), { code: 'ENOENT' });
+  }
+});
+
+test('external attachment-read approval cannot supersede denial or authorize either attachment read tool', async t => {
+  const h = await fixture(t);
+  const { attachment } = await h.engine.uploadAttachment({ ...h.identity, id: h.identity.taskId, operationId: randomUUID(), actor: 'dot', name: 'test.txt', mediaType: 'text/plain', encoding: 'utf8', content: 'synthetic' });
+  const request = { ...h.request, scope: { toolName: 'read_dot_attachment', action: 'Read this attachment', targets: [attachment.id] } };
+  await h.engine.requestPermission(request);
+  await h.engine.respondPermission({ taskId: h.identity.taskId, requestId: request.requestId, decision: 'denied' });
+  let task = h.engine.task(h.identity.taskId);
+  await h.engine.addMessage({ id: task.id, revision: task.revision, operationId: randomUUID(), body: 'Use the external tool instead', kind: 'answer' });
+  const external = { ...request, requestId: randomUUID(), userMessageSeq: h.engine.task(task.id).userMessageSeq, scope: { ...request.scope, toolName: 'attachment-read', action: 'External tool only' } };
+  await h.engine.requestPermission(external);
+  await h.engine.respondPermission({ taskId: task.id, requestId: external.requestId, decision: 'approved' });
+  task = h.engine.task(task.id);
+  await assert.rejects(h.engine.readAttachment(task.id, attachment.id, h.identity.connectionId), /permission-required/);
+  await assert.rejects(h.engine.readAttachmentChunk(task.id, attachment.id, 0, h.identity.connectionId), /permission-required/);
+  assert.equal(permissionState(task, task.permissions[0]), 'denied');
+  assert.equal((await h.engine.readAttachment(task.id, attachment.id)).content, 'synthetic');
+  const renewed = { ...request, requestId: randomUUID(), userMessageSeq: task.userMessageSeq, scope: { ...request.scope, toolName: 'read_dot_attachment_chunk' } };
+  await h.engine.requestPermission(renewed);
+  await h.engine.respondPermission({ taskId: task.id, requestId: renewed.requestId, decision: 'approved' });
+  assert.equal((await h.engine.readAttachment(task.id, attachment.id, h.identity.connectionId)).content, 'synthetic');
+  assert.equal(Buffer.from((await h.engine.readAttachmentChunk(task.id, attachment.id, 0, h.identity.connectionId)).content, 'base64').toString(), 'synthetic');
+});
+
+test('v9 migration expires unbound approvals and blocks reuse after reopen', async t => {
+  const h = await fixture(t);
+  await h.engine.requestPermission(h.request);
+  await h.engine.respondPermission({ taskId: h.identity.taskId, requestId: h.request.requestId, decision: 'approved' });
+  await h.connection.close(); h.engine.dispose(); await h.store.dispose();
+  const legacy = JSON.parse(await readFile(h.store.file, 'utf8'));
+  legacy.version = 9;
+  delete legacy.tasks[0].permissions[0].scope.operation;
+  delete legacy.tasks[0].permissions[0].consumedAt;
+  const original = JSON.stringify(legacy);
+  await writeFile(h.store.file, original);
+  const store = await BridgeStore.open(h.dir);
+  try {
+    assert.equal(store.loadError, null);
+    assert.equal(store.read().tasks[0].permissions[0].status, 'expired');
+    assert.equal(await readFile(join(h.dir, 'state.v9.json'), 'utf8'), original);
+    const engine = new BridgeEngine({ store, getMaxInFlight: () => 2 }); await engine.init();
+    await assert.rejects(engine.applyLocalFiles({ ...h.identity, operationId: randomUUID(), userMessageSeq: engine.task(h.identity.taskId).userMessageSeq, changes: [{ path: 'one.ts', expectedSha256: null, content: 'a' }] }), /permission-required/);
+    engine.dispose();
+  } finally { await store.dispose(); }
+});
+
+test('explicit local close releases a claimed slot, expires buttons and fences late calls across recovery', async t => {
+  const h = await fixture(t);
+  const close = () => ({ id: h.identity.taskId, roundId: h.identity.roundId, revision: h.engine.task(h.identity.taskId).revision, operationId: randomUUID() });
+  await assert.rejects(h.engine.closeLocal(close()), /stop-rejected/);
+  await h.engine.requestPermission(h.request);
+  await h.engine.cancelRequest({ id: h.identity.taskId, revision: h.engine.task(h.identity.taskId).revision, operationId: randomUUID() });
+  const input = close();
+  const stopped = await h.engine.closeLocal(input);
+  assert.deepEqual(await h.engine.closeLocal(input), stopped);
+  assert.equal(stopped.status, 'stopped'); assert.equal(stopped.permissions[0].status, 'expired');
+  assert.ok(stopped.rounds[0].stop.localClosedAt); assert.equal(stopped.rounds[0].stop.reported, false);
+  assert.equal(h.engine.slotsUsed(), 0);
+  await assert.rejects(h.engine.applyLocalFiles({ ...h.identity, operationId: randomUUID(), userMessageSeq: stopped.userMessageSeq, changes: [{ path: 'one.ts', expectedSha256: null, content: 'a' }] }), /claim-required/);
+  assert.throws(() => h.engine.readLocalFile({ ...h.identity, path: 'one.ts' }), /claim-required/);
+  await assert.rejects(h.engine.uploadAttachment({ id: stopped.id, ...h.identity, operationId: randomUUID(), actor: 'dot', name: 'late.txt', mediaType: 'text/plain', encoding: 'utf8', content: 'late' }), /stop requested/);
+  const late = { ...h.identity, kind: 'text' as const, updateId: randomUUID(), summary: 'late result', baseSha: null, headSha: null, branch: null, checks: [], prUrl: null, processedThroughSeq: stopped.userMessageSeq };
+  await h.engine.processResult(late);
+  assert.equal(h.engine.task(stopped.id).status, 'stopped'); assert.equal(h.engine.slotsUsed(), 0);
+  await h.engine.recover(); assert.equal(h.engine.slotsUsed(), 0);
+  const next = await h.engine.retryRound({ id: stopped.id, revision: h.engine.task(stopped.id).revision, operationId: randomUUID() });
+  assert.notEqual(next.currentRoundId, h.identity.roundId);
+  await assert.rejects(h.engine.closeLocal({ ...close(), revision: next.revision }), /round-stale/);
+  await h.engine.processResult({ ...late, updateId: randomUUID() });
+  assert.equal(h.engine.task(stopped.id).status, 'queued');
+  await h.engine.reportProgress({ ...h.identity, updateId: randomUUID(), kind: 'stopped', note: 'Remote stopped later', processedThroughSeq: stopped.userMessageSeq });
+  assert.equal(h.engine.task(stopped.id).status, 'queued');
+  assert.equal(h.engine.task(stopped.id).rounds[0].stop.reported, true);
 });

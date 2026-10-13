@@ -264,7 +264,7 @@ export function reduceResult(task: Task, input: ResultInput): ResultOutcome {
     coversLatest,
   });
   if (result.kind !== task.mode) throw dotBridgeError('task-rejected', 'result kind does not match task mode');
-  if (round.roundId !== task.currentRoundId) {
+  if (round.roundId !== task.currentRoundId || round.stop.localClosedAt !== null) {
     // A late report for an older round is history only. Keep the previous result+verification pair
     // as its own snapshot, then record the new result with a fresh, unverified verification, so a
     // `verified` status can never be paired with a different updateId or head.
@@ -343,6 +343,14 @@ export function requestCancel(task: Task, at: number): Task {
     return replaceRound(task, nextRound, at, round.remoteStatus);
   }
   throw dotBridgeError('stop-rejected', round.remoteStatus);
+}
+
+/** Explicit local recovery fences the round without claiming that remote execution stopped. */
+export function closeLocalRound(task: Task, at: number): Task {
+  const round = currentRound(task);
+  if (task.mode !== 'text' || !round.claim || !round.stop.requested || !occupiesSlot(round)) throw dotBridgeError('stop-rejected', 'Request stop on an active claimed text round first');
+  const nextRound: Round = { ...round, remoteStatus: 'stopped', stop: { ...round.stop, localClosedAt: at }, updatedAt: at };
+  return replaceRound(task, nextRound, at, 'stopped');
 }
 
 export function canStartNextRound(task: Task): boolean {

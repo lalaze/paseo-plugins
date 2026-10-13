@@ -321,9 +321,28 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
           response.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: lastError }, id: null }));
         });
       });
-      await new Promise<void>((resolve, reject) => {
-        server!.once('error', reject);
-        server!.listen(options.port, options.host, () => resolve());
+      const starting = server;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const failed = (error: Error) => { starting.removeListener('listening', bound); reject(error); };
+          const bound = () => { starting.removeListener('error', failed); resolve(); };
+          starting.once('error', failed);
+          starting.once('listening', bound);
+          starting.listen(options.port, options.host);
+        });
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        listening = false;
+        if (server === starting) server = null;
+        starting.close();
+        throw error;
+      }
+      if (stopping || server !== starting) { starting.close(); throw new Error('MCP bridge stopped during startup'); }
+      starting.on('error', error => {
+        lastError = error.message;
+        if (server === starting) { listening = false; server = null; }
+        starting.close();
+        starting.closeAllConnections();
       });
       const address = server.address();
       if (address && typeof address === 'object') boundPort = address.port;

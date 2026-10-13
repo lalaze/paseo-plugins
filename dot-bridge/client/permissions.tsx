@@ -3,7 +3,7 @@ import { Text, View } from 'react-native';
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { useToast } from '@getpaseo/plugin/client/react-native';
 import type { Task } from '../shared/schema';
-import { DOT_CONFIRMATION_URL, permissionCurrent } from '../shared/permissions';
+import { DOT_CONFIRMATION_URL, permissionCurrent, permissionDescription, permissionState } from '../shared/permissions';
 import { taskPermissionRespond } from '../shared/rpc';
 import { Button, outline, type Colors } from './kit';
 import { parseDotBridgeError, ui } from './i18n';
@@ -22,17 +22,18 @@ export function PermissionPanel(props: { task: Task; roundId: string; colors: Co
       await props.refresh();
     } finally { setBusy(null); }
   }
-  return <View style={{ gap: 8 }}>{permissions.map(p => {
+  return <View style={{ gap: 8 }}>
+    <Text style={{ color: colors.foregroundMuted, fontSize: 12 }}>{ui('Task access follows your request. Additional Paseo confirmations are scoped below. ChatGPT platform approval is separate and is reported by Dot.', '任务访问以你的请求为范围；额外的 Paseo 确认列在下方。ChatGPT 平台审批独立处理，其阻塞状态由 Dot 回报。')}</Text>
+    {permissions.map(p => {
     const current = permissionCurrent(task, p), pending = p.status === 'pending' && current;
-    const title = p.platformBlock && current ? ui('Confirm in Your dot', '仍需在 Your dot 确认') : pending ? ui('Your confirmation is needed', '需要你确认') : ({ approved: ui('Allowed in Paseo', 'Paseo 已允许'), denied: ui('Denied', '已拒绝'), expired: ui('Request expired', '请求已失效'), pending: ui('Request expired', '请求已失效') }[p.status]);
+    const state = permissionState(task, p);
+    const title = ({ pending: ui('Your confirmation is needed', '等待 Paseo 确认'), approved: ui('Allowed in Paseo', 'Paseo 已允许 · 当前有效'), denied: ui('Denied; explicit approval required', '已拒绝 · 需明确重新授权'), expired: ui('Request expired', '授权已失效'), consumed: ui('Operation authorization used', '本次操作授权已使用'), 'platform-blocked': ui('Blocked by ChatGPT', 'ChatGPT 平台仍阻塞'), superseded: ui('Replaced by a newer request', '历史请求 · 已由新请求替代') })[state];
     return <View key={p.requestId} style={{ borderWidth: 1, borderColor: pending || (p.platformBlock && current) ? colors.statusWarning : outline(colors), borderRadius: 8, padding: 12, gap: 8 }}>
       <Text style={{ color: colors.foreground, fontWeight: '700', fontSize: 14 }}>{title} · {p.title}</Text>
-      <Text selectable style={{ color: colors.foreground, fontSize: 12 }}>{p.description}</Text>
-      <Text selectable style={{ color: colors.foreground, fontSize: 12 }}>{p.scope.action}</Text>
-      <Text selectable style={{ color: colors.foregroundMuted, fontSize: 12 }}>{p.scope.targets.map(path => `• ${path}`).join('\n')}</Text>
-      <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{ui('This choice covers only this request, not ChatGPT platform approval.', '仅确认本次请求的范围，不代表 ChatGPT 平台已批准。')}</Text>
+      <Text selectable style={{ color: colors.foreground, fontSize: 12 }}>{permissionDescription(p)}</Text>
+      {state === 'denied' || state === 'expired' ? <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{ui('A normal follow-up does not restore guarded access. Ask Dot to submit a new scoped request if you want to authorize it.', '普通追问不会恢复受限访问。如需授权，请让 Dot 提交新的明确范围请求。')}</Text> : null}
       {pending ? <View style={{ flexDirection: 'row', gap: 8 }}>
-        <Button colors={colors} label={ui('Allow this operation', '允许本次操作')} disabled={busy !== null} onPress={() => { void decide(p.requestId, 'approved'); }} />
+        <Button colors={colors} label={p.scope.operation ? ui('Allow this operation once', '允许本次操作一次') : /^(read_dot_|list_dot_files)/.test(p.scope.toolName) ? ui('Allow scoped reads', '允许上述范围读取') : ui('Confirm this request', '确认本次请求')} disabled={busy !== null} onPress={() => { void decide(p.requestId, 'approved'); }} />
         <Button colors={colors} label={ui('Deny', '拒绝')} variant="outline" disabled={busy !== null} onPress={() => { void decide(p.requestId, 'denied'); }} />
       </View> : null}
       {p.platformBlock ? <>

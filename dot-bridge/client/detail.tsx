@@ -4,7 +4,7 @@ import { PermissionPanel } from './permissions';
 import type { PluginClientContext, PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { copyText, Icon, useToast } from '@getpaseo/plugin/client/react-native';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { taskCancelRequest, taskHistory, taskMessageAdd, taskRoundCreate, taskRoundRetry } from '../shared/rpc';
+import { taskCancelRequest, taskLocalClose, taskHistory, taskMessageAdd, taskRoundCreate, taskRoundRetry } from '../shared/rpc';
 import { canStartNextRound } from '../shared/machine';
 import { currentRound, type Message, type Round, type RoundResult, type Task, type Verification } from '../shared/schema';
 import { deliveryStatusLabel, isExplicitRejection, messageKindLabel, parseDotBridgeError, remoteStatusLabel, ui, verifyStatusLabel } from './i18n';
@@ -140,6 +140,7 @@ export function TaskDetail(props: TaskDetailProps) {
   const cancelOp = usePendingOperation<{ id: string; revision: number }>();
   const roundOp = usePendingOperation<{ id: string; revision: number }>();
   const retryOp = usePendingOperation<{ id: string; revision: number }>();
+  const closeOp = usePendingOperation<{ id: string; roundId: string; revision: number }>();
 
   const selected = task.rounds.find(round => round.roundId === selectedRoundId) ?? current;
   const isCurrent = selected.roundId === task.currentRoundId;
@@ -216,6 +217,19 @@ export function TaskDetail(props: TaskDetailProps) {
     }
   }
 
+  async function closeLocally() {
+    setBusy('local-close');
+    try {
+      const pending = closeOp.begin(JSON.stringify({ id: task.id, roundId: current.roundId }), { id: task.id, roundId: current.roundId, revision: task.revision });
+      await props.rpc(taskLocalClose, { operationId: pending.operationId, ...pending.payload });
+      closeOp.settle();
+      await refresh();
+    } catch (error) {
+      if (isExplicitRejection(error)) { closeOp.settle(); await refresh(); }
+      toast.error(parseDotBridgeError(error));
+    } finally { setBusy(null); }
+  }
+
   async function retry() {
     setBusy('retry');
     try {
@@ -282,7 +296,9 @@ export function TaskDetail(props: TaskDetailProps) {
           </Text>
         ) : selected.stop.requested ? (
           <Text style={{ color: colors.statusWarning, fontSize: 12 }}>
-            {selected.remoteStatus === 'completed'
+            {selected.stop.localClosedAt !== null
+              ? ui('Closed locally; remote stop is unconfirmed. The old round cannot access the workspace or upload files.', '已在本地终止；远端尚未确认停止。旧轮次已禁止访问工作区和上传文件。')
+              : selected.remoteStatus === 'completed'
               ? ui('Stop was requested, but the dot completed the round anyway.', '已请求停止，但 dot 仍完成了本轮。')
               : localCancel
                 ? ui('Canceled locally before Dot claimed it.', 'Dot 领取前已在本地取消。')
@@ -349,6 +365,10 @@ export function TaskDetail(props: TaskDetailProps) {
           {canRetry ? <Button label={ui('Retry this round', '重试本轮')} colors={colors} variant="outline" onPress={retry} disabled={busy !== null} /> : null}
           {canContinue ? <Button label={ui('New round', '新一轮')} colors={colors} variant="outline" onPress={nextRound} disabled={busy !== null} /> : null}
         </View>
+        {task.mode === 'text' && current.claim && current.stop.requested && OCCUPYING.has(current.remoteStatus) ? <View style={{ gap: 6 }}>
+          <Text style={{ color: colors.statusWarning, fontSize: 12 }}>{ui('If Dot is no longer responding, close this round locally to release its slot. Workspace access and uploads from the old round will be blocked. External work may still be running.', '如果 Dot 已失联，可在本地终止本轮并释放名额。旧轮次将禁止访问工作区和上传文件；远端的外部操作可能仍在进行。')}</Text>
+          <Button label={ui('Close round locally', '终止本地轮次并释放名额')} colors={colors} variant="danger" onPress={closeLocally} disabled={busy !== null} />
+        </View> : null}
       </View>
 
       {selected.result ? (

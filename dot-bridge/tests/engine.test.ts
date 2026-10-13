@@ -1281,7 +1281,7 @@ it('migrates a v3 Git task and result to the current format without breaking ope
   const reopened = await harness({ dir: store.dir });
   try {
     assert.equal(reopened.store.loadError, null);
-    assert.equal(reopened.store.read().version, 9);
+    assert.equal(reopened.store.read().version, 10);
     const restored = reopened.engine.task(task.id);
     assert.equal(restored.mode, 'git');
     assert.deepEqual(restored.attachments, []);

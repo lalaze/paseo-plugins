@@ -138,6 +138,13 @@ export const taskCancelRequest = defineRpc({
   output: z.object({ task: taskSchema }).strict(),
 });
 
+/** Local UI only: release a stopped-but-unacknowledged round, never a remote approval tool. */
+export const taskLocalClose = defineRpc({
+  name: 'task-local-close',
+  input: z.object({ operationId: operationIdSchema, id: uuidSchema, roundId: uuidSchema, revision: revisionSchema }).strict(),
+  output: z.object({ task: taskSchema }).strict(),
+});
+
 export const taskRoundCreate = defineRpc({
   name: 'task-round-create',
   input: z.object({ operationId: operationIdSchema, id: uuidSchema, revision: revisionSchema }).strict(),

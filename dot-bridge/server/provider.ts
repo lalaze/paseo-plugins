@@ -131,7 +131,7 @@ export function createDotProvider(options: { engine(): Promise<BridgeEngine>; ti
             emit({ type: 'session.permission', sessionId: session.id, request: {
               id, name: p.scope.toolName, kind: 'tool', title: `需要你确认：${p.title}`, description: permissionDescription(p),
               input: { taskId: task.id, roundId: p.roundId, userMessageSeq: p.userMessageSeq, scope: p.scope },
-              actions: [{ id: 'allow', label: '允许本次操作', behavior: 'allow', variant: 'primary' }, { id: 'deny', label: '拒绝', behavior: 'deny', variant: 'danger' }],
+              actions: [{ id: 'allow', label: p.scope.operation ? '允许本次操作一次' : /^(read_dot_|list_dot_files)/.test(p.scope.toolName) ? '允许上述范围读取' : '确认本次请求', behavior: 'allow', variant: 'primary' }, { id: 'deny', label: '拒绝', behavior: 'deny', variant: 'danger' }],
               metadata: { localApprovalOnly: true, requestId: p.requestId },
             } });
             session.permissions.add(id);
@@ -166,7 +166,7 @@ export function createDotProvider(options: { engine(): Promise<BridgeEngine>; ti
         const round = currentRound(task);
         const label = round.stop.requested && !['stopped', 'completed', 'failed'].includes(task.status)
           ? '已请求 Dot 停止，等待远端确认。'
-          : ({ queued: engine.readyToDispatch() ? '等待发送给 Dot。' : '等待 Dot Bridge 连接就绪；请在插件中检查连接。', dispatched: '已发送，等待 Dot 接单。', claimed: 'Dot 已接单。', running: 'Dot 正在处理。', waiting_user: 'Dot 等待你的回复。', completed: round.result?.coversLatest ? 'Dot 已完成。' : 'Dot 的回复尚未覆盖最新消息，等待补充回复。', failed: 'Dot 处理失败，可发消息重试。', stopped: 'Dot 已停止。' }[task.status]);
+          : ({ queued: engine.readyToDispatch() ? '等待发送给 Dot。' : '等待 Dot Bridge 连接就绪；请在插件中检查连接。', dispatched: '已发送，等待 Dot 接单。', claimed: 'Dot 已接单。', running: 'Dot 正在处理。', waiting_user: 'Dot 等待你的回复。', completed: round.result?.coversLatest ? 'Dot 已完成。' : 'Dot 的回复尚未覆盖最新消息，等待补充回复。', failed: 'Dot 处理失败，可发消息重试。', stopped: round.stop.localClosedAt !== null && !round.stop.reported ? '本地轮次已终止；远端尚未确认停止。' : 'Dot 已停止。' }[task.status]);
         const statusId = `${task.id}:status:${task.currentRoundId}:${task.userMessageSeq}`;
         const progress = ['running', 'waiting_user'].includes(task.status) && !round.stop.requested && round.lastProgress?.kind === task.status
           && round.lastProgress.processedThroughSeq >= task.userMessageSeq ? round.lastProgress.note.trim() : '';

@@ -2,7 +2,8 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { AttachmentStore, decodeAttachment } from './attachments';
 import { clearTransfer, decodeChunk, receiveChunk, saveDeliveredFile } from './attachment-transfers';
 import { ActivityLog } from './activity';
-import { applyLocalChanges, listSources, readChangeJournal, readSource } from './local-files';
+import { applyLocalChanges, listSources, readChangeJournal, readSource, sourceHash } from './local-files';
+import { assertPermissionAccess, consumePermission, validatePermissionIntent } from './permissions';
 import type { LocalChange, LocalReceipt } from '../shared/local-files';
 import { ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, MAX_TASK_ATTACHMENTS, type Attachment, type AttachmentContent, type AttachmentChunk } from '../shared/attachments';
 import { dotBridgeError } from '../shared/errors';
@@ -23,6 +24,7 @@ import {
   appendUserMessage,
   appendDotMessage,
   claimRound,
+  closeLocalRound,
   createNextRound,
   createTask,
   currentRound,
@@ -57,7 +59,7 @@ import type { GitPort } from './git';
 import { checkCallbackUrl, postSigned, type FetchLike, type Lookup } from './http';
 import { signPayloadMulti } from './signing';
 import type { BridgeStore } from './store';
-import { DOT_CONFIRMATION_URL, permissionCurrent, permissionDescription, permissionIntentSchema, pendingPermissions, type DotPermission, type PermissionIntent } from '../shared/permissions';
+import { DOT_CONFIRMATION_URL, permissionCurrent, permissionDescription, permissionIntentSchema, pendingPermissions, type DotPermission, type PermissionIntent, type PermissionOperation } from '../shared/permissions';
 
 const CHALLENGE_TTL = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 8;
@@ -236,11 +238,13 @@ export class BridgeEngine {
 
   listLocalFiles(input: { connectionId: string; taskId: string; roundId: string; directory: string; offset: number }) {
     const task = this.localTask(input);
+    assertPermissionAccess(task, 'list_dot_files', [input.directory || '/']);
     return { ...listSources(task.workspaceRoot!, input.directory, input.offset), userMessageSeq: task.userMessageSeq };
   }
 
   readLocalFile(input: { connectionId: string; taskId: string; roundId: string; path: string }) {
     const task = this.localTask(input);
+    assertPermissionAccess(task, 'read_dot_file', [input.path]);
     const { mode: _mode, ...file } = readSource(task.workspaceRoot!, input.path);
     return { ...file, userMessageSeq: task.userMessageSeq };
   }
@@ -258,9 +262,13 @@ export class BridgeEngine {
         return JSON.parse(prior.receipt) as LocalReceipt;
       }
       this.localTask(input, task);
-      this.assertPermissionMutation(task, 'apply_dot_changes', input.changes.map(change => change.path));
+      const permission = assertPermissionAccess(task, 'apply_dot_changes', input.changes.map(change => change.path), {
+        kind: 'files', operationId: input.operationId,
+        changes: input.changes.map(c => ({ path: c.path, expectedSha256: c.expectedSha256, contentSha256: c.content === null ? null : sourceHash(c.content) })),
+      });
       if (input.userMessageSeq !== task.userMessageSeq) throw dotBridgeError('revision-conflict', 'A newer user message arrived; read the task again before editing files');
       const receipt = applyLocalChanges({ ...input, dataDir: this.deps.store.dir, root: task.workspaceRoot!, at: this.now() });
+      consumePermission(task, permission, this.now());
       const note = receipt.status === 'applied'
         ? `已应用到本地工作区：\n${receipt.files.map(file => `${file.action}: ${file.path}`).join('\n')}`
         : `本地修改${receipt.status === 'partial' ? '仅部分应用' : '未应用'}。\n${receipt.files.map(file => `已应用 ${file.action}: ${file.path}`).join('\n')}\n${receipt.conflicts.join('\n')}`;
@@ -663,15 +671,16 @@ export class BridgeEngine {
     return this.publishAttachment(input, bytes);
   }
 
-  private validateDotUpload(task: Task, roundId: string, connectionId: string | undefined, toolName: string, name: string): void {
+  private validateDotUpload(task: Task, roundId: string, connectionId: string | undefined, toolName: string, operation: PermissionOperation & { kind: 'attachment' }): DotPermission | undefined {
     this.requireActiveDelivery(task);
     if (task.connectionId !== connectionId) throw dotBridgeError('connection-invalid');
     if (task.currentRoundId !== roundId) throw dotBridgeError('round-stale');
     const round = currentRound(task);
     if (round.stop.requested) throw dotBridgeError('task-rejected', 'stop requested');
-    this.assertPermissionMutation(task, toolName, [name]);
+    const permission = assertPermissionAccess(task, toolName, [operation.name], operation);
     if (!round.claim || !['claimed', 'running', 'waiting_user'].includes(round.remoteStatus)) throw dotBridgeError('claim-required');
     if (task.attachments.length >= MAX_TASK_ATTACHMENTS) throw dotBridgeError('attachment-limit');
+    return permission;
   }
 
   async uploadAttachmentChunk(input: AttachmentChunk & { taskId: string; roundId: string; connectionId: string; operationId: string }): Promise<{ complete: boolean; received: number[]; attachment?: Attachment }> {
@@ -686,7 +695,7 @@ export class BridgeEngine {
       return { complete: true, received: Array.from({ length: Math.ceil(input.size / ATTACHMENT_CHUNK_BYTES) }, (_, i) => i), attachment: existing };
     }
     if (this.deps.store.read().dedup.operations[input.operationId]) throw dotBridgeError('duplicate-mismatch', 'operationId');
-    this.validateDotUpload(task, input.roundId, input.connectionId, 'upload_dot_attachment_chunk', input.name);
+    this.validateDotUpload(task, input.roundId, input.connectionId, 'upload_dot_attachment_chunk', { kind: 'attachment', operationId: input.operationId, name: input.name, mediaType: input.mediaType, size: input.size, sha256: input.sha256 });
     const staged = receiveChunk(this.deps.store.dir, input, this.now());
     if (!staged.bytes) return { complete: false, received: staged.received };
     const result = await this.publishAttachment({ ...input, id: input.taskId, actor: 'dot', permissionTool: 'upload_dot_attachment_chunk' }, staged.bytes);
@@ -702,12 +711,13 @@ export class BridgeEngine {
       revision: input.revision, connectionId: input.connectionId, name: input.name, mediaType: input.mediaType, sha256 };
     const validate = (task: Task) => {
       this.requireActiveDelivery(task);
-      if (input.actor === 'dot') this.validateDotUpload(task, input.roundId, input.connectionId, input.permissionTool ?? 'upload_dot_attachment', input.name);
+      const permission = input.actor === 'dot' ? this.validateDotUpload(task, input.roundId, input.connectionId, input.permissionTool ?? 'upload_dot_attachment', { kind: 'attachment', operationId: input.operationId, name: input.name, mediaType: input.mediaType, size: bytes.length, sha256 }) : undefined;
       if (task.currentRoundId !== input.roundId) throw dotBridgeError('round-stale');
       if (input.actor === 'user' && task.revision !== input.revision) throw dotBridgeError('revision-conflict');
       const round = currentRound(task);
       if (input.actor === 'dot' && (!round.claim || !['claimed', 'running', 'waiting_user'].includes(round.remoteStatus))) throw dotBridgeError('claim-required');
       if (task.attachments.length >= MAX_TASK_ATTACHMENTS) throw dotBridgeError('attachment-limit');
+      return permission;
     };
     // Check identity before I/O. A successful upload can replay even after the round moved on.
     const snapshot = this.deps.store.read();
@@ -731,10 +741,11 @@ export class BridgeEngine {
       const dedup = this.dedupOperation(draft, input.operationId, content, input.id);
       const current = this.requireTask(draft, input.id);
       if (dedup.status === 'duplicate') return replayUpload(draft, current);
-      validate(current);
+      const permission = validate(current);
       const at = this.now();
       const attachment: Attachment = { id: input.operationId, roundId: input.roundId, name: input.name, mediaType: input.mediaType, size: bytes.length, sha256, author: input.actor, createdAt: at };
       if (input.actor === 'dot') attachment.localPath = saveDeliveredFile(this.deps.store.dir, input.id, input.operationId, input.name, bytes);
+      consumePermission(current, permission, at);
       const note = `Attachment: ${attachment.name} (${attachment.size} bytes; id: ${attachment.id})`;
       let next = input.actor === 'user'
         ? appendUserMessage(current, note, 'requirement', at)
@@ -751,10 +762,12 @@ export class BridgeEngine {
   async readAttachment(id: string, attachmentId: string, connectionId?: string): Promise<{ attachment: Attachment; encoding: 'utf8' | 'base64'; content: string }> {
     const task = this.task(id);
     if (connectionId !== undefined && task.connectionId !== connectionId) throw dotBridgeError('connection-invalid');
+    if (connectionId !== undefined) assertPermissionAccess(task, 'read_dot_attachment', [attachmentId]);
     const attachment = task.attachments.find(item => item.id === attachmentId);
     if (!attachment) throw dotBridgeError('attachment-missing');
     if (attachment.size > MAX_ATTACHMENT_BYTES) throw dotBridgeError('attachment-too-large', 'use read_dot_attachment_chunk for large files');
     const bytes = await new AttachmentStore(this.deps.store.dir).get(attachment);
+    if (connectionId !== undefined) assertPermissionAccess(this.task(id), 'read_dot_attachment', [attachmentId]);
     if (attachment.mediaType.startsWith('text/') || attachment.mediaType === 'application/json') {
       try { return { attachment, encoding: 'utf8', content: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }; }
       catch { /* Preserve arbitrary bytes even when a MIME type incorrectly claims UTF-8. */ }
@@ -765,10 +778,12 @@ export class BridgeEngine {
   async readAttachmentChunk(id: string, attachmentId: string, index: number, connectionId?: string): Promise<{ attachment: Attachment; content: string; done: boolean }> {
     const task = this.task(id);
     if (connectionId !== undefined && task.connectionId !== connectionId) throw dotBridgeError('connection-invalid');
+    if (connectionId !== undefined) assertPermissionAccess(task, 'read_dot_attachment_chunk', [attachmentId]);
     const attachment = task.attachments.find(item => item.id === attachmentId);
     if (!attachment) throw dotBridgeError('attachment-missing');
     if (!Number.isInteger(index) || index < 0 || index >= Math.max(1, Math.ceil(attachment.size / ATTACHMENT_CHUNK_BYTES))) throw dotBridgeError('attachment-invalid', 'chunk index');
     const bytes = await new AttachmentStore(this.deps.store.dir).get(attachment);
+    if (connectionId !== undefined) assertPermissionAccess(this.task(id), 'read_dot_attachment_chunk', [attachmentId]);
     const end = (index + 1) * ATTACHMENT_CHUNK_BYTES;
     return { attachment, content: bytes.subarray(index * ATTACHMENT_CHUNK_BYTES, end).toString('base64'), done: end >= bytes.length };
   }
@@ -817,6 +832,24 @@ export class BridgeEngine {
       const next = recordOperation(createNextRound(task, this.randomId(), at), input.operationId, at);
       this.replace(draft, next);
       this.emitTaskChanged(draft, next, 'created');
+      const response = structuredClone(next);
+      this.setReceipt(draft, input.operationId, response);
+      return response;
+    });
+  }
+
+  async closeLocal(input: { id: string; roundId: string; revision: number; operationId: string }): Promise<Task> {
+    return this.deps.store.mutate(draft => {
+      const dedup = this.dedupOperation(draft, input.operationId, { kind: 'local-close', ...input }, input.id);
+      if (dedup.status === 'duplicate') return this.replay<Task>(draft, input.operationId, this.requireTask(draft, input.id));
+      const task = this.requireTask(draft, input.id);
+      this.requireRevision(task, input.revision);
+      if (task.currentRoundId !== input.roundId) throw dotBridgeError('round-stale');
+      const at = this.now();
+      const closed = closeLocalRound(task, at);
+      const next = recordOperation(appendDotMessage(closed, input.roundId, 'note', '本地轮次已终止，并发名额已释放。旧轮次不能继续访问工作区或上传文件；远端尚未确认停止，外部工具执行状态仍未知。可重试或发送新消息。', at, input.operationId), input.operationId, at);
+      this.replace(draft, next);
+      this.emitTaskChanged(draft, next, 'cancel_requested');
       const response = structuredClone(next);
       this.setReceipt(draft, input.operationId, response);
       return response;
@@ -1169,16 +1202,17 @@ export class BridgeEngine {
         return structuredClone(prior);
       }
       this.requirePermissionRound(task, roundId);
+      validatePermissionIntent(intent);
       if (task.userMessageSeq !== intent.userMessageSeq) throw dotBridgeError('permission-stale', 'A newer user message arrived');
       if (pendingPermissions(task).length) throw dotBridgeError('permission-required', 'Resolve the pending request first');
       if (task.permissions.some(p => permissionCurrent(task, p) && (p.status === 'denied' || p.platformBlock))) {
         throw dotBridgeError('permission-required', 'Do not repeat a denied request without new user input');
       }
       const at = this.now();
-      const permission: DotPermission = { ...intent, roundId, status: 'pending', requestedAt: at, resolvedAt: null, decisionMessageSeq: null, platformBlock: null };
+      const permission: DotPermission = { ...intent, roundId, status: 'pending', requestedAt: at, resolvedAt: null, decisionMessageSeq: null, platformBlock: null, consumedAt: null };
       const next = reduceProgress({ ...task, permissions: [...task.permissions, permission] }, {
         roundId, updateId: `permission:${intent.requestId}`, kind: 'waiting_user',
-        processedThroughSeq: intent.userMessageSeq, note: `需要你确认：${intent.title}\n${permissionDescription(intent)}\n请在 Paseo 的授权卡片选择允许或拒绝，也可在 Dot tasks 详情中处理。`, at,
+        processedThroughSeq: intent.userMessageSeq, note: `需要你确认：${intent.title}\n${permissionDescription(intent)}\n请在 Paseo 的授权卡片选择允许或拒绝，也可在 Dot tasks 详情中处理。`.slice(0, 8000), at,
       }).task;
       this.replace(draft, next);
       return structuredClone(permission);
@@ -1230,13 +1264,6 @@ export class BridgeEngine {
     if (task.mode !== 'text' || task.currentRoundId !== roundId) throw dotBridgeError('permission-stale');
     const round = currentRound(task);
     if (!round.claim || round.stop.requested || !['claimed', 'running', 'waiting_user'].includes(task.status)) throw dotBridgeError('permission-stale');
-  }
-
-  private assertPermissionMutation(task: Task, toolName?: string, targets: string[] = []): void {
-    const current = task.permissions.filter(p => permissionCurrent(task, p));
-    if (current.some(p => p.status === 'pending' || p.status === 'denied' || p.platformBlock)) throw dotBridgeError('permission-required');
-    const approved = current.filter(p => p.status === 'approved');
-    if (approved.length && (!approved.some(p => p.scope.toolName === toolName) || targets.some(target => !approved.some(p => p.scope.toolName === toolName && p.scope.targets.includes(target))))) throw dotBridgeError('permission-required', 'Outside the approved tool or targets');
   }
 
   listForConnection(connectionId: string, cursor: string | null, limit = 20): { tasks: TaskSummary[]; cursor: string | null } {
