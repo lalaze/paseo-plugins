@@ -9,6 +9,7 @@ import { ui } from './client/i18n';
 import { runtimeInfoRpc } from './shared/rpc';
 import { installReplyTranslations, type ReplyTranslationProps } from './client/reply-translation';
 import { ReplyTranslator } from './client/reply-translator';
+import { installComposerPopupGuard } from './client/composer-popup-guard';
 
 export default function contribute(client: PluginClientContext) {
   let disposed = false, unregister = () => {};
@@ -21,6 +22,8 @@ export default function contribute(client: PluginClientContext) {
     const Composer = (props: PluginButtonContentProps) => createElement(ComposerTranslator, { ...props, key: props.context === 'agent' ? props.agentId : props.workspaceId, paseo: client.paseo, composer: (client as { composer?: ComposerDraft }).composer, openSettings: () => { props.close(); client.openSettings('translate-settings'); } });
     cleanups.push(installComposerPills(client, Composer));
   } else {
+    // This must run even when another host keeps an older overlay registry alive.
+    cleanups.push(installComposerPopupGuard());
     // Desktop and Web: the DOM launcher beside the composer, plus the standalone page from the command center.
     const Surface = (props: PluginSurfaceProps) => createElement(TranslationSurface, { ...props, openSettings: () => client.openSettings('translate-settings') });
     cleanups.push(client.addSurface('translate', Surface));

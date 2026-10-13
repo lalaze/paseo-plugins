@@ -2,6 +2,8 @@ import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { settingsRpc } from '@getpaseo/plugin';
 import { parseConversationRoute } from './route';
 import { createBlockTranslator } from './blocks';
+import { createWordCache, createWordTranslator } from './words';
+import { setWordTranslationEnabled, subscribeWordTranslation, wordTranslationEnabled } from './word-preference';
 import { button, style, FLOATING_CONTROL_Z_INDEX } from './dom';
 import { isEnglishCompatibleDraft, matchesEnglishLockModel, normalizeComposerModelLabel, parseEnglishLockModels } from './english';
 import { translateSelectionRpc, type TargetLanguage, type TranslationResult } from '../shared/rpc';
@@ -10,6 +12,7 @@ import { localizeTranslationError, ui } from './i18n';
 
 type Runtime = {
   translate(text: string, target: TargetLanguage): Promise<TranslationResult>;
+  translateWord?(text: string): Promise<TranslationResult>;
   agentModel(agentId: string): Promise<string | null>;
   englishLockModels(): Promise<string[]>;
   subscribeAgentModels(handler: (agentId: string, model: string | null) => void): () => void;
@@ -51,12 +54,27 @@ function elementFor(node: Node | null): Element | null {
   return node instanceof Element ? node : node?.parentElement ?? null;
 }
 
-/** Open host dialogs (react-native-web Modal, Radix Dialog); a closing Radix dialog keeps data-state="closed" while it animates out. */
-const DIALOG_SELECTOR = '[role="dialog"], [role="alertdialog"]';
-const MODAL_SELECTOR = '[role="dialog"][aria-modal="true"]:not([data-state="closed"]), [role="alertdialog"][aria-modal="true"]:not([data-state="closed"])';
-function touchesHostModal(node: Node | null) {
+// Paseo's context-window hover card is a non-modal dialog. Menus and tooltips
+// also own the foreground even though they do not set aria-modal.
+const HOST_OVERLAY_SELECTOR = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="tooltip"]';
+const PLUGIN_OVERLAY_SELECTOR = '[data-paseo-translate], [data-paseo-translate-group], [data-paseo-translate-block]';
+function touchesHostOverlay(node: Node | null) {
   const element = elementFor(node);
-  return Boolean(element && (element.matches(DIALOG_SELECTOR) || element.querySelector(DIALOG_SELECTOR)));
+  if (!element || element.closest(PLUGIN_OVERLAY_SELECTOR)) return false;
+  return Boolean(element.closest(HOST_OVERLAY_SELECTOR) || Array.from(element.querySelectorAll(HOST_OVERLAY_SELECTOR)).some(node => !node.closest(PLUGIN_OVERLAY_SELECTOR)));
+}
+
+function hostOverlayVisible() {
+  return Array.from(document.querySelectorAll<HTMLElement>(HOST_OVERLAY_SELECTOR)).some(element => {
+    if (element.closest(PLUGIN_OVERLAY_SELECTOR)) return false;
+    for (let ancestor: HTMLElement | null = element; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor.hidden || ancestor.getAttribute('aria-hidden') === 'true' || ancestor.getAttribute('data-state') === 'closed') return false;
+      const computed = window.getComputedStyle(ancestor);
+      if (computed.display === 'none' || computed.visibility === 'hidden' || computed.visibility === 'collapse') return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  });
 }
 
 function selectedMessage(selection: Selection): Element | null {
@@ -204,9 +222,12 @@ function saveStrictEnglishMode(enabled: boolean) {
 }
 
 export function createOverlayController(runtimes: Map<string, Runtime>): OverlayController {
+  let wordToggle: HTMLButtonElement | null = null;
   let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, englishGuard: HTMLButtonElement | null = null, launcherTimer: number | undefined, guardTimer: number | undefined, draftUndo: DraftUndo | null = null, composerRequest = 0, composerBusy = false, writingComposer = false, inlineRequest = 0, modelRequest = 0, manualStrictEnglish = loadStrictEnglishMode(), automaticEnglishLock = false, activeModelDescriptor: string | null = null, activePolicyKey: string | null = null;
   const highlightedRanges = new Map<HTMLElement, Range>();
   const blocks = createBlockTranslator(runtimes);
+  const words = createWordTranslator(runtimes);
+  const unsubscribeWordPreference = subscribeWordTranslation(() => { updateWordToggle(); positionLauncher(); });
   let observedFrame: HTMLElement | null = null;
   const frameObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(() => positionLauncher()) : null;
   const annotationGroups = new WeakMap<Element, HTMLElement>();
@@ -215,7 +236,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   const removeTrigger = () => { trigger?.remove(); trigger = null; };
   const clearLauncherTimer = () => { if (launcherTimer !== undefined) { window.clearTimeout(launcherTimer); launcherTimer = undefined; } };
   const clearGuardTimer = () => { if (guardTimer !== undefined) { window.clearTimeout(guardTimer); guardTimer = undefined; } };
-  const removeLauncher = () => { clearLauncherTimer(); clearGuardTimer(); launcher?.remove(); englishGuard?.remove(); launcher = null; englishGuard = null; };
+  const removeLauncher = () => { clearLauncherTimer(); clearGuardTimer(); launcher?.remove(); englishGuard?.remove(); wordToggle?.remove(); launcher = null; englishGuard = null; wordToggle = null; };
 
   function syncHighlights() {
     const css = globalThis.CSS as typeof CSS & { highlights?: HighlightRegistry };
@@ -397,6 +418,20 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
       : { borderColor: '#3f3f46', background: '#27272a', color: '#d4d4d8', cursor: 'pointer', opacity: '1' });
   }
 
+  function updateWordToggle() {
+    if (!wordToggle) return;
+    const enabled = wordTranslationEnabled();
+    wordToggle.textContent = enabled ? ui('Words', '点词') : ui('Words off', '点词关');
+    wordToggle.setAttribute('aria-label', ui('Click-word translation', '点词翻译'));
+    wordToggle.setAttribute('aria-pressed', String(enabled));
+    wordToggle.title = enabled
+      ? ui('Click an English word to translate. Double-click or drag to select and copy. Click here to turn off.', '单击英文词翻译；双击或拖动仍可选中复制。点击关闭点词翻译。')
+      : ui('Click-word translation is off. Selection and copying still work. Click here to turn on.', '点词翻译已关闭，划词和复制照常可用。点击开启。');
+    style(wordToggle, enabled
+      ? { borderColor: '#60a5fa', background: '#1e3a5f', color: '#dbeafe' }
+      : { borderColor: '#3f3f46', background: '#27272a', color: '#a1a1aa' });
+  }
+
   function flashEnglishGuard(message: string) {
     if (!englishGuard) return;
     clearGuardTimer(); englishGuard.textContent = ui('English only', '仅英文'); englishGuard.title = message;
@@ -428,9 +463,9 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     return editor?.closest<HTMLElement>('[data-testid="message-input-root"]') ?? editor;
   }
 
-  /** Hide controls while a host modal owns interaction, including non-overlapping controls. */
-  function hostModalOpen() {
-    if (document.querySelector(MODAL_SELECTOR)) return true;
+  /** Yield all composer controls while a host popup is visible. */
+  function hostOverlayOpen() {
+    if (hostOverlayVisible()) return true;
     return launcher?.getAttribute('aria-hidden') === 'true';
   }
 
@@ -441,9 +476,10 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     if (!rect) { removeLauncher(); return; }
     const right = Math.max(8, window.innerWidth - rect.right + 8);
     const bottom = Math.max(8, window.innerHeight - rect.top + 6);
-    const visibility = hostModalOpen() ? 'hidden' : 'visible';
+    const visibility = hostOverlayOpen() ? 'hidden' : 'visible';
     style(launcher, { right: `${right}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto', visibility });
     style(englishGuard, { right: `${right + (launcher.offsetWidth || 34) + 6}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto', visibility });
+    if (wordToggle) style(wordToggle, { right: `${right + (launcher.offsetWidth || 34) + (englishGuard.offsetWidth || 38) + 12}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto', visibility });
   }
 
   async function translateComposer() {
@@ -502,6 +538,13 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
       });
       document.body.append(englishGuard); updateEnglishGuard();
     }
+    if (!wordToggle) {
+      wordToggle = button(ui('Words', '点词')); wordToggle.dataset.paseoTranslate = 'word-toggle';
+      style(wordToggle, { position: 'fixed', zIndex: FLOATING_CONTROL_Z_INDEX, boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
+      wordToggle.addEventListener('pointerdown', event => event.preventDefault());
+      wordToggle.addEventListener('click', () => setWordTranslationEnabled(!wordTranslationEnabled()));
+      document.body.append(wordToggle); updateWordToggle();
+    }
     refreshEnglishLockPolicy();
     positionLauncher();
   }
@@ -526,7 +569,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   const delayedRefresh = () => { window.setTimeout(refresh, 0); };
   const outside = (event: PointerEvent) => {
     const target = event.target as Node | null;
-    if (trigger?.contains(target) || launcher?.contains(target) || englishGuard?.contains(target)) return;
+    if (trigger?.contains(target) || launcher?.contains(target) || englishGuard?.contains(target) || wordToggle?.contains(target)) return;
     removeTrigger();
   };
   const keydown = (event: KeyboardEvent) => {
@@ -556,11 +599,11 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   const routeChanged = () => { composerRequest++; composerBusy = false; draftUndo = null; removeTrigger(); activePolicyKey = null; refreshLauncher(); resetLauncher(); };
   const modelObserver = new MutationObserver(records => {
     const route = currentRoute(), keywords = route ? englishLockModels.get(route.serverId) ?? [] : [];
-    const modalChanged = records.some(record => {
-      if (record.type === 'attributes') return record.attributeName === 'aria-hidden' ? record.target === launcher : touchesHostModal(record.target);
-      return Array.from(record.addedNodes).some(touchesHostModal) || Array.from(record.removedNodes).some(touchesHostModal);
+    const overlayChanged = records.some(record => {
+      if (record.type === 'attributes') return (record.attributeName === 'aria-hidden' && record.target === launcher) || touchesHostOverlay(record.target);
+      return Array.from(record.addedNodes).some(touchesHostOverlay) || Array.from(record.removedNodes).some(touchesHostOverlay);
     });
-    if (modalChanged) positionLauncher();
+    if (overlayChanged) positionLauncher();
     const composerChanged = records.some(record => {
       if (record.type === 'attributes') return touchesComposer(record.target);
       return Array.from(record.addedNodes).some(touchesComposer) || Array.from(record.removedNodes).some(touchesComposer);
@@ -575,10 +618,10 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     });
     if (changed || composerChanged) { activePolicyKey = null; window.setTimeout(refreshLauncher, 0); }
   });
-  modelObserver.observe(document.body, { attributes: true, attributeFilter: ['aria-label', 'title', 'data-testid', 'data-state', 'aria-modal', 'aria-hidden', 'hidden', 'style', 'class', 'disabled', 'readonly'], childList: true, characterData: true, subtree: true });
+  modelObserver.observe(document.body, { attributes: true, attributeFilter: ['role', 'aria-label', 'title', 'data-testid', 'data-state', 'aria-modal', 'aria-hidden', 'hidden', 'style', 'class', 'disabled', 'readonly'], childList: true, characterData: true, subtree: true });
   document.addEventListener('pointerup', delayedRefresh); document.addEventListener('keyup', delayedRefresh); document.addEventListener('touchend', delayedRefresh);
   document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown, true); document.addEventListener('click', clickGuard, true); document.addEventListener('submit', submitGuard, true); document.addEventListener('input', inputChanged, true); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
-  return { refresh, updateAgentModel, dispose() { composerRequest++; modelRequest++; modelObserver.disconnect(); frameObserver?.disconnect(); dismiss(); removeLauncher(); blocks.dispose(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
+  return { refresh, updateAgentModel, dispose() { composerRequest++; modelRequest++; modelObserver.disconnect(); frameObserver?.disconnect(); dismiss(); removeLauncher(); blocks.dispose(); words.dispose(); unsubscribeWordPreference(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
 }
 
 function createRegistry(): Registry {
@@ -666,15 +709,19 @@ export function registerTranslationClient(serverId: string, client: PluginClient
   const shared = globalThis as typeof globalThis & { [REGISTRY_KEY]?: Registry };
   const registry = !shared[REGISTRY_KEY] || shared[REGISTRY_KEY].closed ? shared[REGISTRY_KEY] = createRegistry() : shared[REGISTRY_KEY];
   const contracts = settingsRpc(translationSettings.id);
+  const cachedWord = createWordCache();
+  async function translate(text: string, target: TargetLanguage, cacheWord = false): Promise<TranslationResult> {
+    const saved = await client.rpc(contracts.read, {});
+    if (saved.status !== 'ready') throw new Error(ui(`Unable to read Translation API settings: ${saved.error}`, `翻译 API 设置无法读取：${saved.error}`));
+    let settings;
+    try { settings = validateTranslationSettings(translationSettings.schema.parse(saved.values)); }
+    catch (error) { throw new Error(ui(`${error instanceof Error ? error.message : String(error)}; open Settings to complete the configuration`, `${error instanceof Error ? error.message : String(error)}；请点击“设置”完成配置`)); }
+    const request = () => client.rpc(translateSelectionRpc, { text, target, settings });
+    return cacheWord ? cachedWord(JSON.stringify(settings), text, request) : request();
+  }
   const runtime: Runtime = {
-    translate: async (text, target) => {
-      const saved = await client.rpc(contracts.read, {});
-      if (saved.status !== 'ready') throw new Error(ui(`Unable to read Translation API settings: ${saved.error}`, `翻译 API 设置无法读取：${saved.error}`));
-      let settings;
-      try { settings = validateTranslationSettings(translationSettings.schema.parse(saved.values)); }
-      catch (error) { throw new Error(ui(`${error instanceof Error ? error.message : String(error)}; open Settings to complete the configuration`, `${error instanceof Error ? error.message : String(error)}；请点击“设置”完成配置`)); }
-      return client.rpc(translateSelectionRpc, { text, target, settings });
-    },
+    translate,
+    translateWord: text => translate(text, 'zh-CN', true),
     agentModel: async agentId => {
       const handle = client.paseo.agents.ref(agentId);
       const agent = handle.current() ?? (await handle.refresh())?.agent ?? null;

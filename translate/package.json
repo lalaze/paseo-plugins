@@ -10,6 +10,7 @@
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
+    "@getpaseo/client": "0.8.0",
     "@getpaseo/plugin": "0.8.0",
     "@types/jsdom": "^21.1.7",
     "@types/node": "^22.0.0",
