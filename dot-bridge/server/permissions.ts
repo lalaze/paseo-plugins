@@ -8,7 +8,10 @@ import { attachmentIdSchema, MAX_ATTACHMENT_BYTES } from '../shared/attachments'
 export function validatePermissionIntent(p: PermissionIntent): void {
   const { toolName, targets, operation } = p.scope;
   if (new Set(targets).size !== targets.length) throw dotBridgeError('task-rejected', 'Duplicate permission targets');
-  if (toolName === 'apply_dot_changes') {
+  if (toolName === 'run_dot_command') {
+    if (operation?.kind !== 'command' || targets.length !== 1 || targets[0] !== (operation.cwd || '/')) throw dotBridgeError('permission-required', 'Command approval must bind operationId, executable, args, cwd and timeout');
+    validateLocalPath(operation.cwd ?? '', true);
+  } else if (toolName === 'apply_dot_changes') {
     if (operation?.kind !== 'files') throw dotBridgeError('permission-required', 'File approval requires operationId and exact before/after SHA-256 for each change');
     if (operation.changes.length !== targets.length || new Set(operation.changes.map(c => c.path)).size !== targets.length
       || operation.changes.some(c => !targets.includes(c.path) || (c.expectedSha256 === null && c.contentSha256 === null))) throw dotBridgeError('permission-required', 'Operation must match the exact targets');
@@ -35,7 +38,10 @@ export function assertPermissionAccess(task: Task, toolName: string, targets: st
   // Any scoped confirmation ends default mutation access. A read/external grant cannot
   // authorize writes, and its expiry must not restore that access after an ordinary message.
   const relevant = mutation ? task.permissions : task.permissions.filter(p => samePermissionTool(p.scope.toolName, toolName));
-  if (!relevant.length) return;
+  if (!relevant.length) {
+    if (toolName === 'run_dot_command') throw dotBridgeError('permission-required', 'Every command needs an explicit operation-bound approval');
+    return;
+  }
   const latest = relevant.at(-1)!;
   if (!permissionCurrent(task, latest) || latest.status !== 'approved' || latest.platformBlock
     || (mutation ? latest.scope.toolName !== toolName : !samePermissionTool(latest.scope.toolName, toolName))

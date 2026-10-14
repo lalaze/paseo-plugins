@@ -18,6 +18,7 @@ import {
 import { describeToolCall } from './activity';
 import type { BridgeEngine } from './engine';
 import { LOCAL_FILE_INSTRUCTIONS } from '../shared/local-files';
+import { PROCESS_INSTRUCTIONS } from '../shared/processes';
 
 export interface McpServerOptions {
   engine: BridgeEngine;
@@ -195,7 +196,7 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
       case 'get_dot_task': {
         const args = input as z.infer<typeof toolInputSchemas.get_dot_task>;
         const task = options.engine.getForConnection(args.connectionId, args.taskId);
-        return { task, ...(task.mode === 'text' ? { ...(task.provider ? { conversationInstructions: PROVIDER_CONVERSATION_INSTRUCTIONS } : {}), permissionInstructions: PERMISSION_HANDOFF_INSTRUCTIONS, attachmentInstructions: ATTACHMENT_DELIVERY_INSTRUCTIONS + (task.remoteOrigin ? ' This task originated on a remote device. Upload success means the center received the file; confirm remote delivery from a later task attachment localPath before claiming it was saved on the originating device.' : ''), localFileInstructions: LOCAL_FILE_INSTRUCTIONS, localFilesAvailable: task.workspaceRoot !== null || task.remoteOrigin !== null } : { legacyReadOnly: true }) };
+        return { task, ...(task.mode === 'text' ? { ...(task.provider ? { conversationInstructions: PROVIDER_CONVERSATION_INSTRUCTIONS } : {}), permissionInstructions: PERMISSION_HANDOFF_INSTRUCTIONS, processInstructions: PROCESS_INSTRUCTIONS, commandsAvailable: !task.remoteOrigin && !!task.workspaceRoot, attachmentInstructions: ATTACHMENT_DELIVERY_INSTRUCTIONS + (task.remoteOrigin ? ' This task originated on a remote device. Upload success means the center received the file; confirm remote delivery from a later task attachment localPath before claiming it was saved on the originating device.' : ''), localFileInstructions: LOCAL_FILE_INSTRUCTIONS, localFilesAvailable: task.workspaceRoot !== null || task.remoteOrigin !== null } : { legacyReadOnly: true }) };
       }
       case 'claim_dot_task': {
         const args = input as z.infer<typeof toolInputSchemas.claim_dot_task>;
@@ -213,6 +214,10 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
       case 'read_dot_file': return options.engine.readLocalFile(input as z.infer<typeof toolInputSchemas.read_dot_file>);
       case 'read_dot_workspace_changes': return options.engine.readLocalWorkspaceChanges(input as z.infer<typeof toolInputSchemas.read_dot_workspace_changes>);
       case 'apply_dot_changes': return options.engine.applyLocalFiles(input as z.infer<typeof toolInputSchemas.apply_dot_changes>);
+      case 'run_dot_command': return options.engine.runCommand(input as z.infer<typeof toolInputSchemas.run_dot_command>);
+      case 'read_dot_process': return options.engine.readProcess(input as z.infer<typeof toolInputSchemas.read_dot_process>);
+      case 'stop_dot_process': return options.engine.stopProcess(input as z.infer<typeof toolInputSchemas.stop_dot_process>);
+      case 'list_dot_processes': return options.engine.listProcesses(input as z.infer<typeof toolInputSchemas.list_dot_processes>);
       case 'upload_dot_attachment': {
         const { taskId, ...args } = input as z.infer<typeof toolInputSchemas.upload_dot_attachment>;
         const result = await options.engine.uploadAttachment({ ...args, id: taskId, actor: 'dot' });

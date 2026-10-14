@@ -1,6 +1,6 @@
 # Paseo Dot Bridge
 
-Chat with your connected ChatGPT **Dot** in Paseo and apply requested code changes directly to the **local workspace**. Text, progress, files and code edits travel through MCP. Git delivery has been removed.
+Chat with your connected ChatGPT **Dot** in Paseo and apply requested code changes directly to the **local workspace**. Text, progress, files, code edits and explicitly approved local commands travel through MCP. Git delivery has been removed.
 
 Plugin ID: `paseo-dot-bridge`. Select **Dot → Connected Dot** in a normal Paseo conversation, or create a request in **Dot tasks**. Both use the same durable task engine. There is no repository, remote, branch or commit setup.
 
@@ -13,7 +13,7 @@ Plugin ID: `paseo-dot-bridge`. Select **Dot → Connected Dot** in a normal Pase
 - Before replacing or deleting a file, Dot reads its current SHA-256. Every change includes that expected hash; a new file uses `null` and is created only if absent. The latest user-message sequence must also match. Known conflicts are rejected before the batch starts, and each file is checked again immediately before mutation.
 - Changes apply automatically within the user's request. The returned receipt lists exactly which files were created, updated or deleted. The chat and task panel show the outcome. New permissions and unrelated or destructive actions still require asking the user.
 - Files are UTF-8 text, at most **256 KiB each**; a call contains **1–32 files**, up to **1 MiB** of replacement content. Full file contents are submitted, rather than a Git patch. Directory listing is paginated in groups of 200. Binary files still use attachments rather than local edits.
-- Relative paths only. Parent traversal, symlinks below the workspace, hardlinked files, Git internals and common credential paths are refused. File modes and untouched files are preserved. No shell commands or local tests are executed by these tools.
+- Relative paths only. Parent traversal, symlinks below the workspace, hardlinked files, Git internals and common credential paths are refused. File modes and untouched files are preserved. These file tools do not execute commands or tests; local command execution uses the separate tools and approval below.
 
 The original contents and exact outcome are retained in a private durable operation journal. Replaying the same operation and payload returns its original receipt, even if a user edits a file afterward; changed-content replays are rejected. A crash during a batch does not cause remaining files to be blindly written on retry. An unexpected mid-batch failure reports `partial` with the applied subset; it is not reported as a successful full change. There is no automatic rollback or one-click undo in this version.
 
@@ -22,6 +22,77 @@ When ChatGPT ends an `apply_dot_changes` call without a Bridge response (for exa
 The Bridge serializes its own writes. It cannot lock every external editor or process: the final filesystem check and rename/unlink are not an OS-level multi-file transaction. Avoid concurrently editing the same file while Dot applies a change. Routine stale-content conflicts are detected; failures and interrupted operations remain visible with backups in the journal.
 
 Activity shows operations that pass through the Bridge. Dot's own text still arrives through progress/final-answer calls. Read/list/upload activity keeps the latest 200 cards per task in the plugin process; a process restart does not replay that transient history. Edit cards replay from durable receipts and the original change journal, even after later user edits. Large rewrites or missing/invalid journals show the file path without a diff. See [Paseo permission validation](docs/permission-validation.md), [activity feed validation](docs/activity-feed-validation.md) for coverage and limits.
+
+## Local commands and background services
+
+Local workspace tasks expose four additional MCP tools:
+
+| Tool | Behavior |
+| --- | --- |
+| `run_dot_command` | Start an executable with an argument array, relative `cwd` (empty for workspace root), `timeoutMs` and stable UUID `operationId`. |
+| `read_dot_process` | Read status, PID, exit code, termination signal and merged stdout/stderr using the returned `nextOffset`. |
+| `stop_dot_process` | Stop the process owned by the exact task and original round. On POSIX, terminate its group and escalate to KILL after one second. |
+| `list_dot_processes` | List the latest 100 process records across this task's rounds, including services left running after a final answer. |
+
+**Every launch requires a Paseo permission card**, even when task file authorization is enabled.
+Dot requests `scope.toolName: "run_dot_command"`, `targets: [cwd || "/"]` and:
+
+```json
+{
+  "kind": "command",
+  "operationId": "<new UUID, reused for the launch>",
+  "command": "npm",
+  "args": ["run", "dev", "--", "--host", "0.0.0.0"],
+  "cwd": "",
+  "timeoutMs": 3600000
+}
+```
+
+This example is appropriate only if the project's dev script accepts those arguments. Dot reads
+its startup instructions first, explains actual effects (including network listeners), waits for
+Allow, reads the latest task and passes its current `userMessageSeq` to `run_dot_command` with
+that exact operation and spec. The permission card binds the executable, arguments, cwd and
+lifetime, not merely a human-readable description. Denials and platform blocks remain enforced.
+
+Commands run as the **Paseo host user, without a filesystem or network sandbox**. The bound cwd
+is a starting directory, not an access boundary; scripts can read/write elsewhere or use the
+network. File-tool path protections do not constrain an approved command. The executor uses
+`shell: false`; pass arguments separately. An explicit shell executable also requires approval.
+Only PATH, HOME, USER, TMPDIR, LANG, LC_ALL and SYSTEMROOT are inherited, rather than arbitrary
+daemon tokens/environment variables. stdin is closed; interactive prompts and terminal input are
+unsupported. Windows executable handling and descendant cleanup are not validated.
+
+`waitMs` bounds the first MCP wait to 0–10 seconds (default 1 second). It does not stop the process.
+`timeoutMs` defaults to 120 seconds and is capped at 24 hours; specify a suitable lifetime for a
+background service. A successful launch is not proof of readiness: read real startup logs and,
+when needed, execute a separately approved readiness probe before reporting success. For previews
+on this host, bind to `0.0.0.0` when supported and share `http://100.96.195.115:<actual-port>` after
+verifying the port. The Bridge does not configure routing, TLS or firewall rules.
+
+Logs retain the latest 256 Ki UTF-16 characters, paged in 16 Ki characters. `nextOffset` is a
+character cursor, not a byte cursor. `truncated: true` indicates discarded earlier output.
+stdout/stderr are merged in arrival order. Logs and exit status are saved in private
+`processes/<operationId>.json` journals, which may contain sensitive command output. Up to eight
+processes may be active; the journal limit is 5,000 records, with no automatic deletion or retry.
+
+Exact retries return the original process record, without running again, even after cancellation
+or a lost response. New arguments, directory or lifetime require a new operation ID and approval.
+Durable intent and permission consumption precede launch; persistence failure cannot launch a
+command. Restart marks unfinished records **interrupted**, preserves their known output and does
+not automatically resume them or kill a PID from disk: crash survivors have unknown external
+state and require inspection. Normal plugin unload, task stop and local round closure stop owned
+processes; final answers leave services running until explicit stop/timeout/unload. Ordinary POSIX
+descendants in the process group are cleaned up when its leader exits; detached services that
+escape the group and external services are outside this control.
+
+Remote tasks return `commandsAvailable: false`; no command is forwarded or executed on the center
+as a fallback. After upgrading, reload the plugin, refresh its tools in ChatGPT and update an old
+file-only event rule to allow handling command requests. `get_dot_task` includes current process
+instructions and availability on every read. Enabling task file authorization alone does not
+expand the event rule or approve commands.
+
+Process regressions are in `tests/processes.test.ts`, including a real HTTP service launched,
+queried and stopped through the MCP surface. They do not constitute a live ChatGPT/Dot validation.
 
 ## Architecture
 
@@ -53,7 +124,7 @@ This Git URL is an **installation source**, not a task delivery channel. `instal
 2. In **Dot tasks → Connection**, configure the connection name and public tunnel base. Use a Secure MCP Tunnel to the plugin's separate `/mcp/dot` server, not Paseo's `/mcp/agents` endpoint.
 3. Connect the custom plugin in ChatGPT and copy the current connection instructions to Dot. It must subscribe to `paseo.dot.task_changed` and `paseo.dot.connection_test`, using the platform callback and signing secret.
 4. Run the two-way connection test. Dispatch waits for the local service, verified event route and successful Dot challenge response.
-5. After upgrading, refresh the connected plugin's tools in ChatGPT. The old `submit_dot_result` is removed; the local file tools and attachment chunk tools must be visible. Update existing subscription instructions to use local edits, not cloud Git delivery. Only requests from the selected workspace authorize relevant file changes; new permissions still require confirmation.
+5. After upgrading, refresh the connected plugin's tools in ChatGPT. The old `submit_dot_result` is removed; the local file tools, attachment chunk tools and command/process tools must be visible. Update existing subscription instructions to use local edits, not cloud Git delivery. Only requests from the selected workspace authorize relevant file changes; new permissions still require confirmation.
 
 Temporary listen failures (such as an occupied port) appear in connection status and retry automatically with a 2.5–30 second backoff. Settings changes trigger a new bind without waiting for that backoff; concurrent checks share the same start operation.
 
@@ -116,6 +187,8 @@ approvals bind the tool, exact targets, operation UUID and content. For `apply_d
 `contentSha256` is the SHA-256 of the exact replacement UTF-8 bytes, or `null` for deletion; the
 expected hash is `null` only when creating a file. Approval cannot turn an update into a deletion.
 For either upload tool, use `{kind: "attachment", operationId, name, mediaType, size, sha256}`.
+For `run_dot_command`, use `{kind: "command", operationId, command, args, cwd, timeoutMs}`
+with the exact cwd target (`/` denotes the root). Command approval is always required.
 The displayed actual operation distinguishes creation, modification, deletion and upload.
 
 One mutation approval permits one recorded operation outcome, including partial/conflict receipts.
@@ -175,7 +248,7 @@ Local file coverage includes real filesystem creation/update/deletion, stale has
 
 See [Paseo permission validation](docs/permission-validation.md), [activity feed validation](docs/activity-feed-validation.md), [automatic file delivery validation](docs/automatic-files-validation.md) and [local code delivery validation](docs/local-delivery-validation.md). Earlier [provider](docs/provider-validation.md), [text/attachment](docs/text-attachments-validation.md) and [Git delivery](docs/phase-0-validation.md) records describe the versions tested at those times.
 
-Current limits: one central connected Dot; multi-machine source support requires the validation below; no token streaming, model switching, actual provider usage accounting, arbitrary shell execution, injected MCP tools, automatic local tests, binary saving to a remote phone or rewind. Cloud wake-up and long remote tool calls can delay progress. The web client has been exercised; native mobile and desktop UI automation remain unverified.
+Current limits: one central connected Dot; multi-machine source support requires the validation below; no token streaming, model switching, actual provider usage accounting, interactive terminals, remote command execution, injected MCP tools, automatic unapproved local tests, binary saving to a remote phone or rewind. Cloud wake-up and long remote tool calls can delay progress. The web client has been exercised; native mobile and desktop UI automation remain unverified.
 
 ## Multi-machine mode (validation pending)
 

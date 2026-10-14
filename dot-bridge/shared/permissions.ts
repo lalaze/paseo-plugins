@@ -2,9 +2,11 @@ import { z } from 'zod';
 import type { Task } from './schema';
 import { fileHashSchema, localPathSchema } from './local-files';
 import { attachmentContentSchema, attachmentNameSchema, MAX_FILE_BYTES } from './attachments';
+import { commandSpecSchema } from './processes';
 
 /** A mutation approval binds the operation id and bytes, not just its display description. */
 export const permissionOperationSchema = z.discriminatedUnion('kind', [
+  commandSpecSchema.safeExtend({ kind: z.literal('command'), operationId: z.string().uuid() }),
   z.object({
     kind: z.literal('files'), operationId: z.string().uuid(),
     changes: z.array(z.object({ path: localPathSchema, expectedSha256: fileHashSchema.nullable(), contentSha256: fileHashSchema.nullable() }).strict()).min(1).max(32),
@@ -16,7 +18,7 @@ export const permissionOperationSchema = z.discriminatedUnion('kind', [
   }).strict(),
 ]);
 export type PermissionOperation = z.infer<typeof permissionOperationSchema>;
-export const mutationPermissionTools: ReadonlySet<string> = new Set(['apply_dot_changes', 'upload_dot_attachment', 'upload_dot_attachment_chunk']);
+export const mutationPermissionTools: ReadonlySet<string> = new Set(['apply_dot_changes', 'upload_dot_attachment', 'upload_dot_attachment_chunk', 'run_dot_command']);
 export const attachmentReadPermissionTools: ReadonlySet<string> = new Set(['read_dot_attachment', 'read_dot_attachment_chunk']);
 /** Only these two concrete tools are aliases. External tool names never act as group names. */
 export function samePermissionTool(left: string, right: string): boolean {
@@ -73,7 +75,8 @@ export function permissionDescription(p: PermissionIntent): string {
   const operation = p.scope.operation;
   const details = operation?.kind === 'files'
     ? operation.changes.map(c => `${c.contentSha256 === null ? '删除' : c.expectedSha256 === null ? '新建' : '修改'} ${c.path}`).join('\n')
-    : operation?.kind === 'attachment' ? `上传 ${operation.name}（${operation.size} bytes，${operation.mediaType}）` : '';
+    : operation?.kind === 'attachment' ? `上传 ${operation.name}（${operation.size} bytes，${operation.mediaType}）`
+    : operation?.kind === 'command' ? `执行文件：${JSON.stringify(operation.command)}\n参数：${JSON.stringify(operation.args)}\n工作目录：${operation.cwd || '/'}\n最长运行：${operation.timeoutMs} ms\n以 Paseo 主机用户身份运行；不是文件系统或网络沙箱，可访问工作区外的文件和网络。不会继承 daemon 的任意环境变量。` : '';
   const lifetime = operation ? '仅允许绑定内容的一次操作；内容或操作编号变化必须重新确认。'
     : /^(read_dot_|list_dot_files)/.test(p.scope.toolName) ? '仅允许当前消息下重复读取上述精确目标；新消息后需重新确认。不授权文件写入或附件上传。' : '外部工具由 Dot 和平台执行，Bridge 无法强制限制该工具。本次确认不授权 Bridge 文件写入或附件上传。';
   return `${p.description}\n\n操作：${p.scope.action}\n工具：${p.scope.toolName}\n范围：\n${p.scope.targets.map(path => `• ${path}`).join('\n')}${details ? `\n\n实际操作：\n${details}` : ''}\n\n${lifetime}\nPaseo 确认不等于 ChatGPT 平台审批。`;

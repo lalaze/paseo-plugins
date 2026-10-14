@@ -14,7 +14,7 @@ export interface DotActivity {
   taskId: string;
   roundId: string;
   at: number;
-  kind: 'read-task' | 'list' | 'read' | 'read-attachment' | 'upload' | 'apply-failed';
+  kind: 'read-task' | 'list' | 'read' | 'read-attachment' | 'upload' | 'apply-failed' | 'process';
   /** A relative path, directory or attachment name. */
   target: string;
   status: 'running' | 'completed' | 'failed';
@@ -59,6 +59,15 @@ export function describeToolCall(name: ToolName, input: Record<string, unknown>,
   const roundId = typeof input.roundId === 'string' ? input.roundId : task.currentRoundId;
   const base = { taskId: task.id, roundId, at };
   switch (name) {
+    case 'run_dot_command':
+    case 'read_dot_process':
+    case 'stop_dot_process': {
+      const result = outcome.result as { operationId: string; status: string; exitCode: number | null; output: string; error: string } | undefined;
+      const processFailed = result && (['failed', 'timed-out', 'interrupted'].includes(result.status) || (result.status === 'exited' && result.exitCode !== 0));
+      return { ...base, id: `${task.id}:process:${String(input.operationId)}`, kind: 'process', target: name === 'run_dot_command' ? JSON.stringify([input.command, ...(input.args as string[])]) : String(input.operationId), status: failed || processFailed ? 'failed' : 'completed', detail: (failed ? error : `${result?.status}; exit=${result?.exitCode ?? '?'}\n${result?.error || ''}\n${result?.output || ''}`).slice(0, MAX_DETAIL) };
+    }
+    case 'list_dot_processes':
+      return { ...base, id: randomUUID(), kind: 'list', target: '进程列表', status, detail: (failed ? error : JSON.stringify(outcome.result)).slice(0, MAX_DETAIL) };
     case 'get_dot_task':
       // One card per user message: re-reading the same message is not new activity.
       if (failed) return null;

@@ -76,6 +76,7 @@ function activityCard(task: Task, entry: DotActivity): ProviderTimelineItem {
     case 'read-attachment': return card('Dot', { type: 'plain_text', label: `读取附件 ${entry.target}${entry.detail ? `（${entry.detail}）` : ''}`, icon: 'eye' });
     case 'upload': return card('Dot', { type: 'plain_text', label: { running: `正在接收 ${entry.target}（${entry.detail}）`, completed: `已接收 ${entry.target}`, canceled: `未接收完 ${entry.target}（${entry.detail}）`, failed: `接收 ${entry.target} 失败` }[status], icon: 'bot' });
     case 'apply-failed': return card('Dot', { type: 'plain_text', label: `修改未应用：${entry.target}`, icon: 'pencil' });
+    case 'process': return card('Process', { type: 'plain_text', label: entry.target, text: entry.detail, icon: 'bot' });
   }
 }
 

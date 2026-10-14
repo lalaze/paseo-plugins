@@ -232,23 +232,23 @@ export default function contribute(server: PluginServerContext) {
     stopSettings();
     if (timer) clearInterval(timer);
     if (settingsWatch) clearInterval(settingsWatch);
-    // Abort in-flight callback/DNS/recover/Git work at once, then release the listening port and the
-    // store lock immediately — never gated on `ready`, which could still be awaiting a lookup the
-    // signal cannot interrupt on its own. `dispose` waits for pending writes before releasing the
-    // lock, and cleanup never starts a new listen or runs a task (startBridge/tick re-check stopped).
+    // Abort in-flight work and release the listening port immediately, without waiting for `ready`.
+    // Keep the store lock until owned processes stop and pending writes finish, so a replacement
+    // daemon cannot recover journals while the old instance is still updating them.
+    // Cleanup never starts a new listen or runs a task (startBridge/tick re-check stopped).
     lifecycle.abort();
     if (remote) void remote.close().catch(report);
-    engine?.dispose();
+    const processShutdown = engine?.dispose().catch(report);
     engine?.setBridgeListening(false);
     const bridgeNow = bridge;
     bridge = null;
     if (bridgeNow) void bridgeNow.stop().catch(report);
     const storeNow = store;
-    if (storeNow) void storeNow.dispose().catch(report);
+    if (storeNow) void Promise.resolve(processShutdown).then(() => storeNow.dispose()).catch(report);
     // If startup opens the store/bridge after this point, stop them as soon as they appear.
     void ready.catch(() => undefined).then(async () => {
       await remote?.close().catch(report);
-      engine?.dispose();
+      await engine?.dispose().catch(report);
       const lateBridge = bridge;
       bridge = null;
       if (lateBridge) await lateBridge.stop().catch(report);

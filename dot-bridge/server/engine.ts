@@ -62,6 +62,8 @@ import { signPayloadMulti } from './signing';
 import type { BridgeStore } from './store';
 import { DOT_CONFIRMATION_URL, permissionCurrent, permissionDescription, permissionIntentSchema, permissionBlockIntentSchema, pendingPermissions, type DotPermission, type PermissionIntent, type PermissionBlockIntent, type PermissionOperation } from '../shared/permissions';
 import { withPromptAuthorization } from '../shared/prompt-authorization';
+import { ProcessManager } from './processes';
+import { commandSpecSchema, type CommandSpec } from '../shared/processes';
 
 const CHALLENGE_TTL = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 8;
@@ -169,11 +171,14 @@ export class BridgeEngine {
   private readonly processing = new Map<string, Promise<ResultOutcome>>();
   /** What Dot did through the Bridge, for the live native conversation. In memory only. */
   readonly activity = new ActivityLog();
+  private readonly processes: ProcessManager;
 
   constructor(private readonly deps: EngineDeps) {
+    this.processes = new ProcessManager(deps.store.dir);
     this.now = deps.now ?? (() => Date.now());
     this.fetchImpl = deps.fetchImpl;
     this.randomId = deps.randomId ?? (() => randomUUID());
+    this.abort.signal.addEventListener('abort', () => { void this.processes.dispose().catch(error => console.error('[dot-bridge] process shutdown', error)); }, { once: true });
     // The plugin's lifecycle signal is chained into our own, so unload aborts callbacks at once.
     if (deps.signal) {
       if (deps.signal.aborted) this.abort.abort();
@@ -182,6 +187,7 @@ export class BridgeEngine {
   }
 
   async init(): Promise<void> {
+    this.processes.init();
     this.secrets = await this.deps.store.readSecrets();
     let changed = false;
     if (!this.secrets.mcpToken) {
@@ -194,8 +200,9 @@ export class BridgeEngine {
     });
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.abort.abort();
+    await this.processes.dispose();
   }
 
   setBridgeListening(flag: boolean): void {
@@ -238,6 +245,68 @@ export class BridgeEngine {
     const round = currentRound(task);
     if (!round.claim || round.stop.requested || !['claimed', 'running', 'waiting_user'].includes(task.status)) throw dotBridgeError('claim-required', 'Local tools require a claimed active round without a stop request');
     return task;
+  }
+
+  private processTask(input: { connectionId: string; taskId: string }): Task {
+    const task = this.task(input.taskId);
+    if (task.connectionId !== input.connectionId) throw dotBridgeError('connection-invalid');
+    if (task.remoteOrigin || task.mode !== 'text' || !task.workspaceRoot) throw dotBridgeError('task-rejected', 'Commands are supported only for a local host workspace; remote execution is unavailable');
+    return task;
+  }
+
+  listProcesses(input: { connectionId: string; taskId: string }) {
+    this.processTask(input);
+    return { processes: this.processes.list(input.taskId) };
+  }
+
+  readProcess(input: { connectionId: string; taskId: string; roundId: string; operationId: string; offset: number }) {
+    const task = this.processTask(input);
+    assertPermissionAccess(task, 'read_dot_process', [input.operationId]);
+    return this.processes.read(input, input.offset);
+  }
+
+  async stopProcess(input: { connectionId: string; taskId: string; roundId: string; operationId: string }) {
+    this.processTask(input);
+    this.processes.read(input); // Ownership check before signaling; never accept an arbitrary PID.
+    await this.processes.stop(input.operationId);
+    return this.processes.read(input);
+  }
+
+  async runCommand(input: CommandSpec & { connectionId: string; taskId: string; roundId: string; operationId: string; userMessageSeq: number; waitMs: number }) {
+    const spec = commandSpecSchema.parse({ command: input.command, args: input.args, cwd: input.cwd, timeoutMs: input.timeoutMs });
+    this.processTask(input);
+    let reserved = false;
+    let reservation: boolean;
+    try {
+      reservation = await this.deps.store.mutate(draft => {
+        const task = this.requireTask(draft, input.taskId);
+        if (task.connectionId !== input.connectionId) throw dotBridgeError('connection-invalid');
+        if (this.processes.prior(input, task.workspaceRoot!, spec)) return false;
+        this.localTask(input, task);
+        if (task.userMessageSeq !== input.userMessageSeq) throw dotBridgeError('revision-conflict', 'Read the newest task before starting a command');
+        const permission = assertPermissionAccess(task, 'run_dot_command', [spec.cwd || '/'], { kind: 'command', operationId: input.operationId, ...spec });
+        this.processes.reserve(input, task.workspaceRoot!, spec);
+        reserved = true;
+        consumePermission(task, permission, this.now());
+        task.revision += 1; task.updatedAt = this.now();
+        return true;
+      });
+    } catch (error) {
+      if (reserved) this.processes.fail(input.operationId, error);
+      throw error;
+    }
+    if (reservation) {
+      try {
+        // No asynchronous gap between this latest persisted task check and spawn.
+        const latest = this.localTask(input);
+        if (latest.userMessageSeq !== input.userMessageSeq) throw dotBridgeError('revision-conflict');
+        const permission = latest.permissions.at(-1);
+        if (!permission || permission.status !== 'approved' || permission.platformBlock || permission.scope.operation?.operationId !== input.operationId || permission.consumedAt === null) throw dotBridgeError('permission-required');
+        this.processes.start(input.operationId);
+      } catch (error) { this.processes.fail(input.operationId, error); }
+    }
+    await this.processes.wait(input.operationId, input.waitMs);
+    return this.processes.read(input);
   }
 
   listLocalFiles(input: { connectionId: string; taskId: string; roundId: string; directory: string; offset: number }) {
@@ -877,7 +946,7 @@ export class BridgeEngine {
 
   async cancelRequest(input: { id: string; revision: number; operationId: string }): Promise<Task> {
     const at = this.now();
-    return this.deps.store.mutate(draft => {
+    const result = await this.deps.store.mutate(draft => {
       const dedup = this.dedupOperation(draft, input.operationId, { kind: 'cancel', id: input.id, revision: input.revision }, input.id);
       if (dedup.status === 'duplicate') return this.replay<Task>(draft, input.operationId, this.requireTask(draft, input.id));
       const task = this.requireTask(draft, input.id);
@@ -889,6 +958,8 @@ export class BridgeEngine {
       this.setReceipt(draft, input.operationId, response);
       return response;
     });
+    if (this.task(input.id).currentRoundId === result.currentRoundId) await this.processes.stopTask(input.id);
+    return result;
   }
 
   async createRound(input: { id: string; revision: number; operationId: string }): Promise<Task> {
@@ -909,7 +980,7 @@ export class BridgeEngine {
   }
 
   async closeLocal(input: { id: string; roundId: string; revision: number; operationId: string }): Promise<Task> {
-    return this.deps.store.mutate(draft => {
+    const result = await this.deps.store.mutate(draft => {
       const dedup = this.dedupOperation(draft, input.operationId, { kind: 'local-close', ...input }, input.id);
       if (dedup.status === 'duplicate') return this.replay<Task>(draft, input.operationId, this.requireTask(draft, input.id));
       const task = this.requireTask(draft, input.id);
@@ -924,6 +995,8 @@ export class BridgeEngine {
       this.setReceipt(draft, input.operationId, response);
       return response;
     });
+    if (this.task(input.id).currentRoundId === result.currentRoundId) await this.processes.stopTask(input.id);
+    return result;
   }
 
   /**
@@ -1225,6 +1298,11 @@ export class BridgeEngine {
     processedThroughSeq: number;
   }): Promise<{ applied: boolean; reason: string; duplicate: boolean }> {
     this.requireActiveDelivery(this.task(input.taskId));
+    if (input.kind === 'stopped') {
+      const task = this.task(input.taskId);
+      if (task.connectionId !== input.connectionId) throw dotBridgeError('connection-invalid');
+      if (task.currentRoundId === input.roundId) await this.processes.stopTask(input.taskId);
+    }
     const at = this.now();
     const hash = stableHash({ ...input, kind2: 'progress' });
     return this.deps.store.mutate(draft => {
