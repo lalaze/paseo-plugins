@@ -1,3 +1,4 @@
+import { AUTOMATIC_AUTHORIZATION_INSTRUCTIONS } from '../shared/workspace-authorization';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { dotBridgeError, parseDotBridgeError } from '../shared/errors';
@@ -196,7 +197,7 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
       case 'get_dot_task': {
         const args = input as z.infer<typeof toolInputSchemas.get_dot_task>;
         const task = options.engine.getForConnection(args.connectionId, args.taskId);
-        return { task, ...(task.mode === 'text' ? { ...(task.provider ? { conversationInstructions: PROVIDER_CONVERSATION_INSTRUCTIONS } : {}), permissionInstructions: PERMISSION_HANDOFF_INSTRUCTIONS, processInstructions: PROCESS_INSTRUCTIONS, commandsAvailable: !task.remoteOrigin && !!task.workspaceRoot, attachmentInstructions: ATTACHMENT_DELIVERY_INSTRUCTIONS + (task.remoteOrigin ? ' This task originated on a remote device. Upload success means the center received the file; confirm remote delivery from a later task attachment localPath before claiming it was saved on the originating device.' : ''), localFileInstructions: LOCAL_FILE_INSTRUCTIONS, localFilesAvailable: task.workspaceRoot !== null || task.remoteOrigin !== null } : { legacyReadOnly: true }) };
+        return { task, ...(task.mode === 'text' ? { ...(task.provider ? { conversationInstructions: PROVIDER_CONVERSATION_INSTRUCTIONS } : {}), workspaceAutomaticAuthorization: options.engine.automaticAuthorization(task), permissionInstructions: AUTOMATIC_AUTHORIZATION_INSTRUCTIONS + ' ' + PERMISSION_HANDOFF_INSTRUCTIONS, processInstructions: AUTOMATIC_AUTHORIZATION_INSTRUCTIONS + ' ' + PROCESS_INSTRUCTIONS, commandsAvailable: !task.remoteOrigin && !!task.workspaceRoot, attachmentInstructions: ATTACHMENT_DELIVERY_INSTRUCTIONS + (task.remoteOrigin ? ' This task originated on a remote device. Upload success means the center received the file; confirm remote delivery from a later task attachment localPath before claiming it was saved on the originating device.' : ''), localFileInstructions: LOCAL_FILE_INSTRUCTIONS, localFilesAvailable: task.workspaceRoot !== null || task.remoteOrigin !== null } : { legacyReadOnly: true }) };
       }
       case 'claim_dot_task': {
         const args = input as z.infer<typeof toolInputSchemas.claim_dot_task>;

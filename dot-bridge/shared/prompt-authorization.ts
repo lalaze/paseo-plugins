@@ -1,8 +1,14 @@
 import { dotBridgeError } from './errors';
 
 /** Only added to new user input after the host user explicitly enables the setting. */
-export function withPromptAuthorization(body: string, workspaceRoot: string | null | undefined, enabled: boolean): string {
-  if (!enabled || !workspaceRoot) return body;
+export function withPromptAuthorization(body: string, workspaceRoot: string | null | undefined, enabled: boolean, automatic = false): string {
+  if ((!enabled && !automatic) || !workspaceRoot) return body;
+  if (automatic) {
+    const note = `【当前工作区自动授权：由主机用户在 Paseo 本地开启】\n本任务绑定工作区：${JSON.stringify(workspaceRoot)}。仅为完成当前请求及其相关追问，允许 Bridge 读取必要相关文件并传回当前连接的 Your dot / ChatGPT；请求要求时允许修改代码、交付附件、运行本地命令和测试、启动开发服务，无需逐次 Paseo 权限卡。命令使用主机账户权限，工作目录不是文件系统或网络沙箱，可访问工作区外文件和网络。此授权不推翻我的明确限制、拒绝、取消或已待确认请求，不授权读取凭据/私密文件、其他工作区、安全设置、破坏性操作或 Git 提交推送及第三方发布。先读取 get_dot_task 的 workspaceAutomaticAuthorization 和最新指令；关闭开关后恢复正常权限规则。Paseo 自动授权不等于平台批准；平台拒绝仍须报告，不换通道绕过。`;
+    const result = `${body}\n\n${note}`;
+    if (result.length > 20_000) throw dotBridgeError('task-rejected', '附带工作区自动授权说明后超过消息长度限制');
+    return result;
+  }
   const note = [
     '【本条任务的授权说明：由用户启用自动附带】',
     `本任务绑定的本地工作区：${JSON.stringify(workspaceRoot)}。`,

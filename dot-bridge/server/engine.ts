@@ -64,6 +64,8 @@ import { DOT_CONFIRMATION_URL, permissionCurrent, permissionDescription, permiss
 import { withPromptAuthorization } from '../shared/prompt-authorization';
 import { ProcessManager } from './processes';
 import { commandSpecSchema, type CommandSpec } from '../shared/processes';
+import { findWorkspaceGrant, WorkspaceAuthorizationStore } from './workspace-authorization';
+import { automaticPermissionTools } from '../shared/workspace-authorization';
 
 const CHALLENGE_TTL = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 8;
@@ -172,9 +174,11 @@ export class BridgeEngine {
   /** What Dot did through the Bridge, for the live native conversation. In memory only. */
   readonly activity = new ActivityLog();
   private readonly processes: ProcessManager;
+  private readonly workspaceAuthorizations: WorkspaceAuthorizationStore;
 
   constructor(private readonly deps: EngineDeps) {
     this.processes = new ProcessManager(deps.store.dir);
+    this.workspaceAuthorizations = new WorkspaceAuthorizationStore(deps.store.dir);
     this.now = deps.now ?? (() => Date.now());
     this.fetchImpl = deps.fetchImpl;
     this.randomId = deps.randomId ?? (() => randomUUID());
@@ -187,6 +191,7 @@ export class BridgeEngine {
   }
 
   async init(): Promise<void> {
+    this.workspaceAuthorizations.init();
     this.processes.init();
     this.secrets = await this.deps.store.readSecrets();
     let changed = false;
@@ -237,6 +242,40 @@ export class BridgeEngine {
     if (task.mode === 'git' && !this.deps.git) throw dotBridgeError('task-rejected', 'Historical Git delivery is read-only. Start a local workspace conversation.');
   }
 
+  private workspaceGrant(workspaceId: string, root: string | null) {
+    return findWorkspaceGrant(this.workspaceAuthorizations.grants(), workspaceId, root);
+  }
+
+  private autoGrant(task: Task) {
+    return !task.remoteOrigin && task.mode === 'text' ? this.workspaceGrant(task.workspaceId, task.workspaceRoot) : undefined;
+  }
+
+  automaticAuthorization(task: Task) {
+    return { enabled: !!this.autoGrant(task), workspaceId: task.workspaceId, workspaceRoot: task.workspaceRoot, source: 'host-workspace-policy' };
+  }
+
+  workspaceAuthorizationStatus(workspaceId: string, root: string) { return this.workspaceAuthorizations.status(workspaceId, root); }
+
+  async configureWorkspaceAuthorization(workspaceId: string, root: string, enabled: boolean, revision: string) {
+    const status = this.workspaceAuthorizations.set(workspaceId, root, enabled, revision);
+    // Revocation is immediate in the live guard; expiring history also keeps the local UI truthful.
+    await this.deps.store.mutate(draft => {
+      for (const task of draft.tasks) {
+        const id = this.autoGrant(task)?.id;
+        task.permissions = task.permissions.map(p => p.workspaceGrantId && p.workspaceGrantId !== id && p.status === 'approved' && p.consumedAt === null ? { ...p, status: 'expired' as const } : p);
+      }
+    });
+    return status;
+  }
+
+  private assertAccess(task: Task, tool: string, targets: string[], operation?: PermissionOperation) {
+    return assertPermissionAccess(task, tool, targets, operation, this.autoGrant(task)?.id);
+  }
+
+  private authorizePrompt(body: string, workspaceId: string, root: string | null | undefined) {
+    return withPromptAuthorization(body, root, this.deps.getAppendTaskAuthorization?.() === true, !!this.workspaceGrant(workspaceId, root ?? null));
+  }
+
   private localTask(input: { connectionId: string; taskId: string; roundId: string }, task = this.task(input.taskId)): Task {
     if (this.abort.signal.aborted) throw dotBridgeError('task-rejected', 'Bridge is shutting down');
     if (task.connectionId !== input.connectionId) throw dotBridgeError('connection-invalid');
@@ -261,7 +300,7 @@ export class BridgeEngine {
 
   readProcess(input: { connectionId: string; taskId: string; roundId: string; operationId: string; offset: number }) {
     const task = this.processTask(input);
-    assertPermissionAccess(task, 'read_dot_process', [input.operationId]);
+    this.assertAccess(task, 'read_dot_process', [input.operationId]);
     return this.processes.read(input, input.offset);
   }
 
@@ -276,7 +315,7 @@ export class BridgeEngine {
     const spec = commandSpecSchema.parse({ command: input.command, args: input.args, cwd: input.cwd, timeoutMs: input.timeoutMs });
     this.processTask(input);
     let reserved = false;
-    let reservation: boolean;
+    let reservation: false | { grantId: string | undefined };
     try {
       reservation = await this.deps.store.mutate(draft => {
         const task = this.requireTask(draft, input.taskId);
@@ -284,12 +323,13 @@ export class BridgeEngine {
         if (this.processes.prior(input, task.workspaceRoot!, spec)) return false;
         this.localTask(input, task);
         if (task.userMessageSeq !== input.userMessageSeq) throw dotBridgeError('revision-conflict', 'Read the newest task before starting a command');
-        const permission = assertPermissionAccess(task, 'run_dot_command', [spec.cwd || '/'], { kind: 'command', operationId: input.operationId, ...spec });
+        const permission = this.assertAccess(task, 'run_dot_command', [spec.cwd || '/'], { kind: 'command', operationId: input.operationId, ...spec });
+        const grantId = this.autoGrant(task)?.id;
         this.processes.reserve(input, task.workspaceRoot!, spec);
         reserved = true;
         consumePermission(task, permission, this.now());
         task.revision += 1; task.updatedAt = this.now();
-        return true;
+        return { grantId };
       });
     } catch (error) {
       if (reserved) this.processes.fail(input.operationId, error);
@@ -300,8 +340,13 @@ export class BridgeEngine {
         // No asynchronous gap between this latest persisted task check and spawn.
         const latest = this.localTask(input);
         if (latest.userMessageSeq !== input.userMessageSeq) throw dotBridgeError('revision-conflict');
-        const permission = latest.permissions.at(-1);
-        if (!permission || permission.status !== 'approved' || permission.platformBlock || permission.scope.operation?.operationId !== input.operationId || permission.consumedAt === null) throw dotBridgeError('permission-required');
+        if (reservation.grantId) {
+          if (this.autoGrant(latest)?.id !== reservation.grantId) throw dotBridgeError('permission-required', 'Workspace automatic authorization was revoked before launch');
+          this.assertAccess(latest, 'run_dot_command', [spec.cwd || '/'], { kind: 'command', operationId: input.operationId, ...spec });
+        } else {
+          const permission = latest.permissions.at(-1);
+          if (!permission || permission.status !== 'approved' || permission.platformBlock || permission.scope.operation?.operationId !== input.operationId || permission.consumedAt === null || permission.workspaceGrantId) throw dotBridgeError('permission-required');
+        }
         this.processes.start(input.operationId);
       } catch (error) { this.processes.fail(input.operationId, error); }
     }
@@ -311,31 +356,31 @@ export class BridgeEngine {
 
   listLocalFiles(input: { connectionId: string; taskId: string; roundId: string; directory: string; offset: number }) {
     const task = this.localTask(input);
-    assertPermissionAccess(task, 'list_dot_files', [input.directory || '/']);
+    this.assertAccess(task, 'list_dot_files', [input.directory || '/']);
     return { ...listSources(task.workspaceRoot!, input.directory, input.offset), userMessageSeq: task.userMessageSeq };
   }
 
   readLocalFile(input: { connectionId: string; taskId: string; roundId: string; path: string }) {
     const task = this.localTask(input);
-    assertPermissionAccess(task, 'read_dot_file', [input.path]);
+    this.assertAccess(task, 'read_dot_file', [input.path]);
     const { mode: _mode, ...file } = readSource(task.workspaceRoot!, input.path);
     return { ...file, userMessageSeq: task.userMessageSeq };
   }
 
   async readLocalWorkspaceChanges(input: { connectionId: string; taskId: string; roundId: string; offset: number } & WorkspaceReviewOptions) {
     const task = this.localTask(input);
-    assertWorkspaceReviewAccess(task, input.path ? [input.path] : []);
+    assertWorkspaceReviewAccess(task, input.path ? [input.path] : [], this.autoGrant(task)?.id);
     const result = await readWorkspaceChanges(task.workspaceRoot!, input.offset, this.abort.signal, {
-      ...input, allowedPaths: workspaceReviewPaths(task),
+      ...input, allowedPaths: workspaceReviewPaths(task, this.autoGrant(task)?.id),
       authorizePaths: paths => {
         const latest = this.localTask(input);
         if (latest.userMessageSeq !== task.userMessageSeq || latest.workspaceRoot !== task.workspaceRoot) throw dotBridgeError('revision-conflict');
-        assertWorkspaceReviewAccess(latest, paths);
+        assertWorkspaceReviewAccess(latest, paths, this.autoGrant(latest)?.id);
       },
     });
     const latest = this.localTask(input);
     if (latest.userMessageSeq !== task.userMessageSeq || latest.workspaceRoot !== task.workspaceRoot) throw dotBridgeError('revision-conflict', 'Task changed during the workspace read; read the task again');
-    assertWorkspaceReviewAccess(latest, result.files.flatMap(file => file.previousPath ? [file.path, file.previousPath] : [file.path]));
+    assertWorkspaceReviewAccess(latest, result.files.flatMap(file => file.previousPath ? [file.path, file.previousPath] : [file.path]), this.autoGrant(latest)?.id);
     return { ...result, userMessageSeq: latest.userMessageSeq };
   }
 
@@ -352,7 +397,7 @@ export class BridgeEngine {
         return JSON.parse(prior.receipt) as LocalReceipt;
       }
       this.localTask(input, task);
-      const permission = assertPermissionAccess(task, 'apply_dot_changes', input.changes.map(change => change.path), {
+      const permission = this.assertAccess(task, 'apply_dot_changes', input.changes.map(change => change.path), {
         kind: 'files', operationId: input.operationId,
         changes: input.changes.map(c => ({ path: c.path, expectedSha256: c.expectedSha256, contentSha256: c.content === null ? null : sourceHash(c.content) })),
       });
@@ -723,7 +768,7 @@ export class BridgeEngine {
         branch: input.mode === 'text' ? null : `dot/${taskId}`,
         environmentHint: input.environmentHint,
         title: input.title,
-        requirement: withPromptAuthorization(input.requirement, input.mode === 'text' ? input.workspaceRoot : null, this.deps.getAppendTaskAuthorization?.() === true),
+        requirement: this.authorizePrompt(input.requirement, input.workspaceId, input.mode === 'text' ? input.workspaceRoot : null),
         acceptance: input.acceptance,
         baseSha: input.baseSha,
         targetBranch: input.targetBranch,
@@ -762,7 +807,7 @@ export class BridgeEngine {
       if (steerRoundId && (!task || task.currentRoundId !== steerRoundId || currentRound(task).stop.requested || !['queued', 'dispatched', 'claimed', 'running', 'waiting_user'].includes(task.status))) {
         throw dotBridgeError('round-stale', 'The steered round ended or was stopped; read the latest task before sending a new message');
       }
-      const body = withPromptAuthorization(input.body, input.remoteOrigin ? null : input.cwd, this.deps.getAppendTaskAuthorization?.() === true);
+      const body = this.authorizePrompt(input.body, input.workspaceId, input.remoteOrigin ? null : input.cwd);
       if (task) {
         if (canonicalJson(task.remoteOrigin ?? null) !== canonicalJson(input.remoteOrigin ?? null)) throw dotBridgeError('task-rejected', 'Remote task ownership mismatch');
         if (task.mode !== 'text' || task.provider?.cwd !== input.cwd || task.workspaceId !== input.workspaceId) throw dotBridgeError('task-rejected', 'provider binding mismatch');
@@ -815,7 +860,7 @@ export class BridgeEngine {
     if (task.currentRoundId !== roundId) throw dotBridgeError('round-stale');
     const round = currentRound(task);
     if (round.stop.requested) throw dotBridgeError('task-rejected', 'stop requested');
-    const permission = assertPermissionAccess(task, toolName, [operation.name], operation);
+    const permission = this.assertAccess(task, toolName, [operation.name], operation);
     if (!round.claim || !['claimed', 'running', 'waiting_user'].includes(round.remoteStatus)) throw dotBridgeError('claim-required');
     if (task.attachments.length >= MAX_TASK_ATTACHMENTS) throw dotBridgeError('attachment-limit');
     return permission;
@@ -900,12 +945,12 @@ export class BridgeEngine {
   async readAttachment(id: string, attachmentId: string, connectionId?: string): Promise<{ attachment: Attachment; encoding: 'utf8' | 'base64'; content: string }> {
     const task = this.task(id);
     if (connectionId !== undefined && task.connectionId !== connectionId) throw dotBridgeError('connection-invalid');
-    if (connectionId !== undefined) assertPermissionAccess(task, 'read_dot_attachment', [attachmentId]);
+    if (connectionId !== undefined) this.assertAccess(task, 'read_dot_attachment', [attachmentId]);
     const attachment = task.attachments.find(item => item.id === attachmentId);
     if (!attachment) throw dotBridgeError('attachment-missing');
     if (attachment.size > MAX_ATTACHMENT_BYTES) throw dotBridgeError('attachment-too-large', 'use read_dot_attachment_chunk for large files');
     const bytes = await new AttachmentStore(this.deps.store.dir).get(attachment);
-    if (connectionId !== undefined) assertPermissionAccess(this.task(id), 'read_dot_attachment', [attachmentId]);
+    if (connectionId !== undefined) this.assertAccess(this.task(id), 'read_dot_attachment', [attachmentId]);
     if (attachment.mediaType.startsWith('text/') || attachment.mediaType === 'application/json') {
       try { return { attachment, encoding: 'utf8', content: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }; }
       catch { /* Preserve arbitrary bytes even when a MIME type incorrectly claims UTF-8. */ }
@@ -916,12 +961,12 @@ export class BridgeEngine {
   async readAttachmentChunk(id: string, attachmentId: string, index: number, connectionId?: string): Promise<{ attachment: Attachment; content: string; done: boolean }> {
     const task = this.task(id);
     if (connectionId !== undefined && task.connectionId !== connectionId) throw dotBridgeError('connection-invalid');
-    if (connectionId !== undefined) assertPermissionAccess(task, 'read_dot_attachment_chunk', [attachmentId]);
+    if (connectionId !== undefined) this.assertAccess(task, 'read_dot_attachment_chunk', [attachmentId]);
     const attachment = task.attachments.find(item => item.id === attachmentId);
     if (!attachment) throw dotBridgeError('attachment-missing');
     if (!Number.isInteger(index) || index < 0 || index >= Math.max(1, Math.ceil(attachment.size / ATTACHMENT_CHUNK_BYTES))) throw dotBridgeError('attachment-invalid', 'chunk index');
     const bytes = await new AttachmentStore(this.deps.store.dir).get(attachment);
-    if (connectionId !== undefined) assertPermissionAccess(this.task(id), 'read_dot_attachment_chunk', [attachmentId]);
+    if (connectionId !== undefined) this.assertAccess(this.task(id), 'read_dot_attachment_chunk', [attachmentId]);
     const end = (index + 1) * ATTACHMENT_CHUNK_BYTES;
     return { attachment, content: bytes.subarray(index * ATTACHMENT_CHUNK_BYTES, end).toString('base64'), done: end >= bytes.length };
   }
@@ -934,7 +979,7 @@ export class BridgeEngine {
       if (dedup.status === 'duplicate') return this.replay<Task>(draft, input.operationId, this.requireTask(draft, input.id));
       const task = this.requireTask(draft, input.id);
       this.requireRevision(task, input.revision);
-      const body = withPromptAuthorization(input.body, task.mode === 'text' ? task.workspaceRoot : null, this.deps.getAppendTaskAuthorization?.() === true);
+      const body = this.authorizePrompt(input.body, task.workspaceId, task.mode === 'text' ? task.workspaceRoot : null);
       const next = recordOperation(appendUserMessage(task, body, input.kind, at), input.operationId, at);
       this.replace(draft, next);
       this.emitTaskChanged(draft, next, 'message_added');
@@ -1347,6 +1392,7 @@ export class BridgeEngine {
       if (prior) {
         const previous = { requestId: prior.requestId, userMessageSeq: prior.userMessageSeq, title: prior.title, description: prior.description, scope: prior.scope };
         if (prior.roundId !== roundId || stableHash(previous) !== stableHash(intent)) throw dotBridgeError('duplicate-mismatch');
+        if (prior.workspaceGrantId && prior.workspaceGrantId !== this.autoGrant(task)?.id) throw dotBridgeError('permission-stale', 'Workspace automatic authorization was revoked');
         return structuredClone(prior);
       }
       this.requirePermissionRound(task, roundId);
@@ -1357,6 +1403,25 @@ export class BridgeEngine {
         throw dotBridgeError('permission-required', 'Do not repeat a denied request without new user input');
       }
       const at = this.now();
+      const grant = this.autoGrant(task);
+      let automatic = !!grant && automaticPermissionTools.has(intent.scope.toolName);
+      if (automatic) {
+        try {
+          this.assertAccess(task, intent.scope.toolName, intent.scope.targets, intent.scope.operation ?? undefined);
+          // A policy request must not widen a still-current explicit file-read scope through a diff alias.
+          if (intent.scope.toolName === 'read_dot_workspace_changes' && workspaceReviewPaths(task, grant!.id) !== null) automatic = false;
+        } catch (error) {
+          if (!(error instanceof Error && 'code' in error && error.code === 'permission-required')) throw error;
+          // Explicit restrictions need another real user decision, even with the workspace switch on.
+          automatic = false;
+        }
+      }
+      if (automatic) {
+        const permission: DotPermission = { ...intent, roundId, status: 'approved', requestedAt: at, resolvedAt: at, decisionMessageSeq: task.userMessageSeq, platformBlock: null, consumedAt: null, workspaceGrantId: grant!.id };
+        const next = appendDotMessage({ ...task, permissions: [...task.permissions, permission] }, roundId, 'note', `工作区自动授权：${intent.title}。来源为主机本地工作区开关，不代表用户点击允许或 ChatGPT 平台审批。`, at, intent.requestId);
+        this.replace(draft, next);
+        return structuredClone(permission);
+      }
       const permission: DotPermission = { ...intent, roundId, status: 'pending', requestedAt: at, resolvedAt: null, decisionMessageSeq: null, platformBlock: null, consumedAt: null };
       const next = reduceProgress({ ...task, permissions: [...task.permissions, permission] }, {
         roundId, updateId: `permission:${intent.requestId}`, kind: 'waiting_user',

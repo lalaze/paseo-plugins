@@ -6,6 +6,7 @@ import { ScrollView } from '@getpaseo/plugin/client/react-native';
 import { Pressable, Text, View } from 'react-native';
 import { currentRound, type Task } from '../shared/schema';
 import { RemotePanel } from './remote';
+import { WorkspaceAuthorizationPanel } from './workspace-authorization';
 import { ConnectionCard } from './connection';
 import { TaskDetail } from './detail';
 import { TaskEditor } from './editor';
@@ -87,6 +88,8 @@ export function DotBridgePanel(props: DotBridgePanelProps) {
         </Pill>
         <Pill colors={colors} active={tab === 'machines'} onPress={() => setTab('machines')} label="machines"><Text style={{ color: colors.foreground, fontSize: 12 }}>多机</Text></Pill>
       </View>
+
+      {tab === 'tasks' && (open?.workspaceId ?? selectedWorkspace) ? <WorkspaceAuthorizationPanel key={open?.workspaceId ?? selectedWorkspace!} rpc={props.rpc} colors={colors} workspaceId={open?.workspaceId ?? selectedWorkspace!} /> : null}
 
       {tab === 'machines' ? <RemotePanel rpc={props.rpc} colors={colors} workspaceId={selectedWorkspace} /> : tab === 'connection' ? (
         <ConnectionCard theme={props.theme} host={props.host} layout={props.layout} rpc={props.rpc} query={props.query} />

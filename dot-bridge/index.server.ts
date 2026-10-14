@@ -1,5 +1,8 @@
 import { createDotProvider, DOT_PROVIDER_ID, WORKSPACE_ENV } from './server/provider';
 import type { PluginServerContext } from '@getpaseo/plugin/server';
+import type { PaseoApi } from '@getpaseo/client';
+import { workspaceAuthorizationGet, workspaceAuthorizationSet } from './shared/workspace-authorization';
+import { workspaceRootIdentity } from './server/workspace-authorization';
 import { dotBridgeError, parseDotBridgeError } from './shared/errors';
 import {
   connectionConfigure,
@@ -126,6 +129,23 @@ export default function contribute(server: PluginServerContext) {
 
   const useBackend = async () => { await useEngine(); return remote ? remote.backend() : engine!; };
   const useRemote = async () => { await useEngine(); if (!remote) throw new Error('Remote service unavailable'); return remote; };
+  const authorizationWorkspace = async (workspaceId: string, context: { paseo: PaseoApi }) => {
+    if (await useBackend() !== engine) throw dotBridgeError('task-rejected', '自动授权仅支持本地主机工作区');
+    const listing = await context.paseo.workspaces.list();
+    const workspace = listing.entries.find(entry => entry.id === workspaceId);
+    const directory = workspace?.workspaceDirectory ?? workspace?.projectRootPath;
+    if (!directory) throw dotBridgeError('workspace-missing', workspaceId);
+    return canonicalWorkspace(directory);
+  };
+  server.handle(workspaceAuthorizationGet, async ({ workspaceId }, context) => {
+    const root = await authorizationWorkspace(workspaceId, context);
+    return (await useEngine()).workspaceAuthorizationStatus(workspaceId, root);
+  });
+  server.handle(workspaceAuthorizationSet, async ({ workspaceId, workspaceRoot, rootIdentity, enabled, revision }, context) => {
+    const root = await authorizationWorkspace(workspaceId, context);
+    if (root !== workspaceRoot || workspaceRootIdentity(root) !== rootIdentity) throw dotBridgeError('revision-conflict', '工作区目录已变化，请重新读取后确认');
+    return (await useEngine()).configureWorkspaceAuthorization(workspaceId, root, enabled, revision);
+  });
   server.handle(remoteState, async () => (await useRemote()).status());
   server.handle(remoteConfigure, async ({ config, token }) => (await useRemote()).configure(config, token));
   server.handle(remoteCreateDevice, async ({ confirm: _confirm, ...input }) => (await useRemote()).center.createDevice(input));

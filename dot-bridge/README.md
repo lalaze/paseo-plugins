@@ -34,7 +34,7 @@ Local workspace tasks expose four additional MCP tools:
 | `stop_dot_process` | Stop the process owned by the exact task and original round. On POSIX, terminate its group and escalate to KILL after one second. |
 | `list_dot_processes` | List the latest 100 process records across this task's rounds, including services left running after a final answer. |
 
-**Every launch requires a Paseo permission card**, even when task file authorization is enabled.
+**By default every launch requires a Paseo permission card**, even when task file authorization is enabled. The separate workspace automatic authorization switch below can authorize eligible local launches without a card.
 Dot requests `scope.toolName: "run_dot_command"`, `targets: [cwd || "/"]` and:
 
 ```json
@@ -98,6 +98,18 @@ expand the event rule or approve commands.
 
 Process regressions are in `tests/processes.test.ts`, including a real HTTP service launched,
 queried and stopped through the MCP surface. They do not constitute a live ChatGPT/Dot validation.
+
+## Workspace automatic authorization
+
+In the local **Dot tasks → Tasks** panel, select the workspace and use **工作区自动授权 → 开启 → 允许此工作区自动授权**. The review shows the exact directory and host command privileges. This is off by default. It grants task-related Bridge file reads/edits, attachments and local commands for existing and future text tasks in that workspace, and survives plugin reloads. **关闭** restores the normal guards for new operations; it does not terminate already-running commands. Use the process stop tool or task stop for cleanup.
+
+This is a host-user policy stored in private `workspace-authorizations.json`, separate from task content and the older file-only prompt note setting. Only the authenticated Paseo plugin UI RPC can change it; MCP has no enable/disable tool. The server resolves the workspace from the host registry and checks the reviewed root, directory identity and settings revision. Grants bind the exact workspace ID, canonical root and directory identity. Other roots, replaced directories, remote-origin tasks and historical Git tasks do not inherit the grant.
+
+`get_dot_task.workspaceAutomaticAuthorization` reports the live policy. Eligible tools can run directly without `request_dot_permission`. Existing agents that still request a card receive an approved record marked `workspaceGrantId`, without a pending card or fabricated user reply. Disabling or replacing the grant invalidates unused policy approvals and is checked again immediately before command spawn. Exact completed operation retries still return their original outcome. New user prompts include the authorization note even when the older file-only note setting is off; historical messages are preserved.
+
+A pending confirmation, refusal or platform block is not automatically cleared. Current explicit scoped approvals retain their exact scope until used or expired. A request to widen that scope, or a fresh request after refusal, still needs a real user decision. File hashes, protected file paths, current-message checks, claims, stop requests, ownership and operation deduplication remain enforced. Commands still run as the host user and may access files outside the workspace and the network; cwd is not a sandbox. The policy does not authorize unrelated destructive work, security changes, Git publishing, external tools, or bypassing platform approval.
+
+Regression coverage is in `tests/workspace-authorization.test.ts`, including real command/file/attachment execution, restart persistence, revocation before spawn, scoped reads and refusal handling. This is not a live ChatGPT event-handling validation. Refresh ChatGPT’s connected tools after upgrading; existing event rules should read the latest `get_dot_task` instructions and honor the automatic authorization flag rather than unconditionally waiting for a permission event.
 
 ## Architecture
 

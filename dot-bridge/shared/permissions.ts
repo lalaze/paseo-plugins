@@ -55,6 +55,8 @@ export const permissionSchema = permissionIntentSchema.extend({
   decisionMessageSeq: z.number().int().positive().nullable().default(null),
   platformBlock: z.object({ reason: z.string().min(1).max(2000), at: z.number().int().nonnegative() }).strict().nullable().default(null),
   consumedAt: z.number().int().nonnegative().nullable().default(null),
+  /** Automatic authorization is sourced from a host workspace grant, never a fabricated click. */
+  workspaceGrantId: z.string().uuid().optional(),
 }).strict();
 export type DotPermission = z.infer<typeof permissionSchema>;
 export type PermissionIntent = z.input<typeof permissionIntentSchema>;

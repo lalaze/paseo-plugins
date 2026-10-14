@@ -30,7 +30,7 @@ export function PermissionPanel(props: { task: Task; roundId: string; colors: Co
     const title = ({ pending: ui('Your confirmation is needed', '等待 Paseo 确认'), approved: ui('Allowed in Paseo', 'Paseo 已允许 · 当前有效'), denied: ui('Denied; explicit approval required', '已拒绝 · 需明确重新授权'), expired: ui('Request expired', '授权已失效'), consumed: ui('Operation authorization used', '本次操作授权已使用'), 'platform-blocked': ui('Blocked by ChatGPT', 'ChatGPT 平台仍阻塞'), superseded: ui('Replaced by a newer request', '历史请求 · 已由新请求替代') })[state];
     const command = permissionCommand(p), detailsOpen = expanded.has(p.requestId);
     return <View key={p.requestId} style={{ borderWidth: 1, borderColor: pending || (p.platformBlock && current) ? tint(colors.statusWarning, 0.5) : outline(colors), borderRadius: 12, padding: 14, gap: 10 }}>
-      <Text style={{ color: pending ? colors.statusWarning : colors.foregroundMuted, fontSize: 11 }}>{title}</Text>
+      <Text style={{ color: pending ? colors.statusWarning : colors.foregroundMuted, fontSize: 11 }}>{p.workspaceGrantId && state === 'approved' ? '工作区策略已自动授权' : title}</Text>
       <Text style={{ color: colors.foreground, fontWeight: '700', fontSize: 14 }}>{p.title}</Text>
       {command ? <View style={{ backgroundColor: colors.surface2, borderRadius: 8, padding: 10 }}><Text selectable style={{ color: colors.foreground, fontFamily: MONO, fontSize: 12, lineHeight: 18 }}>{command}</Text></View> : null}
       <Text selectable style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{permissionSummary(p, task.workspaceRoot)}</Text>
