@@ -126,6 +126,7 @@ export class RemoteClient {
   async createRound(input: Parameters<BridgeEngine['createRound']>[0]) { return this.withInput(async () => this.accept(await this.call('next', input))); }
   async retryRound(input: Parameters<BridgeEngine['retryRound']>[0]) { return this.withInput(async () => this.accept(await this.call('retry', input))); }
   async closeLocal(input: Parameters<BridgeEngine['closeLocal']>[0]) { return this.withInput(async () => this.accept(await this.call('local-close', input))); }
+  async rewakeTask(input: Parameters<BridgeEngine['rewakeTask']>[0]) { return this.withInput(async () => this.accept(await this.call('rewake', input))); }
   async historyForTask(id: string, cursor: string | null) { return await this.call('history', { id, cursor }) as ReturnType<BridgeEngine['historyForTask']>; }
   async uploadAttachment(input: Parameters<BridgeEngine['uploadAttachment']>[0]) { return this.withInput(() => this.sendAttachment(input)); }
   private async sendAttachment(input: Parameters<BridgeEngine['uploadAttachment']>[0]) {

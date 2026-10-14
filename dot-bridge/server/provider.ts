@@ -10,6 +10,7 @@ import { unifiedDiff } from './diff';
 import { pendingPermissions, permissionSummary, permissionDisplayDetails, permissionPromptId } from '../shared/permissions';
 import { canonicalJson } from '../shared/mcp';
 import type { BridgeEngine } from './engine';
+import { claimWaitLabel } from '../shared/claim-recovery';
 
 export const DOT_PROVIDER_ID = 'dot';
 export const WORKSPACE_ENV = 'PASEO_DOT_WORKSPACE_ID';
@@ -177,7 +178,7 @@ export function createDotProvider(options: { engine(): Promise<ProviderEngine>; 
             : 'Dot 等待你的回复。';
         const label = round.stop.requested && !['stopped', 'completed', 'failed'].includes(task.status)
           ? '已请求 Dot 停止，等待远端确认。'
-          : ({ queued: engine.readyToDispatch() ? '等待发送给 Dot。' : '等待 Dot Bridge 连接就绪；请在插件中检查连接。', dispatched: '已发送，等待 Dot 接单。', claimed: 'Dot 已接单。', running: 'Dot 正在处理。', waiting_user: waitingLabel, completed: round.result?.coversLatest ? 'Dot 已完成。' : 'Dot 的回复尚未覆盖最新消息，等待补充回复。', failed: 'Dot 处理失败，可发消息重试。', stopped: round.stop.localClosedAt !== null && !round.stop.reported ? '本地轮次已终止；远端尚未确认停止。' : 'Dot 已停止。' }[task.status]);
+          : claimWaitLabel(round, 'zh-CN') ?? ({ queued: engine.readyToDispatch() ? '等待发送给 Dot。' : '等待 Dot Bridge 连接就绪；请在插件中检查连接。', dispatched: '已发送，等待 Dot 接单。', claimed: 'Dot 已接单。', running: 'Dot 正在处理。', waiting_user: waitingLabel, completed: round.result?.coversLatest ? 'Dot 已完成。' : 'Dot 的回复尚未覆盖最新消息，等待补充回复。', failed: 'Dot 处理失败，可发消息重试。', stopped: round.stop.localClosedAt !== null && !round.stop.reported ? '本地轮次已终止；远端尚未确认停止。' : 'Dot 已停止。' }[task.status]);
         const statusId = `${task.id}:status:${task.currentRoundId}:${task.userMessageSeq}`;
         const progress = ['running', 'waiting_user'].includes(task.status) && !round.stop.requested && round.lastProgress?.kind === task.status
           && round.lastProgress.processedThroughSeq >= task.userMessageSeq ? round.lastProgress.note.trim() : '';

@@ -1,3 +1,4 @@
+import { STORE_VERSION } from '../shared/schema';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, realpath, rm, readFile, writeFile } from 'node:fs/promises';
@@ -174,7 +175,7 @@ test('permissions survive disk reopen; v8 migration preserves original bytes', a
   const migrated = await BridgeStore.open(h.dir);
   try {
     assert.equal(migrated.loadError, null);
-    assert.equal(migrated.read().version, 10);
+    assert.equal(migrated.read().version, STORE_VERSION);
     assert.deepEqual(migrated.read().tasks[0].permissions, []);
     assert.equal(await readFile(join(h.dir, 'state.v8.json'), 'utf8'), original);
     assert.equal(migrated.read().tasks[0].messages.length, legacy.tasks[0].messages.length);

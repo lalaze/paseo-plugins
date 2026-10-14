@@ -1,3 +1,4 @@
+import { STORE_VERSION } from '../shared/schema';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
@@ -39,7 +40,7 @@ function sampleTask() {
 
 function sampleEvent(taskId: string): PendingEvent {
   return {
-    eventId: randomUUID(),
+    eventId: randomUUID(), claimRecovery: false,
     name: 'paseo.dot.task_changed',
     connectionId: 'a'.repeat(32),
     subscriptionId: null,
@@ -86,7 +87,7 @@ describe('BridgeStore', () => {
     await store.dispose();
     const raw = await readFile(join(dir, 'state.json'), 'utf8');
     const parsed = JSON.parse(raw) as { version: number; tasks: unknown[] };
-    assert.equal(parsed.version, 10);
+    assert.equal(parsed.version, STORE_VERSION);
     assert.equal(parsed.tasks.length, 1);
   });
 
@@ -140,7 +141,7 @@ describe('BridgeStore migration', () => {
     const store = await BridgeStore.open(dir);
     assert.equal(store.loadError, null);
     const state = store.read();
-    assert.equal(state.version, 10);
+    assert.equal(state.version, STORE_VERSION);
     assert.equal(state.tasks.length, 1);
     assert.equal(state.tasks[0].id, task.id);
     assert.equal(state.dedup.updateIds['u1'].hash, 'hash');
@@ -182,7 +183,7 @@ describe('BridgeStore migration', () => {
     const store = await BridgeStore.open(dir);
     assert.equal(store.loadError, null);
     const state = store.read();
-    assert.equal(state.version, 10);
+    assert.equal(state.version, STORE_VERSION);
     assert.equal(state.tasks.length, 1);
     // The partial result outcome cannot be replayed, so it is dropped (a safe fallback is returned).
     assert.equal(state.dedup.updateIds['u-result'].response, null);

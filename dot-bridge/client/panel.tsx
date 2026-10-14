@@ -11,6 +11,7 @@ import { ConnectionCard } from './connection';
 import { TaskDetail } from './detail';
 import { TaskEditor } from './editor';
 import { parseDotBridgeError, remoteStatusLabel, ui, verifyStatusLabel } from './i18n';
+import { claimWaitLabel } from '../shared/claim-recovery';
 import { Button, cardFill, controlFill, outline, panelFill, Pill, SectionTitle, tint, type Colors } from './kit';
 import {
   TASK_STATUS_GROUPS,
@@ -97,7 +98,8 @@ function TaskRow(props: {
   const { colors } = props;
   const round = currentRound(props.task);
   const localCancel = round.remoteStatus === 'stopped' && round.claim === null;
-  const statusText = remoteStatusLabel(round.remoteStatus, { localCancel });
+  const stalled = claimWaitLabel(round) !== null;
+  const statusText = stalled ? ui('Not claimed · needs attention', '长时间未领取') : remoteStatusLabel(round.remoteStatus, { localCancel });
   const origin = props.task.remoteOrigin
     ? ui(`Remote device ${props.task.remoteOrigin.deviceId}`, `远端设备 ${props.task.remoteOrigin.deviceId}`)
     : props.task.mode === 'text'
@@ -107,7 +109,7 @@ function TaskRow(props: {
   const meta = [workspaceText, origin].filter(Boolean).join(' · ');
   const locale = ui<'en' | 'zh-CN'>('en', 'zh-CN');
   const updated = formatTimeAgo(props.task.updatedAt, Date.now(), locale);
-  const statusColor = toneColor(colors, statusTone(round.remoteStatus, { localCancel }));
+  const statusColor = stalled ? colors.statusWarning : toneColor(colors, statusTone(round.remoteStatus, { localCancel }));
   return (
     <Pressable
       accessibilityRole="button"

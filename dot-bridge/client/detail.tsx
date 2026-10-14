@@ -4,7 +4,8 @@ import { PermissionPanel } from './permissions';
 import type { PluginClientContext, PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { copyText, Icon, useToast } from '@getpaseo/plugin/client/react-native';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { taskCancelRequest, taskLocalClose, taskHistory, taskMessageAdd, taskRoundCreate, taskRoundRetry } from '../shared/rpc';
+import { taskCancelRequest, taskLocalClose, taskRewake, taskHistory, taskMessageAdd, taskRoundCreate, taskRoundRetry } from '../shared/rpc';
+import { awaitingClaim, claimWaitLabel } from '../shared/claim-recovery';
 import { canStartNextRound } from '../shared/machine';
 import { currentRound, type Message, type Round, type RoundResult, type Task, type Verification } from '../shared/schema';
 import { deliveryStatusLabel, isExplicitRejection, messageKindLabel, parseDotBridgeError, remoteStatusLabel, ui, verifyStatusLabel } from './i18n';
@@ -141,6 +142,7 @@ export function TaskDetail(props: TaskDetailProps) {
   const roundOp = usePendingOperation<{ id: string; revision: number }>();
   const retryOp = usePendingOperation<{ id: string; revision: number }>();
   const closeOp = usePendingOperation<{ id: string; roundId: string; revision: number }>();
+  const wakeOp = usePendingOperation<{ id: string; roundId: string; revision: number }>();
 
   const selected = task.rounds.find(round => round.roundId === selectedRoundId) ?? current;
   const isCurrent = selected.roundId === task.currentRoundId;
@@ -230,6 +232,20 @@ export function TaskDetail(props: TaskDetailProps) {
     } finally { setBusy(null); }
   }
 
+  async function wakeAgain() {
+    setBusy('rewake');
+    try {
+      const pending = wakeOp.begin(JSON.stringify({ id: task.id, roundId: current.roundId }), { id: task.id, roundId: current.roundId, revision: task.revision });
+      await props.rpc(taskRewake, { operationId: pending.operationId, ...pending.payload });
+      wakeOp.settle();
+      toast.show(ui('Reminder queued; waiting for Dot to claim.', '已安排重新通知，等待 Dot 领取。'), { variant: 'success' });
+      await refresh();
+    } catch (error) {
+      if (isExplicitRejection(error)) { wakeOp.settle(); await refresh(); }
+      toast.error(parseDotBridgeError(error));
+    } finally { setBusy(null); }
+  }
+
   async function retry() {
     setBusy('retry');
     try {
@@ -272,6 +288,14 @@ export function TaskDetail(props: TaskDetailProps) {
       </Pressable>
 
       <PermissionPanel task={task} roundId={selected.roundId} colors={colors} rpc={props.rpc} refresh={refresh} open={openPr} />
+
+      {isCurrent && awaitingClaim(task) && current.claimWait?.timedOut ? (
+        <View style={{ borderWidth: 1, borderColor: colors.statusWarning, borderRadius: 8, padding: 12, gap: 8 }}>
+          <Text style={{ color: colors.statusWarning, fontSize: 13 }}>{claimWaitLabel(current)}</Text>
+          <Button label={ui('Wake Dot again', '重新唤醒 Dot')} colors={colors} onPress={wakeAgain} disabled={busy !== null} />
+          <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{ui('Reminders are limited to once per minute. This keeps the same round and messages.', '手动唤醒每分钟最多一次，保留当前轮次和消息。')}</Text>
+        </View>
+      ) : null}
 
       <View style={{ gap: 6 }}>
         <Text style={{ color: colors.foreground, fontSize: 16, fontWeight: '700' }}>{task.title}</Text>

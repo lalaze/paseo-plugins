@@ -155,6 +155,6 @@ describe('event delivery', () => {
     });
     await engine.deliverTick();
     const taskChanged = eventStatus(engine).find(event => event.name === 'paseo.dot.task_changed');
-    assert.equal(taskChanged?.status, 'pending');
+    assert.equal(taskChanged, undefined); // Queued work is only notified after dispatch.
   });
 });

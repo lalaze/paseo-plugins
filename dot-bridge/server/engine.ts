@@ -49,6 +49,7 @@ import {
   type Connection,
   type PendingEvent,
   type RemoteStatus,
+  type Round,
   type RoundResult,
   type StoreFile,
   type Subscription,
@@ -66,6 +67,7 @@ import { ProcessManager } from './processes';
 import { commandSpecSchema, type CommandSpec } from '../shared/processes';
 import { findWorkspaceGrant, WorkspaceAuthorizationStore } from './workspace-authorization';
 import { automaticPermissionTools } from '../shared/workspace-authorization';
+import { awaitingClaim, CLAIM_TIMEOUT_MS, CLAIM_RETRY_DELAYS, MANUAL_WAKE_COOLDOWN_MS } from '../shared/claim-recovery';
 
 const CHALLENGE_TTL = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 8;
@@ -602,7 +604,9 @@ export class BridgeEngine {
       }
       current.callbackVerifications[id] = at;
       draft.connection = current;
-      for (const task of draft.tasks) this.wake(draft, task);
+      if (input.name === 'paseo.dot.task_changed') {
+        for (const task of draft.tasks) if (task.connectionId === args.connectionId) this.wake(draft, task);
+      }
     });
     return { id, refreshBefore, cursor: null, truncated: false };
   }
@@ -1044,6 +1048,77 @@ export class BridgeEngine {
     return result;
   }
 
+  /** Host action only. Reminds the existing round; never claims, retries, or changes its messages. */
+  async rewakeTask(input: { id: string; roundId: string; revision: number; operationId: string }): Promise<Task> {
+    return this.deps.store.mutate(draft => {
+      const dedup = this.dedupOperation(draft, input.operationId, { kind: 'rewake', ...input }, input.id);
+      if (dedup.status === 'duplicate') return this.replay<Task>(draft, input.operationId, this.requireTask(draft, input.id));
+      const task = this.requireTask(draft, input.id);
+      this.requireRevision(task, input.revision);
+      if (task.currentRoundId !== input.roundId) throw dotBridgeError('round-stale');
+      if (!awaitingClaim(task)) throw dotBridgeError('wake-unavailable');
+      if (!this.readyToDispatch()) throw dotBridgeError('connection-unverified');
+      const at = this.now(), wait = this.claimWaitState(draft, task);
+      if (!wait || at - wait.firstDeliveredAt < CLAIM_TIMEOUT_MS || at - wait.lastWakeAt < MANUAL_WAKE_COOLDOWN_MS
+        || this.hasPendingWake(draft, task)) throw dotBridgeError('wake-cooldown');
+      const next = this.withClaimWait(task, { ...wait, timedOut: true, lastWakeAt: at }, at);
+      const recorded = recordOperation(next, input.operationId, at);
+      this.replace(draft, recorded);
+      this.emitReminder(draft, recorded);
+      const response = structuredClone(recorded);
+      this.setReceipt(draft, input.operationId, response);
+      return response;
+    });
+  }
+
+  private withClaimWait(task: Task, claimWait: NonNullable<Round['claimWait']>, at: number): Task {
+    return { ...task, rounds: task.rounds.map(round => round.roundId === task.currentRoundId ? { ...round, claimWait } : round),
+      revision: task.revision + 1, updatedAt: at };
+  }
+
+  /** Old stores lack receipt timestamps. Use the latest task update as a conservative baseline. */
+  private claimWaitState(state: StoreFile, task: Task): Round['claimWait'] {
+    const round = currentRound(task);
+    if (round.claimWait) return round.claimWait;
+    const event = state.events.find(e => e.status === 'delivered' && e.name === 'paseo.dot.task_changed'
+      && e.data.taskId === task.id && e.data.roundId === round.roundId && e.data.kind !== 'cancel_requested');
+    if (!event) return null;
+    // Conservatively start at the latest task update; event creation can precede delivery.
+    const at = Math.max(event.createdAt, task.updatedAt);
+    return { firstDeliveredAt: at, lastWakeAt: at, retries: 0, timedOut: false };
+  }
+
+  private emitReminder(draft: StoreFile, task: Task): void {
+    const id = this.emit(draft, 'paseo.dot.task_changed', task.connectionId,
+      taskChangedDataSchema.parse({ taskId: task.id, roundId: task.currentRoundId, kind: 'created', messageSeq: task.messageSeq }));
+    draft.events.find(event => event.eventId === id)!.claimRecovery = true;
+  }
+
+  private async recoverUnclaimed(): Promise<void> {
+    const at = this.now();
+    const due = (state: StoreFile, task: Task) => {
+      if (!awaitingClaim(task)) return false;
+      const wait = this.claimWaitState(state, task);
+      return !!wait && ((!wait.timedOut && at - wait.firstDeliveredAt >= CLAIM_TIMEOUT_MS)
+        || (wait.retries < CLAIM_RETRY_DELAYS.length && at - wait.lastWakeAt >= CLAIM_RETRY_DELAYS[wait.retries]!
+          && !this.hasPendingWake(state, task) && this.readyToDispatch()));
+    };
+    const state = this.deps.store.read();
+    if (!state.tasks.some(task => due(state, task))) return;
+    await this.deps.store.mutate(draft => {
+      for (const task of [...draft.tasks]) {
+        if (!due(draft, task)) continue;
+        const wait = this.claimWaitState(draft, task)!;
+        const remind = wait.retries < CLAIM_RETRY_DELAYS.length && at - wait.lastWakeAt >= CLAIM_RETRY_DELAYS[wait.retries]!
+          && !this.hasPendingWake(draft, task) && this.readyToDispatch();
+        const next = this.withClaimWait(task, { ...wait, timedOut: true,
+          retries: wait.retries + (remind ? 1 : 0), lastWakeAt: remind ? at : wait.lastWakeAt }, at);
+        this.replace(draft, next);
+        if (remind) this.emitReminder(draft, next);
+      }
+    });
+  }
+
   /**
    * Restarts work on the current round after the dot reported a failure or could not deliver a
    * verified commit. The same task, branch and fixed base are kept, but a *new* roundId is minted so
@@ -1122,7 +1197,15 @@ export class BridgeEngine {
         if (round.remoteStatus !== 'queued' || task.cancelRequested) continue;
         const next = withDispatch(task, at);
         this.replace(draft, next);
-        this.wake(draft, next);
+        // A pre-dispatch event from an older build may already be in flight. Always create a
+        // fresh post-dispatch notification so its callback cannot swallow this wake-up.
+        for (const event of draft.events) {
+          if (event.data.taskId === task.id && event.data.roundId === round.roundId
+            && ['pending', 'sending'].includes(event.status)) {
+            event.status = 'failed'; event.lastError = 'notification-obsolete';
+          }
+        }
+        this.emitTaskChanged(draft, next, 'created');
         dispatched.push(candidate.id);
       }
       return dispatched;
@@ -1576,6 +1659,7 @@ export class BridgeEngine {
     if (this.delivering) return;
     this.delivering = true;
     try {
+      await this.recoverUnclaimed();
       const state = this.deps.store.read();
       const connection = state.connection;
       if (!connection) return;
@@ -1587,6 +1671,10 @@ export class BridgeEngine {
         const recheckAddress = event.status === 'failed' && event.attempts === 0 && event.lastError === 'callback-invalid: private-address';
         if (event.status === 'delivered' || (event.status === 'failed' && !recheckAddress)) continue;
         if (event.nextAttemptAt > at) continue;
+        if (!this.notificationNeeded(this.deps.store.read(), event)) {
+          decisions.push({ eventId: event.eventId, subscriptionId: event.subscriptionId, action: 'failed', error: 'notification-obsolete' });
+          continue;
+        }
         const subscription = this.matchSubscription(connection, event);
         if (!subscription) continue;
         // Delivery stops strictly at the granted expiry; an expired route is never used.
@@ -1603,6 +1691,14 @@ export class BridgeEngine {
           }
           address = check.address;
         }
+        // DNS verification can yield to a claim, stop, new round, or dispatch invalidation.
+        const latest = this.deps.store.read();
+        const latestEvent = latest.events.find(item => item.eventId === event.eventId);
+        if (latestEvent?.lastError === 'notification-obsolete'
+          || !this.notificationNeeded(latest, event)) {
+          decisions.push({ eventId: event.eventId, subscriptionId: event.subscriptionId, action: 'failed', error: 'notification-obsolete' });
+          continue;
+        }
         const decision = await this.deliverOne(event, subscription, secret, at, address);
         decisions.push(decision);
       }
@@ -1615,6 +1711,7 @@ export class BridgeEngine {
         for (const decision of decisions) {
           const event = draft.events.find(item => item.eventId === decision.eventId);
           if (!event) continue;
+          if (event.lastError === 'notification-obsolete') continue;
           event.subscriptionId = decision.subscriptionId;
           if (decision.action === 'delivered') {
             event.status = 'delivered';
@@ -1629,11 +1726,17 @@ export class BridgeEngine {
               }
             }
             // A delivered task_changed means the dot's callback received the message.
-            this.markMessagesDelivered(draft, event, at);
+            if (!event.claimRecovery) this.markMessagesDelivered(draft, event, at);
+            const task = draft.tasks.find(task => task.id === event.data.taskId);
+            if (task && event.name === 'paseo.dot.task_changed' && event.data.roundId === task.currentRoundId
+              && awaitingClaim(task) && !currentRound(task).claimWait) {
+              const deliveredAt = this.now();
+              this.replace(draft, this.withClaimWait(task, { firstDeliveredAt: deliveredAt, lastWakeAt: deliveredAt, retries: 0, timedOut: false }, deliveredAt));
+            }
           } else if (decision.action === 'failed') {
             event.status = 'failed';
             event.lastError = decision.error ?? 'delivery failed';
-            this.markMessagesDelivery(draft, event, 'failed', decision.error ?? 'delivery failed', at);
+            if (!event.claimRecovery && decision.error !== 'notification-obsolete') this.markMessagesDelivery(draft, event, 'failed', decision.error ?? 'delivery failed', at);
           } else {
             event.attempts = decision.attempts ?? event.attempts + 1;
             event.nextAttemptAt = decision.nextAttemptAt ?? at + backoff(event.attempts);
@@ -1786,15 +1889,42 @@ export class BridgeEngine {
   }
 
   private emitTaskChanged(draft: StoreFile, task: Task, kind: 'created' | 'message_added' | 'cancel_requested'): void {
+    if (kind !== 'cancel_requested' && !this.needsWake(task)) return;
     const round = currentRound(task);
     const data = taskChangedDataSchema.parse({ taskId: task.id, roundId: round.roundId, kind, messageSeq: task.messageSeq });
     this.emit(draft, 'paseo.dot.task_changed', task.connectionId, data);
   }
 
-  /** A wake event is only queued when the task has no undelivered event already waiting. */
+  private needsWake(task: Task): boolean {
+    const round = currentRound(task);
+    const active = ['dispatched', 'claimed', 'running', 'waiting_user'].includes(round.remoteStatus)
+      || (round.remoteStatus === 'completed' && round.result?.coversLatest === false);
+    return !round.stop.requested && !task.cancelRequested && active
+      && round.processedThroughSeq < task.userMessageSeq;
+  }
+
+  private notificationNeeded(state: StoreFile, event: PendingEvent): boolean {
+    if (event.name !== 'paseo.dot.task_changed') return true;
+    const task = state.tasks.find(task => task.id === event.data.taskId);
+    if (!task) return false;
+    if (event.data.kind === 'cancel_requested') {
+      // Local closure may allow a successor before remote stop is acknowledged. Its predecessor
+      // must still receive cancellation; stale wake-ups and stop requests are not interchangeable.
+      const round = task.rounds.find(round => round.roundId === event.data.roundId);
+      return !!round?.stop.requested && !round.stop.reported && (task.currentRoundId === round.roundId || !!round.claim);
+    }
+    return task.currentRoundId === event.data.roundId && (event.claimRecovery ? awaitingClaim(task) : this.needsWake(task));
+  }
+
+  private hasPendingWake(state: StoreFile, task: Task): boolean {
+    return state.events.some(event => event.name === 'paseo.dot.task_changed' && event.status !== 'delivered' && event.status !== 'failed'
+      && event.data.taskId === task.id && event.data.roundId === task.currentRoundId && event.data.kind !== 'cancel_requested'
+      && Number(event.data.messageSeq) >= task.userMessageSeq);
+  }
+
+  /** Only a notification for this round and input can satisfy its wake-up. */
   private wake(draft: StoreFile, task: Task): void {
-    const pending = draft.events.some(event => event.status !== 'delivered' && event.status !== 'failed' && event.data.taskId === task.id);
-    if (pending) return;
+    if (!this.needsWake(task) || this.hasPendingWake(draft, task)) return;
     this.emitTaskChanged(draft, task, 'created');
   }
 
@@ -1802,6 +1932,7 @@ export class BridgeEngine {
     const eventId = this.randomId();
     draft.events.push({
       eventId,
+      claimRecovery: false,
       name,
       connectionId,
       subscriptionId: null,

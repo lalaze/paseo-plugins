@@ -145,6 +145,13 @@ export const taskLocalClose = defineRpc({
   output: z.object({ task: taskSchema }).strict(),
 });
 
+/** Host UI recovery: notify the current unclaimed round without creating new work. */
+export const taskRewake = defineRpc({
+  name: 'task-rewake',
+  input: z.object({ operationId: operationIdSchema, id: uuidSchema, roundId: uuidSchema, revision: revisionSchema }).strict(),
+  output: z.object({ task: taskSchema }).strict(),
+});
+
 export const taskRoundCreate = defineRpc({
   name: 'task-round-create',
   input: z.object({ operationId: operationIdSchema, id: uuidSchema, revision: revisionSchema }).strict(),

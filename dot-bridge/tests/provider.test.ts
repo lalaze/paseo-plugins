@@ -69,6 +69,20 @@ async function bridge(t: TestContext, engine: BridgeEngine) {
 const cards = (events: ProviderEvent[]) => events.flatMap(e => (e.type === 'timeline.item' && e.item.type === 'tool_call' ? [e.item] : []));
 const label = (item: { detail: { type: string; label?: string } } | undefined) => (item?.detail.type === 'plain_text' ? item.detail.label : undefined);
 
+test('native chat shows an unclaimed timeout and replaces it after a real claim', async t => {
+  const h = await fixture(t); await h.openSession();
+  await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Continue') });
+  await h.store.mutate(draft => {
+    const task = withDispatch(draft.tasks[0]!, Date.now());
+    task.rounds[0]!.claimWait = { firstDeliveredAt: Date.now() - 120_000, lastWakeAt: Date.now(), retries: 3, timedOut: true };
+    draft.tasks[0] = task;
+  });
+  await h.wait(() => cards(h.events).some(item => label(item)?.includes('自动补发已达上限')));
+  assert.equal(h.events.some(e => e.type === 'session.turn' && e.state === 'completed'), false);
+  await h.claim();
+  await h.wait(() => label(cards(h.events).at(-1)) === 'Dot 已接单。');
+});
+
 test('MCP reads appear live, deduplicate task reads, and keep refused reads out of other connections', async t => {
   const h = await fixture(t, true); await h.openSession();
   await writeFile(join(h.cwd, 'main.ts'), 'export const n = 1;\n'); await mkdir(join(h.cwd, 'src'));

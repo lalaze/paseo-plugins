@@ -140,6 +140,13 @@ export const roundSchema = z
     targetBranch: branchSchema.nullable(),
     remoteStatus: remoteStatusSchema,
     claimedAt: z.number().int().nonnegative().nullable().default(null),
+    /** Delivery receipt is not a claim. Recovery budget persists across restarts. */
+    claimWait: z.object({
+      firstDeliveredAt: z.number().int().nonnegative(),
+      lastWakeAt: z.number().int().nonnegative(),
+      retries: z.number().int().min(0).max(3),
+      timedOut: z.boolean(),
+    }).strict().nullable().default(null),
     /** Repeating a claim returns this stored payload instead of creating a new claim. */
     claim: z
       .object({ claimedAt: z.number().int().nonnegative(), taskId: uuidSchema })
@@ -221,6 +228,8 @@ export const taskSchema = z
 export const pendingEventSchema = z
   .object({
     eventId: uuidSchema,
+    /** A reminder is only deliverable while this exact round remains unclaimed. */
+    claimRecovery: z.boolean().default(false),
     /** Event name, e.g. paseo.dot.task_changed. */
     name: z.enum(['paseo.dot.task_changed', 'paseo.dot.connection_test']),
     connectionId: connectionIdSchema,
@@ -340,7 +349,8 @@ export const dedupSchema = z
 // v5: attachments; v6: native-provider bindings; v7: pinned local workspace and file-operation receipts.
 // v8: chunked attachments up to 20 MiB and named local delivery paths.
 // v9: durable, round/message-bound local permission decisions.
-export const STORE_VERSION = 10;
+// v11: persisted unclaimed-round reminder budget and timeout notice.
+export const STORE_VERSION = 11;
 
 export const storeFileSchema = z
   .object({
@@ -416,6 +426,8 @@ export function migrateStoreFile(input: unknown): { data: unknown; migrated: boo
   if (!input || typeof input !== 'object' || Array.isArray(input)) return { data: input, migrated: false };
   const file = input as Record<string, unknown>;
   if (file.version === STORE_VERSION) return { data: file, migrated: false };
+  // Additive defaults only: do not run the pre-v10 permission-expiry migration again.
+  if (file.version === 10) return { data: { ...file, version: STORE_VERSION }, migrated: true };
   const out: Record<string, unknown> = { ...file, version: STORE_VERSION };
   const dedup = file.dedup && typeof file.dedup === 'object' && !Array.isArray(file.dedup)
     ? { ...(file.dedup as Record<string, unknown>) }

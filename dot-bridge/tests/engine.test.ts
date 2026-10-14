@@ -1,3 +1,4 @@
+import { STORE_VERSION } from '../shared/schema';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -147,7 +148,10 @@ describe('engine two-way check', () => {
     assert.equal(JSON.parse(calls[0].body).type, 'verification');
     // An existing subscription must also keep working when the proxy changes its DNS mapping.
     addresses = ['198.19.0.42'];
+    const { challenge } = await engine.startConnectionTest(randomUUID());
+    await engine.confirmConnection(engine.connection().id, challenge);
     const task = await engine.createTask({ ...taskInput(), mode: 'text', repository: null, remoteName: null, baseSha: null, targetBranch: null });
+    await engine.dispatchTick();
     await engine.deliverTick();
     assert.equal(engine.task(task.id).messages[0].delivery, 'delivered');
     const event = calls.find(call => JSON.parse(call.body).name === 'paseo.dot.task_changed');
@@ -161,6 +165,7 @@ describe('engine two-way check', () => {
     // The exception must not allow the same trusted hostname to rebind to a real local service.
     addresses = ['127.0.0.1'];
     const blocked = await engine.createTask({ ...taskInput(), mode: 'text', repository: null, remoteName: null, baseSha: null, targetBranch: null });
+    await engine.dispatchTick();
     const sent = calls.length;
     await engine.deliverTick();
     assert.equal(calls.length, sent);
@@ -188,12 +193,14 @@ describe('engine two-way check', () => {
     assert.equal(engine.readyToDispatch(), false);
     const task = await engine.createTask(taskInput());
     await engine.deliverTick();
-    assert.equal(engine.task(task.id).messages[0].delivery, 'delivered');
+    assert.equal(engine.task(task.id).messages[0].delivery, 'pending');
     const { challenge } = await engine.startConnectionTest(randomUUID());
     await engine.confirmConnection(engine.connection().id, challenge);
     assert.equal(engine.readyToDispatch(), true);
     const dispatched = await engine.dispatchTick();
     assert.deepEqual(dispatched, [task.id]);
+    await engine.deliverTick();
+    assert.equal(engine.task(task.id).messages[0].delivery, 'delivered');
   });
 
   it('rejects a subscription whose callback does not echo the challenge', async () => {
@@ -210,6 +217,7 @@ describe('engine two-way check', () => {
     await subscribeAndVerify(engine, clock);
     const task = await engine.createTask(taskInput());
     assert.equal(engine.task(task.id).messages[0].delivery, 'pending');
+    await engine.dispatchTick();
     await engine.deliverTick();
     assert.equal(engine.task(task.id).messages[0].delivery, 'delivered');
   });
@@ -1281,7 +1289,7 @@ it('migrates a v3 Git task and result to the current format without breaking ope
   const reopened = await harness({ dir: store.dir });
   try {
     assert.equal(reopened.store.loadError, null);
-    assert.equal(reopened.store.read().version, 10);
+    assert.equal(reopened.store.read().version, STORE_VERSION);
     const restored = reopened.engine.task(task.id);
     assert.equal(restored.mode, 'git');
     assert.deepEqual(restored.attachments, []);

@@ -14,6 +14,7 @@ import {
   taskAttachmentUpload,
   taskCancelRequest,
   taskLocalClose,
+  taskRewake,
   taskCreate,
   taskGet,
   taskHistory,
@@ -232,6 +233,11 @@ export default function contribute(server: PluginServerContext) {
   });
   server.handle(taskLocalClose, async input => {
     const task = await (await useBackend()).closeLocal(input);
+    void tick();
+    return { task };
+  });
+  server.handle(taskRewake, async input => {
+    const task = await (await useBackend()).rewakeTask(input);
     void tick();
     return { task };
   });

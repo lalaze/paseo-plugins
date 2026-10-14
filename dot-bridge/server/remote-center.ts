@@ -120,6 +120,10 @@ export class RemoteCenter {
       const task = action === 'cancel' ? await this.engine.cancelRequest(args) : action === 'next' ? await this.engine.createRound(args) : await this.engine.retryRound(args);
       void this.tick(); return remoteTaskView(task);
     }
+    if (action === 'rewake') {
+      const args = rpc.taskRewake.input.parse(input); this.owned(device, args.id);
+      const task = await this.engine.rewakeTask(args); void this.tick(); return remoteTaskView(task);
+    }
     if (action === 'local-close') {
       const args = rpc.taskLocalClose.input.parse(input); this.owned(device, args.id);
       await this.settleStop(args.id);
