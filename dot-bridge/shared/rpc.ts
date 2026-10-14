@@ -2,7 +2,8 @@
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
 import { attachmentContentSchema, attachmentSchema } from './attachments';
-import { connectionSchema, resultSchema, taskSchema, uuidSchema, verificationSchema } from './schema';
+import { connectionSchema, resultSchema, uuidSchema, verificationSchema } from './schema';
+import { taskPanelSchema, attachmentPageSchema } from './attachment-pages';
 import { permissionSchema } from './permissions';
 
 const operationIdSchema = z.string().uuid();
@@ -92,19 +93,19 @@ export const taskCreate = defineRpc({
       mode: z.literal('text').default('text'),
     })
     .strict(),
-  output: z.object({ task: taskSchema }).strict(),
+  output: z.object({ task: taskPanelSchema }).strict(),
 });
 
 export const taskList = defineRpc({
   name: 'task-list',
   input: z.object({ workspaceId: z.string().min(1).max(200).nullable().default(null) }).strict(),
-  output: z.object({ tasks: z.array(taskSchema), dataDir: z.string(), loadError: z.string().nullable() }).strict(),
+  output: z.object({ tasks: z.array(taskPanelSchema), dataDir: z.string(), loadError: z.string().nullable() }).strict(),
 });
 
 export const taskGet = defineRpc({
   name: 'task-get',
   input: z.object({ id: uuidSchema }).strict(),
-  output: z.object({ task: taskSchema }).strict(),
+  output: z.object({ task: taskPanelSchema }).strict(),
 });
 
 /**
@@ -129,33 +130,33 @@ export const taskMessageAdd = defineRpc({
   input: z
     .object({ operationId: operationIdSchema, id: uuidSchema, revision: revisionSchema, body: z.string().min(1).max(20_000), kind: z.enum(['requirement', 'answer']) })
     .strict(),
-  output: z.object({ task: taskSchema }).strict(),
+  output: z.object({ task: taskPanelSchema }).strict(),
 });
 
 export const taskCancelRequest = defineRpc({
   name: 'task-cancel-request',
   input: z.object({ operationId: operationIdSchema, id: uuidSchema, revision: revisionSchema }).strict(),
-  output: z.object({ task: taskSchema }).strict(),
+  output: z.object({ task: taskPanelSchema }).strict(),
 });
 
 /** Local UI only: release a stopped-but-unacknowledged round, never a remote approval tool. */
 export const taskLocalClose = defineRpc({
   name: 'task-local-close',
   input: z.object({ operationId: operationIdSchema, id: uuidSchema, roundId: uuidSchema, revision: revisionSchema }).strict(),
-  output: z.object({ task: taskSchema }).strict(),
+  output: z.object({ task: taskPanelSchema }).strict(),
 });
 
 /** Host UI recovery: notify the current unclaimed round without creating new work. */
 export const taskRewake = defineRpc({
   name: 'task-rewake',
   input: z.object({ operationId: operationIdSchema, id: uuidSchema, roundId: uuidSchema, revision: revisionSchema }).strict(),
-  output: z.object({ task: taskSchema }).strict(),
+  output: z.object({ task: taskPanelSchema }).strict(),
 });
 
 export const taskRoundCreate = defineRpc({
   name: 'task-round-create',
   input: z.object({ operationId: operationIdSchema, id: uuidSchema, revision: revisionSchema }).strict(),
-  output: z.object({ task: taskSchema }).strict(),
+  output: z.object({ task: taskPanelSchema }).strict(),
 });
 
 /**
@@ -165,7 +166,7 @@ export const taskRoundCreate = defineRpc({
 export const taskRoundRetry = defineRpc({
   name: 'task-round-retry',
   input: z.object({ operationId: operationIdSchema, id: uuidSchema, revision: revisionSchema }).strict(),
-  output: z.object({ task: taskSchema }).strict(),
+  output: z.object({ task: taskPanelSchema }).strict(),
 });
 
 export const taskAttachmentUpload = defineRpc({
@@ -182,4 +183,11 @@ export const taskAttachmentChunkRead = defineRpc({
   name: 'task-attachment-chunk-read',
   input: z.object({ id: uuidSchema, attachmentId: uuidSchema, index: z.number().int().nonnegative() }).strict(),
   output: z.object({ attachment: attachmentSchema, content: z.string(), done: z.boolean() }).strict(),
+});
+
+/** Metadata only; stable newest-first pages, including on remote device caches. */
+export const taskAttachmentList = defineRpc({
+  name: 'task-attachment-list',
+  input: z.object({ id: uuidSchema, cursor: z.string().max(100).nullable().default(null) }).strict(),
+  output: attachmentPageSchema,
 });

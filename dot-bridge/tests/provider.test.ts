@@ -69,6 +69,23 @@ async function bridge(t: TestContext, engine: BridgeEngine) {
 const cards = (events: ProviderEvent[]) => events.flatMap(e => (e.type === 'timeline.item' && e.item.type === 'tool_call' ? [e.item] : []));
 const label = (item: { detail: { type: string; label?: string } } | undefined) => (item?.detail.type === 'plain_text' ? item.detail.label : undefined);
 
+test('native prompts can exceed 16 archived files while individual messages remain bounded', async t => {
+  const h = await fixture(t);
+  const id = randomUUID();
+  const files = Array.from({ length: 16 }, (_, i) => ({ name: `file-${i}.txt`, mediaType: 'text/plain', encoding: 'utf8' as const, content: `file ${i}` }));
+  const promptInput = { id, operationId: randomUUID(), clientMessageId: randomUUID(), workspaceId: 'ws-test', cwd: h.cwd,
+    body: 'Read these files', systemPrompt: '', attachments: files };
+  const first = await h.engine.providerPrompt(promptInput);
+  assert.equal(first.task.attachments.length, 16);
+  const input = { ...promptInput, operationId: randomUUID(), clientMessageId: randomUUID(), attachments: [files[0]!] };
+  const next = await h.engine.providerPrompt(input);
+  assert.equal(next.task.attachments.length, 17);
+  assert.equal((await h.engine.providerPrompt(input)).duplicate, true);
+  assert.equal(h.engine.task(id).attachments.length, 17);
+  assert.equal((await h.engine.readAttachment(id, first.task.attachments[0]!.id)).content, 'file 0');
+  await assert.rejects(h.engine.providerPrompt({ ...input, operationId: randomUUID(), attachments: [...files, files[0]!] }), /attachment-batch-limit/);
+});
+
 test('native chat shows an unclaimed timeout and replaces it after a real claim', async t => {
   const h = await fixture(t); await h.openSession();
   await h.connection.send({ type: 'session.prompt', sessionId: 'chat', prompt: prompt('Continue') });

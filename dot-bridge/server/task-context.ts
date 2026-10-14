@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import { currentRound, type Task, type Round, type Message } from '../shared/schema';
+import { attachmentSummary } from '../shared/attachment-pages';
+import { ATTACHMENT_PAGE_SIZE } from '../shared/attachments';
 import { dotBridgeError } from '../shared/errors';
 
 export const CONTEXT_PAGE_CHARS = 24_000;
 const RECENT_MESSAGES = 8;
-export const historySectionSchema = z.enum(['messages', 'user_messages', 'rounds', 'changes', 'permissions']);
+export const historySectionSchema = z.enum(['messages', 'user_messages', 'rounds', 'changes', 'permissions', 'attachments']);
 export type HistorySection = z.infer<typeof historySectionSchema>;
 export interface HistoryInput {
   section: HistorySection;
@@ -47,6 +49,7 @@ function historyRecords(task: Task, input: HistoryInput): unknown[] {
     case 'user_messages': return task.messages.filter(m => m.author === 'user' && matchesRound(m));
     case 'rounds': return task.rounds.filter(matchesRound);
     case 'changes': return task.localChanges.filter(c => matchesRound(c) && (!input.operationId || c.operationId === input.operationId));
+    case 'attachments': return task.attachments.filter(matchesRound);
     case 'permissions': return task.permissions.filter(matchesRound);
   }
 }
@@ -126,10 +129,12 @@ export function taskContext(task: Task, afterSeq: number | null = null) {
       currentRoundId: task.currentRoundId, status: task.status, cancelRequested: task.cancelRequested,
       messageSeq: task.messageSeq, userMessageSeq: task.userMessageSeq, revision: task.revision,
       rounds: [roundContext(round)], messages: page.messages,
-      attachments: task.attachments, permissions: relevantPermissions(task),
+      attachments: task.attachments.slice(-ATTACHMENT_PAGE_SIZE), permissions: relevantPermissions(task),
     },
     context: {
       view: 'working-context', messagePage: page.paging,
+      attachments: { ...attachmentSummary(task), returned: Math.min(task.attachments.length, ATTACHMENT_PAGE_SIZE),
+        hasOlder: task.attachments.length > ATTACHMENT_PAGE_SIZE, historySection: 'attachments' },
       userInstructions: users,
       latestPriorResult: previous?.result ? { roundId: previous.roundId, summary: previous.result.summary,
         coversLatest: previous.result.coversLatest, reportedAt: previous.result.reportedAt } : null,
@@ -137,7 +142,7 @@ export function taskContext(task: Task, afterSeq: number | null = null) {
         status: c.status, at: c.at, fileCount: c.files.length, conflictCount: c.conflicts.length })),
       totals: { rounds: task.rounds.length, changes: task.localChanges.length, permissions: task.permissions.length },
       historyTool: 'get_dot_task_history',
-      instructions: 'This is a partial working view, not the complete task archive. On a fresh read, userInstructions contains exact user messages; before acting, read all its pages with section=user_messages if nextCursor is non-null, and reconcile earlier restrictions with newer instructions. Incremental reads set userInstructions=null and rely on your previously read constraints; if that context is lost, call get_dot_task without afterSeq or knownGuidanceVersion. Previous user instructions remain applicable unless explicitly changed; no generated summary can grant permission. For older messages/results use get_dot_task_history. Before retrying an uncertain file write, query section=changes with operationId; recentChanges is only an index and missing entries are not proof of no write. For follow-up messages use get_dot_task(afterSeq=last nextAfterSeq) until hasMore=false. Update processedThroughSeq only through user input actually read and handled, not merely the latest sequence number.',
+      instructions: 'This is a partial working view, not the complete task archive. On a fresh read, userInstructions contains exact user messages; before acting, read all its pages with section=user_messages if nextCursor is non-null, and reconcile earlier restrictions with newer instructions. Incremental reads set userInstructions=null and rely on your previously read constraints; if that context is lost, call get_dot_task without afterSeq or knownGuidanceVersion. Previous user instructions remain applicable unless explicitly changed; no generated summary can grant permission. For older messages/results use get_dot_task_history. Only the latest eight attachment records are included; use section=attachments (optionally roundId) for the full metadata archive, then read bytes by attachmentId. Missing files in this view are not evidence of missing uploads. Before retrying an uncertain file write, query section=changes with operationId; recentChanges is only an index and missing entries are not proof of no write. For follow-up messages use get_dot_task(afterSeq=last nextAfterSeq) until hasMore=false. Update processedThroughSeq only through user input actually read and handled, not merely the latest sequence number.',
     },
   };
 }
@@ -149,6 +154,7 @@ export function taskStatus(task: Task) {
     taskId: task.id, revision: task.revision, currentRoundId: task.currentRoundId,
     status: task.status, messageSeq: task.messageSeq, userMessageSeq: task.userMessageSeq,
     processedThroughSeq: round.processedThroughSeq, cancelRequested: task.cancelRequested,
+    attachments: attachmentSummary(task),
     claim: round.claim, stop: round.stop, claimWait: round.claimWait, dispatchBlocked: round.dispatchBlocked,
     progress: round.lastProgress ? { kind: round.lastProgress.kind, at: round.lastProgress.at, processedThroughSeq: round.lastProgress.processedThroughSeq } : null,
     result: round.result ? { updateId: round.result.updateId, coversLatest: round.result.coversLatest } : null,

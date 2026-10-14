@@ -4,7 +4,10 @@ export const MAX_ATTACHMENT_BYTES = 1024 * 1024;
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 // Divisible by three: separately encoded chunks can also form a single data URI.
 export const ATTACHMENT_CHUNK_BYTES = 384 * 1024;
-export const MAX_TASK_ATTACHMENTS = 16;
+// Per-request and in-flight bounds are independent of the retained attachment archive.
+export const MAX_PROMPT_ATTACHMENTS = 16;
+export const MAX_PENDING_TRANSFERS = 16;
+export const ATTACHMENT_PAGE_SIZE = 8;
 export const MAX_ATTACHMENT_CONTENT = Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4;
 export const attachmentIdSchema = z.string().uuid();
 export const attachmentNameSchema = z.string().min(1).max(160)

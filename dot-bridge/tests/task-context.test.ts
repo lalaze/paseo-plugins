@@ -10,6 +10,48 @@ import { taskContext, taskStatus, taskHistoryPage, CONTEXT_PAGE_CHARS } from '..
 import { BridgeEngine } from '../server/engine';
 import { BridgeStore } from '../server/store';
 import { createMcpServer } from '../server/mcp-server';
+import { attachmentPage, taskPanelSchema, taskPanelView } from '../shared/attachment-pages';
+import { taskAttachmentList } from '../shared/rpc';
+
+test('attachment archives page losslessly while working/UI views contain only recent files', () => {
+  const task = historyTask();
+  task.attachments = Array.from({ length: 37 }, (_, i) => ({ id: randomUUID(), roundId: task.currentRoundId,
+    name: `image-${i}.png`, mediaType: 'image/png', size: 100 + i, sha256: 'a'.repeat(64), author: 'dot' as const, createdAt: i }));
+  const original = structuredClone(task);
+  const context = taskContext(task);
+  assert.deepEqual(context.task.attachments, task.attachments.slice(-8));
+  assert.equal(context.context.attachments.total, 37);
+  assert.equal(context.context.attachments.totalBytes, task.attachments.reduce((n, a) => n + a.size, 0));
+  assert.equal(context.context.attachments.hasOlder, true);
+  const panel = taskPanelSchema.parse(taskPanelView(task));
+  assert.equal(panel.attachments.length, 8);
+  assert.equal(panel.attachmentSummary.total, 37);
+
+  const history = [];
+  let historyCursor: string | null = null;
+  do {
+    const page = taskHistoryPage(task, { section: 'attachments', roundId: task.currentRoundId, cursor: historyCursor });
+    history.push(...page.entries.map(entry => { assert.ok('value' in entry); return entry.value; }));
+    historyCursor = page.nextCursor;
+  } while (historyCursor);
+  assert.deepEqual(history, original.attachments);
+
+  const first = taskAttachmentList.output.parse(attachmentPage(task));
+  const collected = [...first.attachments];
+  let cursor = first.nextCursor;
+  // New uploads and progress during browsing must not duplicate or skip older records.
+  task.attachments.push({ ...task.attachments[0]!, id: randomUUID() }); task.revision++;
+  while (cursor) {
+    const page = taskAttachmentList.output.parse(attachmentPage(task, cursor));
+    collected.push(...page.attachments); cursor = page.nextCursor;
+  }
+  assert.deepEqual(collected, [...original.attachments].reverse());
+  assert.throws(() => attachmentPage({ ...task, id: randomUUID() }, first.nextCursor), /cursor/);
+  assert.throws(() => attachmentPage(task, `${task.id}:${randomUUID()}`), /cursor/);
+  assert.throws(() => attachmentPage(task, ''), /cursor/);
+  assert.deepEqual(attachmentPage({ ...task, attachments: [] }), { attachments: [], total: 0, totalBytes: 0, nextCursor: null });
+  assert.equal(task.attachments.length, 38); // Projecting the view never trims storage.
+});
 
 function historyTask() {
   let task = createTask({ id: randomUUID(), connectionId: 'a'.repeat(32), workspaceId: 'ws',
@@ -163,5 +205,21 @@ test('MCP default is compact; status and incremental reads reuse versioned guida
   }
   const page = await h.call('get_dot_task_history', { section: 'user_messages' });
   assert.equal(page.total, h.task.messages.filter(m => m.author === 'user').length);
-  assert.equal(h.engine.task(h.task.id).messages.length, h.task.messages.length);
+  for (let i = 0; i < 17; i++) {
+    const current = h.engine.task(h.task.id);
+    await h.engine.uploadAttachment({ id: current.id, roundId: current.currentRoundId, revision: current.revision,
+      actor: 'user', operationId: randomUUID(), name: `file-${i}.txt`, mediaType: 'text/plain', encoding: 'utf8', content: `file ${i}` });
+  }
+  const attachments = await h.call('get_dot_task');
+  assert.equal(attachments.task.attachments.length, 8);
+  assert.equal(attachments.context.attachments.total, 17);
+  const archive = [];
+  let cursor = null;
+  do {
+    const result = await h.call('get_dot_task_history', { section: 'attachments', cursor });
+    assert.equal(result.error, undefined);
+    archive.push(...result.entries.map((entry: { value: unknown }) => entry.value));
+    cursor = result.nextCursor;
+  } while (cursor);
+  assert.deepEqual(archive, h.engine.task(h.task.id).attachments);
 });

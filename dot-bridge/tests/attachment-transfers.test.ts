@@ -29,6 +29,22 @@ function chunks(identity: { taskId: string; roundId: string; connectionId: strin
   return Array.from({ length: Math.ceil(bytes.length / ATTACHMENT_CHUNK_BYTES) }, (_, index) => ({ ...identity, operationId, name: 'test.bin', mediaType: 'application/octet-stream', size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), index, content: bytes.subarray(index * ATTACHMENT_CHUNK_BYTES, (index + 1) * ATTACHMENT_CHUNK_BYTES).toString('base64') }));
 }
 
+test('Dot can deliver more than 16 files through both upload paths without losing old bytes', async t => {
+  const h = await fixture(t);
+  for (let i = 0; i < 17; i++) await h.engine.uploadAttachment({ ...h.identity, id: h.identity.taskId,
+    operationId: randomUUID(), actor: 'dot', name: `note-${i}.txt`, mediaType: 'text/plain', encoding: 'utf8', content: `note ${i}` });
+  const parts = chunks(h.identity, Buffer.alloc(ATTACHMENT_CHUNK_BYTES + 7, 42));
+  for (const part of parts) await h.engine.uploadAttachmentChunk(part);
+  assert.equal(h.engine.task(h.identity.taskId).attachments.length, 18);
+  await h.restart();
+  const files = h.engine.task(h.identity.taskId).attachments;
+  assert.equal(files.length, 18);
+  assert.equal((await h.engine.readAttachment(h.identity.taskId, files[0]!.id)).content, 'note 0');
+  assert.deepEqual(await readFile(files.at(-1)!.localPath!), Buffer.alloc(ATTACHMENT_CHUNK_BYTES + 7, 42));
+  assert.equal((await h.engine.uploadAttachmentChunk(parts[0]!)).complete, true);
+  assert.equal(h.engine.task(h.identity.taskId).attachments.length, 18);
+});
+
 test('2 MiB transfer resumes out of order across restart, saves a named file, and reads exact chunks over authenticated MCP', async t => {
   const h = await fixture(t); const bytes = Buffer.alloc(2 * 1024 * 1024);
   for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
@@ -133,5 +149,5 @@ test('incomplete transfer count is bounded, and completed transfers at the 20 Mi
   for (const part of parts) result = receiveChunk(h.dir, part, Date.now());
   assert.deepEqual(result!.bytes, Buffer.alloc(MAX_FILE_BYTES, 37));
   for (let i = 0; i < 15; i++) receiveChunk(h.dir, { ...parts[0]!, operationId: randomUUID() }, Date.now());
-  assert.throws(() => receiveChunk(h.dir, { ...parts[0]!, operationId: randomUUID() }, Date.now()), /attachment-limit/);
+  assert.throws(() => receiveChunk(h.dir, { ...parts[0]!, operationId: randomUUID() }, Date.now()), /transfer-limit/);
 });

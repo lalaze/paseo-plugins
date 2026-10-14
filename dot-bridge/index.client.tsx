@@ -14,7 +14,7 @@ export default function contribute(client: PluginClientContext) {
     kind: 'dot-attachment', version: 1,
     schema: z.object({ taskId: z.string().uuid(), attachment: attachmentSchema }).strict(),
     Component: props => <AttachmentPanel colors={props.theme.colors} rpc={client.rpc}
-      task={{ id: props.item.data.taskId, currentRoundId: props.item.data.attachment.roundId, revision: 0, attachments: [props.item.data.attachment] }}
+      task={{ id: props.item.data.taskId, currentRoundId: props.item.data.attachment.roundId, revision: 0 }} attachment={props.item.data.attachment}
       readOnly refresh={async () => {}} />,
   });
   const Surface = (props: PluginSurfaceProps) => {

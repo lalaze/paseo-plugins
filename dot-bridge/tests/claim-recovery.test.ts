@@ -131,13 +131,13 @@ test('v10 upgrade initializes legacy dispatched recovery from delivery', async t
   assert.equal(h.deliveries.length, 2);
 });
 
-test('v10 migration preserves existing approval decisions', async t => {
+for (const version of [10, 11]) test(`v${version} migration preserves existing approval decisions`, async t => {
   const h = await fixture(t), task = await h.prompt();
   const permission = permissionSchema.parse({ requestId: randomUUID(), roundId: task.currentRoundId,
     userMessageSeq: task.userMessageSeq, title: 'Read file', description: 'Read requested file',
     scope: { toolName: 'read_dot_file', action: 'read', targets: ['one.ts'] }, status: 'approved',
     requestedAt: h.clock.value, resolvedAt: h.clock.value });
-  const raw = { ...h.store.read(), version: 10, tasks: [{ ...task, permissions: [permission] }] };
+  const raw = { ...h.store.read(), version, tasks: [{ ...task, permissions: [permission] }] };
   const migrated = migrateStoreFile(raw);
   assert.equal(migrated.migrated, true);
   const parsed = taskSchema.parse((migrated.data as typeof raw).tasks[0]);

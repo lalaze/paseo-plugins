@@ -1,3 +1,4 @@
+import { attachmentPage, taskPanelView } from './shared/attachment-pages';
 import { createDotProvider, DOT_PROVIDER_ID, WORKSPACE_ENV } from './server/provider';
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 import type { PaseoApi } from '@getpaseo/client';
@@ -10,6 +11,7 @@ import {
   connectionTest,
   connectionTokenReveal,
   taskAttachmentRead,
+  taskAttachmentList,
   taskAttachmentChunkRead,
   taskAttachmentUpload,
   taskCancelRequest,
@@ -195,19 +197,19 @@ export default function contribute(server: PluginServerContext) {
     if (!directory) throw dotBridgeError('workspace-missing', input.workspaceId);
     if (current instanceof RemoteClient) {
       const result = await current.providerPrompt({ id: input.operationId, operationId: input.operationId, clientMessageId: 'panel:' + input.operationId, workspaceId: input.workspaceId, cwd: canonicalWorkspace(directory), body: input.requirement, systemPrompt: input.acceptance, attachments: [] });
-      return { task: result.task };
+      return { task: taskPanelView(result.task) };
     }
     const task = await current.createTask({ ...input, mode: 'text', repository: null, remoteName: null, baseSha: null, targetBranch: null, environmentHint: '', workspaceRoot: canonicalWorkspace(directory) });
     void tick();
-    return { task };
+    return { task: taskPanelView(task) };
   });
   server.handle(taskList, async ({ workspaceId }) => {
     await ready;
     if (!engine) return { tasks: [], dataDir: resolveDataDir() ?? '', loadError: dataDirError ?? store?.loadError ?? null };
     const tasks = (await useBackend()).tasks().filter(task => (workspaceId ? task.workspaceId === workspaceId : true));
-    return { tasks, dataDir: store?.dir ?? '', loadError: store?.loadError ?? null };
+    return { tasks: tasks.map(taskPanelView), dataDir: store?.dir ?? '', loadError: store?.loadError ?? null };
   });
-  server.handle(taskGet, async ({ id }) => ({ task: (await useBackend()).task(id) }));
+  server.handle(taskGet, async ({ id }) => ({ task: taskPanelView((await useBackend()).task(id)) }));
   server.handle(taskPermissionRespond, async input => {
     const permission = await (await useBackend()).respondPermission(input);
     void tick();
@@ -217,39 +219,40 @@ export default function contribute(server: PluginServerContext) {
   server.handle(taskMessageAdd, async input => {
     const task = await (await useBackend()).addMessage(input);
     void tick();
-    return { task };
+    return { task: taskPanelView(task) };
   });
   server.handle(taskAttachmentUpload, async input => {
     const result = await (await useBackend()).uploadAttachment({ ...input, actor: 'user' });
     void tick();
     return result;
   });
+  server.handle(taskAttachmentList, async ({ id, cursor }) => attachmentPage((await useBackend()).task(id), cursor));
   server.handle(taskAttachmentRead, async input => (await useBackend()).readAttachment(input.id, input.attachmentId));
   server.handle(taskAttachmentChunkRead, async input => (await useBackend()).readAttachmentChunk(input.id, input.attachmentId, input.index));
   server.handle(taskCancelRequest, async input => {
     const task = await (await useBackend()).cancelRequest(input);
     void tick();
-    return { task };
+    return { task: taskPanelView(task) };
   });
   server.handle(taskLocalClose, async input => {
     const task = await (await useBackend()).closeLocal(input);
     void tick();
-    return { task };
+    return { task: taskPanelView(task) };
   });
   server.handle(taskRewake, async input => {
     const task = await (await useBackend()).rewakeTask(input);
     void tick();
-    return { task };
+    return { task: taskPanelView(task) };
   });
   server.handle(taskRoundCreate, async input => {
     const task = await (await useBackend()).createRound(input);
     void tick();
-    return { task };
+    return { task: taskPanelView(task) };
   });
   server.handle(taskRoundRetry, async input => {
     const task = await (await useBackend()).retryRound(input);
     void tick();
-    return { task };
+    return { task: taskPanelView(task) };
   });
 
   return () => {

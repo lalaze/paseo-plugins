@@ -1,3 +1,4 @@
+import { MAX_PROMPT_ATTACHMENTS } from '../shared/attachments';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -18,7 +19,7 @@ const envelope = z.object({ action: z.string().max(80), input: z.unknown() }).st
 const promptSchema = z.object({
   id: z.string().uuid(), operationId: z.string().uuid(), clientMessageId: z.string().min(1).max(500),
   workspaceId: z.string().min(1).max(200), cwd: z.string().min(1).max(4000),
-  body: z.string().min(1).max(20000), systemPrompt: z.string().max(20000), attachments: z.array(attachmentContentSchema).max(16),
+  body: z.string().min(1).max(20000), systemPrompt: z.string().max(20000), attachments: z.array(attachmentContentSchema).max(MAX_PROMPT_ATTACHMENTS),
   steerRoundId: z.string().uuid().optional(),
 }).strict();
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');

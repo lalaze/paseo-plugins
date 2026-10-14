@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { ATTACHMENT_CHUNK_BYTES, attachmentChunkSchema, attachmentNameSchema, MAX_TASK_ATTACHMENTS, type AttachmentChunk } from '../shared/attachments';
+import { ATTACHMENT_CHUNK_BYTES, attachmentChunkSchema, attachmentNameSchema, MAX_PENDING_TRANSFERS, type AttachmentChunk } from '../shared/attachments';
 import { dotBridgeError } from '../shared/errors';
 
 type Transfer = AttachmentChunk & { taskId: string; roundId: string; connectionId: string; operationId: string };
@@ -53,7 +53,7 @@ export function receiveChunk(dataDir: string, input: Transfer, now: number): { r
     if (stat.isDirectory() && !stat.isSymbolicLink() && now - stat.mtimeMs > 24 * 60 * 60 * 1000) rmSync(path, { recursive: true });
   }
   const dir = join(taskDir, input.operationId);
-  if (!existsSync(dir) && readdirSync(taskDir).length >= MAX_TASK_ATTACHMENTS) throw dotBridgeError('attachment-limit');
+  if (!existsSync(dir) && readdirSync(taskDir).length >= MAX_PENDING_TRANSFERS) throw dotBridgeError('transfer-limit');
   directory(dir);
   const manifest = JSON.stringify({ taskId: input.taskId, roundId: input.roundId, connectionId: input.connectionId, operationId: input.operationId, name: input.name, mediaType: input.mediaType, size: input.size, sha256: input.sha256 });
   const metadata = join(dir, 'manifest.json');

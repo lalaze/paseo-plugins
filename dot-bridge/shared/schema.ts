@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 import { localReceiptSchema } from './local-files';
-import { attachmentSchema, MAX_TASK_ATTACHMENTS } from './attachments';
+import { attachmentSchema } from './attachments';
 import { permissionSchema } from './permissions';
 
 export const shaSchema = z.string().regex(/^[0-9a-f]{40,64}$/);
@@ -202,7 +202,7 @@ export const taskSchema = z
     currentRoundId: uuidSchema,
     rounds: z.array(roundSchema).min(1),
     messages: z.array(messageSchema),
-    attachments: z.array(attachmentSchema).max(MAX_TASK_ATTACHMENTS).default([]),
+    attachments: z.array(attachmentSchema).default([]),
     /** Latest message sequence, including dot messages; the next message takes seq + 1. */
     messageSeq: z.number().int().nonnegative().default(0),
     /** Latest user message sequence. Coverage is judged against this, not against dot messages. */
@@ -350,7 +350,8 @@ export const dedupSchema = z
 // v8: chunked attachments up to 20 MiB and named local delivery paths.
 // v9: durable, round/message-bound local permission decisions.
 // v11: persisted unclaimed-round reminder budget and timeout notice.
-export const STORE_VERSION = 11;
+// v12: retained attachments have no cumulative count limit; working views page metadata.
+export const STORE_VERSION = 12;
 
 export const storeFileSchema = z
   .object({
@@ -427,7 +428,7 @@ export function migrateStoreFile(input: unknown): { data: unknown; migrated: boo
   const file = input as Record<string, unknown>;
   if (file.version === STORE_VERSION) return { data: file, migrated: false };
   // Additive defaults only: do not run the pre-v10 permission-expiry migration again.
-  if (file.version === 10) return { data: { ...file, version: STORE_VERSION }, migrated: true };
+  if (file.version === 10 || file.version === 11) return { data: { ...file, version: STORE_VERSION }, migrated: true };
   const out: Record<string, unknown> = { ...file, version: STORE_VERSION };
   const dedup = file.dedup && typeof file.dedup === 'object' && !Array.isArray(file.dedup)
     ? { ...(file.dedup as Record<string, unknown>) }

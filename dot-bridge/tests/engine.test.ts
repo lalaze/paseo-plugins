@@ -1359,17 +1359,22 @@ describe('task attachments', () => {
     await store.dispose();
   });
 
-  it('enforces task quotas and revision checks across concurrent uploads', async () => {
+  it('accepts more than 16 attachments while keeping revision checks and persisted files', async () => {
     const { engine, store } = await harness();
     const task = await newTextTask(engine);
     const inputs = [uploadInput(task, 'A'), uploadInput(task, 'B')];
     const outcomes = await Promise.allSettled(inputs.map(input => engine.uploadAttachment(input)));
     assert.equal(outcomes.filter(result => result.status === 'fulfilled').length, 1);
     assert.equal(engine.task(task.id).attachments.length, 1);
-    for (let i = 1; i < 16; i++) await engine.uploadAttachment(uploadInput(engine.task(task.id), `file ${i}`));
-    const full = engine.task(task.id);
-    await assert.rejects(engine.uploadAttachment(uploadInput(full, 'overflow')), /attachment-limit/);
-    assert.equal(engine.task(task.id).attachments.length, 16);
+    const first = engine.task(task.id).attachments[0]!;
+    for (let i = 1; i < 20; i++) await engine.uploadAttachment(uploadInput(engine.task(task.id), `file ${i}`));
+    assert.equal(engine.task(task.id).attachments.length, 20);
     await store.dispose();
+    const reopened = await harness({ dir: store.dir });
+    assert.equal(reopened.store.loadError, null);
+    assert.equal(reopened.engine.task(task.id).attachments.length, 20);
+    const accepted = inputs[outcomes.findIndex(result => result.status === 'fulfilled')]!;
+    assert.equal((await reopened.engine.readAttachment(task.id, first.id)).content, accepted.content);
+    await reopened.store.dispose();
   });
 });

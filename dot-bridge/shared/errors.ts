@@ -4,7 +4,9 @@ import { ui, type UiLocale } from './i18n';
 const messages = {
   'attachment-invalid': ['The attachment is invalid or failed integrity checks.', '附件格式不合法或完整性检查失败。'],
   'attachment-too-large': ['Use chunks for files over 1 MiB; maximum file size is 20 MiB.', '超过 1 MiB 请使用分块传输，单文件最大 20 MiB。'],
-  'attachment-limit': ['A task can hold at most 16 attachments.', '每个任务最多保存 16 个附件。'],
+  'attachment-limit': ['An older Bridge rejected the attachment count. Update the Bridge on both hosts.', '旧版 Bridge 拒绝了附件数量，请更新相关主机的 Bridge。'],
+  'attachment-batch-limit': ['Send at most 16 attachments in one message; send the rest in another message.', '单条消息最多携带 16 个附件，请分多条消息发送；任务累计数量不限。'],
+  'transfer-limit': ['At most 16 unfinished transfers per task. Resume existing uploads before starting another.', '此任务已有 16 个未完成传输，请先续传已有文件再开始新传输；已保存附件数量不限。'],
   'attachment-missing': ['This attachment does not belong to the task.', '该附件不属于当前任务。'],
   'store-invalid': ['The saved dot-bridge file failed validation and was left untouched.', 'dot-bridge 存档校验失败，原文件未改动。'],
   'store-locked': ['Another dot-bridge process is using this data directory, so this one will not dispatch tasks.', '另一个 dot-bridge 正在使用同一数据目录，本进程不会派发任务。'],

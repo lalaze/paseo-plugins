@@ -6,7 +6,7 @@ import { applyLocalChanges, listSources, readChangeJournal, readSource, sourceHa
 import { assertPermissionAccess, assertWorkspaceReviewAccess, workspaceReviewPaths, consumePermission, validatePermissionIntent } from './permissions';
 import { readWorkspaceChanges, type WorkspaceReviewOptions } from './workspace-changes';
 import type { LocalChange, LocalReceipt } from '../shared/local-files';
-import { ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, MAX_TASK_ATTACHMENTS, type Attachment, type AttachmentContent, type AttachmentChunk } from '../shared/attachments';
+import { ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, type Attachment, type AttachmentContent, type AttachmentChunk } from '../shared/attachments';
 import { dotBridgeError } from '../shared/errors';
 import {
   CALLBACK_ENDPOINT_ERROR,
@@ -797,8 +797,8 @@ export class BridgeEngine {
     /** A steer must never create a new round if completion/stop races its delivery. */
     steerRoundId?: string;
   }): Promise<{ task: Task; duplicate: boolean }> {
+    if (input.attachments.length > MAX_PROMPT_ATTACHMENTS) throw dotBridgeError('attachment-batch-limit');
     const files = input.attachments.map(content => ({ content, bytes: decodeAttachment(content) }));
-    if (files.length > MAX_TASK_ATTACHMENTS) throw dotBridgeError('attachment-limit');
     const { steerRoundId, ...messageIdentity } = input;
     const identity = { kind: 'provider-prompt', ...messageIdentity };
     const blobs = new AttachmentStore(this.deps.store.dir);
@@ -833,7 +833,6 @@ export class BridgeEngine {
       if (!task.workspaceRoot && !task.remoteOrigin) task.workspaceRoot = input.cwd;
       const provider = task.provider!;
       task = { ...task, provider: { ...provider, clientMessageIds: { ...provider.clientMessageIds, [task.messageSeq]: input.clientMessageId } } };
-      if (task.attachments.length + files.length > MAX_TASK_ATTACHMENTS) throw dotBridgeError('attachment-limit');
       for (const { content, bytes } of files) {
         const attachment: Attachment = { id: this.randomId(), roundId: task.currentRoundId, name: content.name,
           mediaType: content.mediaType, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), author: 'user', createdAt: at };
@@ -866,7 +865,6 @@ export class BridgeEngine {
     if (round.stop.requested) throw dotBridgeError('task-rejected', 'stop requested');
     const permission = this.assertAccess(task, toolName, [operation.name], operation);
     if (!round.claim || !['claimed', 'running', 'waiting_user'].includes(round.remoteStatus)) throw dotBridgeError('claim-required');
-    if (task.attachments.length >= MAX_TASK_ATTACHMENTS) throw dotBridgeError('attachment-limit');
     return permission;
   }
 
@@ -903,7 +901,6 @@ export class BridgeEngine {
       if (input.actor === 'user' && task.revision !== input.revision) throw dotBridgeError('revision-conflict');
       const round = currentRound(task);
       if (input.actor === 'dot' && (!round.claim || !['claimed', 'running', 'waiting_user'].includes(round.remoteStatus))) throw dotBridgeError('claim-required');
-      if (task.attachments.length >= MAX_TASK_ATTACHMENTS) throw dotBridgeError('attachment-limit');
       return permission;
     };
     // Check identity before I/O. A successful upload can replay even after the round moved on.
