@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { commandSpecSchema, type CommandSpec } from '../shared/processes';
+import { commandSpecSchema, commandCwdSchema, type CommandSpec } from '../shared/processes';
 import { canonicalJson } from '../shared/mcp';
 import { dotBridgeError } from '../shared/errors';
 import { validateLocalPath } from './local-files';
@@ -25,7 +25,7 @@ type LiveProcess = { child: ChildProcess; timer: ReturnType<typeof setTimeout>; 
 
 /** Validate the initial cwd only. Host commands are deliberately not presented as sandboxed. */
 export function commandDirectory(root: string, cwd: string): string {
-  const parts = validateLocalPath(cwd, true);
+  const parts = validateLocalPath(commandCwdSchema.parse(cwd), true);
   if (realpathSync(root) !== root || !lstatSync(root).isDirectory()) throw dotBridgeError('task-rejected', 'Workspace root changed');
   let dir = root;
   for (const part of parts) {

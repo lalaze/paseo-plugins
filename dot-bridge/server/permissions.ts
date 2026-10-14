@@ -10,7 +10,8 @@ export function validatePermissionIntent(p: PermissionIntent): void {
   if (new Set(targets).size !== targets.length) throw dotBridgeError('task-rejected', 'Duplicate permission targets');
   if (toolName === 'run_dot_command') {
     if (operation?.kind !== 'command' || targets.length !== 1 || targets[0] !== (operation.cwd || '/')) throw dotBridgeError('permission-required', 'Command approval must bind operationId, executable, args, cwd and timeout');
-    validateLocalPath(operation.cwd ?? '', true);
+    try { validateLocalPath(operation.cwd ?? '', true); }
+    catch { throw dotBridgeError('task-rejected', 'Command cwd must be a normalized relative workspace directory. Use cwd="" and targets=["/"] for the workspace root; do not send an absolute workspace path.'); }
   } else if (toolName === 'apply_dot_changes') {
     if (operation?.kind !== 'files') throw dotBridgeError('permission-required', 'File approval requires operationId and exact before/after SHA-256 for each change');
     if (operation.changes.length !== targets.length || new Set(operation.changes.map(c => c.path)).size !== targets.length

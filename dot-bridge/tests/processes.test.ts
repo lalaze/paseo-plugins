@@ -51,6 +51,30 @@ test('command execution requires exact approval; output, exit code and durable r
   assert.equal(journal.exitCode, 7);
 });
 
+test('root cwd aliases create permission cards and execute once in the bound workspace', async t => {
+  const h = await fixture(t);
+  for (const cwd of ['.', './', '/']) {
+    const command = h.input('console.log(process.cwd())', { cwd });
+    await h.approve(command);
+    const permission = h.engine.task(h.task.id).permissions.at(-1)!;
+    assert.deepEqual(permission.scope.targets, ['/']);
+    assert.equal(permission.scope.operation?.kind, 'command');
+    if (permission.scope.operation?.kind === 'command') assert.equal(permission.scope.operation.cwd, '');
+    const result = await h.engine.runCommand(command);
+    assert.equal(result.status, 'exited'); assert.equal(result.exitCode, 0);
+    assert.equal(result.output.trim(), h.root);
+    // Equivalent root spellings cannot cause another launch or invalidate an exact approval.
+    assert.equal((await h.engine.runCommand({ ...command, cwd: '' })).pid, result.pid);
+  }
+  await mkdir(join(h.root, 'app'));
+  const rootCommand = h.input('console.log(process.cwd())', { cwd: '.' });
+  await h.approve(rootCommand);
+  await assert.rejects(h.engine.runCommand({ ...rootCommand, cwd: 'app' }), /permission-required/);
+  const subdirectory = h.input('console.log(process.cwd())', { cwd: 'app' });
+  await h.approve(subdirectory);
+  assert.equal((await h.engine.runCommand(subdirectory)).output.trim(), join(h.root, 'app'));
+});
+
 test('concurrent retries execute once and do not inherit daemon secrets or an implicit shell', async t => {
   const h = await fixture(t);
   process.env.DOT_PROCESS_TEST_SECRET = 'should-not-be-forwarded'; t.after(() => { delete process.env.DOT_PROCESS_TEST_SECRET; });
@@ -65,7 +89,7 @@ test('concurrent retries execute once and do not inherit daemon secrets or an im
 
 test('cwd traversal, symlinks and protected directories are refused before execution', async t => {
   const h = await fixture(t); await symlink(h.root, join(h.root, 'linked'));
-  for (const cwd of ['../outside', '/tmp', '.git', 'linked']) {
+  for (const cwd of ['../outside', h.root, '/tmp', '.git', './app', 'app/', 'linked']) {
     const command = h.input('console.log("unexpected")', { cwd });
     if (cwd === 'linked') { await h.approve(command); await assert.rejects(h.engine.runCommand(command), /ordinary workspace directory/); }
     else await assert.rejects(h.approve(command));

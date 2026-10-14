@@ -64,6 +64,24 @@ test('native permission approval is scoped, durable and wakes Dot without finish
   await h.engine.applyLocalFiles({ ...h.identity, operationId: h.request.scope.operation.operationId, userMessageSeq: task.userMessageSeq, changes: [{ path: 'one.ts', expectedSha256: null, content: 'a' }] });
 });
 
+test('native command cards use explicit bounded details while retaining the exact approval payload', async t => {
+  const h = await fixture(t);
+  const operation = { kind: 'command' as const, operationId: randomUUID(), command: 'npm', args: ['run', 'dev', '--', '--host', '0.0.0.0', '--port', '5173', '--strictPort'], cwd: '', timeoutMs: 86_400_000 };
+  const request = { ...h.request, title: '启动测试环境', description: '会生成字体资源并在局域网开放测试服务，不安装依赖。', scope: { toolName: 'run_dot_command', action: '启动开发服务器', targets: ['/'], operation } };
+  await h.engine.requestPermission(request);
+  await h.wait(() => h.events.some(event => event.type === 'session.permission'));
+  const event = h.events.find(event => event.type === 'session.permission'); assert.ok(event?.type === 'session.permission');
+  assert.equal(event.request.title, '启动测试环境');
+  assert.match(event.request.description!, /24 小时/); assert.match(event.request.description!, /工作区外文件和网络/);
+  assert.ok(!event.request.description!.includes('86400000'));
+  assert.ok(event.request.detail?.type === 'plain_text');
+  assert.match(event.request.detail.text!, /npm run dev -- --host 0.0.0.0 --port 5173 --strictPort/);
+  assert.match(event.request.detail.text!, /生成字体资源/);
+  assert.deepEqual(event.request.input?.scope, request.scope);
+  await h.connection.send({ type: 'session.permission', sessionId: 'chat', permissionId: event.request.id, response: { behavior: 'allow' } });
+  assert.deepEqual(h.engine.task(h.identity.taskId).permissions[0].scope.operation, operation);
+});
+
 test('pending requests replay on reconnect; stop invalidates buttons and stale approvals fail', async t => {
   const h = await fixture(t); await h.engine.requestPermission(h.request);
   await h.wait(() => h.events.some(e => e.type === 'session.permission'));

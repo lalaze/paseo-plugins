@@ -7,7 +7,7 @@ import type { LocalReceipt } from '../shared/local-files';
 import { currentRound, uuidSchema, type Task } from '../shared/schema';
 import type { DotActivity } from './activity';
 import { unifiedDiff } from './diff';
-import { pendingPermissions, permissionDescription, permissionPromptId } from '../shared/permissions';
+import { pendingPermissions, permissionSummary, permissionDisplayDetails, permissionPromptId } from '../shared/permissions';
 import { canonicalJson } from '../shared/mcp';
 import type { BridgeEngine } from './engine';
 
@@ -134,7 +134,8 @@ export function createDotProvider(options: { engine(): Promise<ProviderEngine>; 
             const id = permissionPromptId(task.id, p.requestId);
             if (session.permissions.has(id)) continue;
             emit({ type: 'session.permission', sessionId: session.id, request: {
-              id, name: p.scope.toolName, kind: 'tool', title: `需要你确认：${p.title}`, description: permissionDescription(p),
+              id, name: p.scope.toolName, kind: 'tool', title: p.title, description: permissionSummary(p, task.workspaceRoot || session.binding.cwd),
+              detail: { type: 'plain_text', label: p.scope.operation?.kind === 'command' ? '命令与说明' : '操作说明', text: permissionDisplayDetails(p) },
               input: { taskId: task.id, roundId: p.roundId, userMessageSeq: p.userMessageSeq, scope: p.scope },
               actions: [{ id: 'allow', label: p.scope.operation ? '允许本次操作一次' : /^(read_dot_|list_dot_files)/.test(p.scope.toolName) ? '允许上述范围读取' : '确认本次请求', behavior: 'allow', variant: 'primary' }, { id: 'deny', label: '拒绝', behavior: 'deny', variant: 'danger' }],
               metadata: { localApprovalOnly: true, requestId: p.requestId },

@@ -29,7 +29,7 @@ Local workspace tasks expose four additional MCP tools:
 
 | Tool | Behavior |
 | --- | --- |
-| `run_dot_command` | Start an executable with an argument array, relative `cwd` (empty for workspace root), `timeoutMs` and stable UUID `operationId`. |
+| `run_dot_command` | Start an executable with an argument array, relative `cwd` (empty, `.`, `./` or `/` for workspace root), `timeoutMs` and stable UUID `operationId`. |
 | `read_dot_process` | Read status, PID, exit code, termination signal and merged stdout/stderr using the returned `nextOffset`. |
 | `stop_dot_process` | Stop the process owned by the exact task and original round. On POSIX, terminate its group and escalate to KILL after one second. |
 | `list_dot_processes` | List the latest 100 process records across this task's rounds, including services left running after a final answer. |
@@ -47,6 +47,11 @@ Dot requests `scope.toolName: "run_dot_command"`, `targets: [cwd || "/"]` and:
   "timeoutMs": 3600000
 }
 ```
+
+Root cwd aliases normalize to the same empty directory value for both approval and execution;
+permission root targets normalize to `/`. The `/` marker denotes the **bound workspace root**,
+not the host filesystem root. Absolute workspace paths, parent traversal and non-normalized
+subdirectory paths remain refused. Use `cwd: "app"` for a subdirectory, not `"./app"`.
 
 This example is appropriate only if the project's dev script accepts those arguments. Dot reads
 its startup instructions first, explains actual effects (including network listeners), waits for
@@ -172,6 +177,13 @@ or grant ChatGPT platform approval. Reload the plugin while native Dot sessions 
 an active provider still disconnects its local session.
 
 ## Confirmations inside Paseo
+
+Native confirmation cards show a concise scope summary and explicit operation details, instead
+of using the internal task/round JSON as the default visual. Command durations use seconds,
+minutes or hours; the complete command and rationale remain readable in the bounded details
+area. The Dot tasks panel keeps full confirmation text behind **Show details**, with the scoped
+Allow/Deny actions immediately visible. This presentation does not alter the stored permission
+binding, scope or approval lifetime. The native outer card layout is controlled by Paseo.
 
 When additional authorization is needed, Dot calls `request_dot_permission` with the current
 round/message sequence, a stable request UUID, the reason, tool name, action and exact targets.
