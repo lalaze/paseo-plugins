@@ -177,7 +177,17 @@ export const toolInputSchemas = {
   list_dot_tasks: z
     .object({ connectionId: connectionIdSchema, cursor: z.string().max(200).nullable().default(null) })
     .strict(),
-  get_dot_task: z.object({ connectionId: connectionIdSchema, taskId: uuidSchema }).strict(),
+  get_dot_task: z.object({ connectionId: connectionIdSchema, taskId: uuidSchema,
+    afterSeq: z.number().int().nonnegative().nullable().default(null),
+    knownGuidanceVersion: z.string().max(100).nullable().default(null),
+  }).strict(),
+  get_dot_task_status: z.object({ connectionId: connectionIdSchema, taskId: uuidSchema }).strict(),
+  get_dot_task_history: z.object({ connectionId: connectionIdSchema, taskId: uuidSchema,
+    section: z.enum(['messages', 'user_messages', 'rounds', 'changes', 'permissions']),
+    cursor: z.string().max(2000).nullable().default(null),
+    roundId: uuidSchema.nullable().default(null), operationId: uuidSchema.nullable().default(null),
+    limit: z.number().int().min(1).max(20).default(10),
+  }).strict(),
   claim_dot_task: z.object({ connectionId: connectionIdSchema, taskId: uuidSchema, roundId: uuidSchema }).strict(),
   request_dot_permission: permissionIntentSchema.extend({ connectionId: connectionIdSchema, taskId: uuidSchema, roundId: uuidSchema }).strict(),
   report_dot_permission_blocked: z.object({ connectionId: connectionIdSchema, taskId: uuidSchema, roundId: uuidSchema, requestId: uuidSchema, reason: z.string().trim().min(1).max(2000), intent: permissionBlockIntentSchema.optional() }).strict(),
@@ -239,7 +249,17 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   },
   {
     name: 'get_dot_task',
-    description: 'Read one task by id: the current round, the message sequence, the delivered result and any stop request.',
+    description: 'Read a compact working context: current round, recent messages, exact user instructions, applicable permission records, attachment metadata and a recent write index. Local history is preserved, not all returned. Follow context.userInstructions.nextCursor before acting if user history is incomplete. For incremental reads set afterSeq to the last message sequence actually read; follow context.messagePage.nextAfterSeq until hasMore=false. Send knownGuidanceVersion only while you still retain those instructions; matching versions omit repeated guidance. Missing history/receipts are not proof of absence. Use get_dot_task_status for polling and get_dot_task_history for older records.',
+    readOnlyHint: true,
+  },
+  {
+    name: 'get_dot_task_status',
+    description: 'Poll lightweight current state, stop request, sequence numbers, permission decision markers and guidanceVersion. No message bodies, permission scopes or old results. If anything relevant changes, read get_dot_task before acting. This is not authorization and does not mark messages processed.',
+    readOnlyHint: true,
+  },
+  {
+    name: 'get_dot_task_history',
+    description: 'Read exact archived messages, user_messages, rounds, changes or permissions in bounded pages. Carry the same section/roundId/operationId filters with nextCursor until null. operationId applies only to changes: use it to resolve an uncertain write before retrying. Oversized records return jsonFragment with UTF-16 offsets; concatenate in order and parse only when complete=true. A revision-conflict requires restarting without a cursor. This does not change task state or acknowledge messages.',
     readOnlyHint: true,
   },
   {
@@ -256,8 +276,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   },
   { name: 'list_dot_files', description: 'List one directory in the task-bound local workspace. Relative paths only; paginated 200 entries. Requires a claimed active text round. Excludes symlinks, credentials and dependency directories.', readOnlyHint: true },
   { name: 'read_dot_file', description: 'Read a UTF-8 source file (max 256 KiB) in the task-bound local workspace, including uncommitted edits. Returns content and sha256; both null if absent. Requires a claimed active round. Read AGENTS.md instructions before editing.', readOnlyHint: true },
-  { name: 'read_dot_workspace_changes', description: 'Read bounded Git changes in the task workspace: staged, unstaged, renamed, deleted, untracked and flagged index files. No shell, writes or fetch. Paginated 20 files: pass the returned snapshotId with every nextOffset. Continue each nextDiffs item with snapshotId, path, diffKind and its byte diffOffset and sha256 as diffSha256 at offset 0. On a changed snapshot, restart at offset 0 without snapshotId. Disclose exclusions, omissions, unverified files and conflicted=true; no Git baseline or zero detected disk changes does not mean no unsaved buffers or branch commits. task.localChanges is only Dot write receipts. Requires an active claimed round. Remote reads execute on the originating device and are fenced again before delivery.', readOnlyHint: true },
-  { name: 'apply_dot_changes', description: LOCAL_FILE_LIMIT_INSTRUCTIONS + ' Apply requested code changes directly to the local workspace, without Git. Provide current userMessageSeq, a new operationId and 1–32 relative paths with expectedSha256 from read_dot_file and complete UTF-8 replacement content (null deletes a file). Null hash creates only if absent. Stale hashes block writes; unexpected mid-batch errors return explicit partial results. Check status/files/conflicts. Retry an unanswered call with the SAME operationId only with identical input; if that input is lost and get_dot_task shows no receipt for it, re-read the files and rebuild from current content under a new operationId, leaving out anything already present. An operation-bound approval cannot cover that new ID or changed bytes; request a fresh approval when access is guarded. Requires a claimed active round without a stop request. This writes files, not shell commands, and does not finish the conversation.', readOnlyHint: false },
+  { name: 'read_dot_workspace_changes', description: 'Read bounded Git changes in the task workspace: staged, unstaged, renamed, deleted, untracked and flagged index files. No shell, writes or fetch. Paginated 20 files: pass the returned snapshotId with every nextOffset. Continue each nextDiffs item with snapshotId, path, diffKind and its byte diffOffset and sha256 as diffSha256 at offset 0. On a changed snapshot, restart at offset 0 without snapshotId. Disclose exclusions, omissions, unverified files and conflicted=true; no Git baseline or zero detected disk changes does not mean no unsaved buffers or branch commits. context.recentChanges is only a short Dot write-receipt index; get_dot_task_history(section=changes) provides exact receipts. Requires an active claimed round. Remote reads execute on the originating device and are fenced again before delivery.', readOnlyHint: true },
+  { name: 'apply_dot_changes', description: LOCAL_FILE_LIMIT_INSTRUCTIONS + ' Apply requested code changes directly to the local workspace, without Git. Provide current userMessageSeq, a new operationId and 1–32 relative paths with expectedSha256 from read_dot_file and complete UTF-8 replacement content (null deletes a file). Null hash creates only if absent. Stale hashes block writes; unexpected mid-batch errors return explicit partial results. Check status/files/conflicts. Retry an unanswered call with the SAME operationId only with identical input; if that input is lost, first query get_dot_task_history(section=changes, operationId=the original ID) through all pages; only if no receipt exists, re-read the files and rebuild from current content under a new operationId, leaving out anything already present. An operation-bound approval cannot cover that new ID or changed bytes; request a fresh approval when access is guarded. Requires a claimed active round without a stop request. This writes files, not shell commands, and does not finish the conversation.', readOnlyHint: false },
   {
     name: 'upload_dot_attachment',
     description: 'Attach a file to a claimed current round (up to 1 MiB, 16 per task). Use utf8 for text, canonical base64 for binary. Retry with the same UUID operationId and exact payload. This does not complete the task; submit its result separately.',
@@ -306,7 +326,7 @@ export function connectionInstructions(connectionId: string, baseUrl: string): s
     baseUrl ? `Bridge endpoint: ${baseUrl}` : '',
     'When notified, read the connection\'s pending tasks; claim each task first, then arrange the work the user asked for.',
     'Set the task event subscription to process user-submitted work and follow-ups, not merely announce new tasks. If it was previously limited to a read-only connection test, ask the user once to update that scope. Keep asking before actions requiring new permission.',
-    'For provider conversations, prior task rounds are the chat history. On each follow-up read the whole latest task and continue the current round; send questions with report_dot_progress waiting_user and final answers with submit_dot_text_result.',
+    'For provider conversations, prior rounds remain in local history. Start with get_dot_task for compact working context, keep exact user constraints, and follow its pagination instructions. Poll with get_dot_task_status; fetch new messages with get_dot_task(afterSeq=last sequence actually read) and older records with get_dot_task_history. New rounds do not erase prior restrictions. Send questions with report_dot_progress waiting_user and final answers with submit_dot_text_result.',
     PROVIDER_CONVERSATION_INSTRUCTIONS,
     'Carry taskId and roundId on every message, status and result.',
     LOCAL_FILE_INSTRUCTIONS,

@@ -112,6 +112,8 @@ describe('MCP HTTP server', () => {
       const byName = new Map(tools.map(tool => [tool.name, tool.annotations.readOnlyHint]));
       assert.equal(byName.get('list_dot_tasks'), true);
       assert.equal(byName.get('get_dot_task'), true);
+      assert.equal(byName.get('get_dot_task_status'), true);
+      assert.equal(byName.get('get_dot_task_history'), true);
       assert.equal(byName.get('claim_dot_task'), false);
       assert.equal(byName.has('submit_dot_result'), false);
       assert.equal(byName.get('read_dot_file'), true);

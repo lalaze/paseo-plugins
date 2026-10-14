@@ -1,4 +1,5 @@
 import { AUTOMATIC_AUTHORIZATION_INSTRUCTIONS } from '../shared/workspace-authorization';
+import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { dotBridgeError, parseDotBridgeError } from '../shared/errors';
@@ -20,6 +21,17 @@ import { describeToolCall } from './activity';
 import type { BridgeEngine } from './engine';
 import { LOCAL_FILE_INSTRUCTIONS } from '../shared/local-files';
 import { PROCESS_INSTRUCTIONS } from '../shared/processes';
+import { taskContext, taskStatus, taskHistoryPage } from './task-context';
+import type { Task } from '../shared/schema';
+
+const GUIDANCE_VERSION = createHash('sha256').update(JSON.stringify([
+  'working-context-v1', PROVIDER_CONVERSATION_INSTRUCTIONS, AUTOMATIC_AUTHORIZATION_INSTRUCTIONS,
+  PERMISSION_HANDOFF_INSTRUCTIONS, PROCESS_INSTRUCTIONS, ATTACHMENT_DELIVERY_INSTRUCTIONS, LOCAL_FILE_INSTRUCTIONS,
+])).digest('hex');
+
+function guidanceVersionFor(task: Task): string {
+  return createHash('sha256').update(`${GUIDANCE_VERSION}:${task.mode}:${!!task.provider}:${!!task.remoteOrigin}`).digest('hex');
+}
 
 export interface McpServerOptions {
   engine: BridgeEngine;
@@ -167,7 +179,7 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
       throw error;
     }
     observe(name, input, { result });
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
   }
 
   /** Mirrors Dot's call into the live native conversation. It never changes the tool's outcome. */
@@ -197,7 +209,31 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
       case 'get_dot_task': {
         const args = input as z.infer<typeof toolInputSchemas.get_dot_task>;
         const task = options.engine.getForConnection(args.connectionId, args.taskId);
-        return { task, ...(task.mode === 'text' ? { ...(task.provider ? { conversationInstructions: PROVIDER_CONVERSATION_INSTRUCTIONS } : {}), workspaceAutomaticAuthorization: options.engine.automaticAuthorization(task), permissionInstructions: AUTOMATIC_AUTHORIZATION_INSTRUCTIONS + ' ' + PERMISSION_HANDOFF_INSTRUCTIONS, processInstructions: AUTOMATIC_AUTHORIZATION_INSTRUCTIONS + ' ' + PROCESS_INSTRUCTIONS, commandsAvailable: !task.remoteOrigin && !!task.workspaceRoot, attachmentInstructions: ATTACHMENT_DELIVERY_INSTRUCTIONS + (task.remoteOrigin ? ' This task originated on a remote device. Upload success means the center received the file; confirm remote delivery from a later task attachment localPath before claiming it was saved on the originating device.' : ''), localFileInstructions: LOCAL_FILE_INSTRUCTIONS, localFilesAvailable: task.workspaceRoot !== null || task.remoteOrigin !== null } : { legacyReadOnly: true }) };
+        const guidanceVersion = guidanceVersionFor(task);
+        const instructionsIncluded = args.knownGuidanceVersion !== guidanceVersion;
+        return { ...taskContext(task, args.afterSeq), guidanceVersion, instructionsIncluded,
+          ...(task.mode === 'text' ? {
+            workspaceAutomaticAuthorization: options.engine.automaticAuthorization(task),
+            commandsAvailable: !task.remoteOrigin && !!task.workspaceRoot,
+            localFilesAvailable: task.workspaceRoot !== null || task.remoteOrigin !== null,
+            ...(instructionsIncluded ? {
+              ...(task.provider ? { conversationInstructions: PROVIDER_CONVERSATION_INSTRUCTIONS } : {}),
+              permissionInstructions: AUTOMATIC_AUTHORIZATION_INSTRUCTIONS + ' ' + PERMISSION_HANDOFF_INSTRUCTIONS,
+              processInstructions: AUTOMATIC_AUTHORIZATION_INSTRUCTIONS + ' ' + PROCESS_INSTRUCTIONS,
+              attachmentInstructions: ATTACHMENT_DELIVERY_INSTRUCTIONS + (task.remoteOrigin ? ' This task originated on a remote device. Upload success means the center received the file; confirm remote delivery from a later task attachment localPath before claiming it was saved on the originating device.' : ''),
+              localFileInstructions: LOCAL_FILE_INSTRUCTIONS,
+            } : {}),
+          } : { legacyReadOnly: true }) };
+      }
+      case 'get_dot_task_status': {
+        const args = input as z.infer<typeof toolInputSchemas.get_dot_task_status>;
+        const task = options.engine.getForConnection(args.connectionId, args.taskId);
+        return { ...taskStatus(task), guidanceVersion: guidanceVersionFor(task),
+          workspaceAutomaticAuthorization: options.engine.automaticAuthorization(task) };
+      }
+      case 'get_dot_task_history': {
+        const args = input as z.infer<typeof toolInputSchemas.get_dot_task_history>;
+        return taskHistoryPage(options.engine.getForConnection(args.connectionId, args.taskId), args);
       }
       case 'claim_dot_task': {
         const args = input as z.infer<typeof toolInputSchemas.claim_dot_task>;

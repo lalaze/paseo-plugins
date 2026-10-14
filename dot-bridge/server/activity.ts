@@ -71,7 +71,7 @@ export function describeToolCall(name: ToolName, input: Record<string, unknown>,
     case 'get_dot_task':
       // One card per user message: re-reading the same message is not new activity.
       if (failed) return null;
-      const read = (outcome.result as { task: Task }).task;
+      const read = (outcome.result as { task: Pick<Task, 'currentRoundId' | 'userMessageSeq'> }).task;
       return { ...base, id: `${task.id}:read-task:${read.currentRoundId}:${read.userMessageSeq}`, roundId: read.currentRoundId, kind: 'read-task', target: '', status, detail: '' };
     case 'list_dot_files': {
       const result = outcome.result as { entries: Array<{ path: string; type: string }>; nextOffset: number | null } | undefined;
