@@ -19,6 +19,24 @@ export function outline(colors: Colors): string {
   return tint(colors.foreground, 0.12);
 }
 
+/**
+ * High-coverage fill for the page's main content panel. The host background is often a wallpaper, so
+ * a nearly opaque surface keeps text readable while still letting the wallpaper show at the edges.
+ */
+export function panelFill(colors: Colors, alpha = 0.96): string {
+  return tint(colors.surface0, alpha);
+}
+
+/** Slightly raised fill for cards and bordered groups inside the main panel. */
+export function cardFill(colors: Colors, alpha = 0.94): string {
+  return tint(colors.surface1, alpha);
+}
+
+/** Fill for inputs and chip tracks that sit on top of a card. */
+export function controlFill(colors: Colors, alpha = 0.9): string {
+  return tint(colors.surface2, alpha);
+}
+
 export type ButtonVariant = 'primary' | 'outline' | 'ghost' | 'danger';
 
 /** Primary is filled, danger is a red fill for destructive confirmations, outline is a border, ghost is text. `xs` is the size used on cards. */
@@ -31,22 +49,27 @@ export function Button(props: {
   size?: 'xs' | 'sm';
   disabled?: boolean;
   full?: boolean;
+  /** Optional explicit height. Used by the compact Dot page to reach a ~44px touch target without changing every shared caller. */
+  height?: number;
   /** Square button showing just the icon; the label stays as the accessibility label. */
   iconOnly?: boolean;
 }) {
   const { colors } = props;
   const variant = props.variant ?? 'primary';
   const small = props.size === 'xs';
+  const buttonHeight = props.height ?? (small ? 26 : 32);
   const fg = variant === 'primary' || variant === 'danger' ? colors.surface0 : variant === 'ghost' ? colors.foregroundMuted : colors.foreground;
   return <Pressable
     accessibilityRole="button"
     accessibilityLabel={props.label}
+    accessibilityState={{ disabled: props.disabled }}
+    aria-disabled={props.disabled}
     disabled={props.disabled}
     onPress={props.onPress}
     style={({ pressed }) => ({
       flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
-      height: small ? 26 : 32, paddingHorizontal: props.iconOnly ? 0 : small ? 9 : 14, borderRadius: small ? 8 : 999,
-      width: props.iconOnly ? (small ? 26 : 32) : undefined, flexShrink: 0,
+      height: buttonHeight, paddingHorizontal: props.iconOnly ? 0 : small ? 9 : 14, borderRadius: small ? 8 : 999,
+      width: props.iconOnly ? buttonHeight : undefined, flexShrink: 0,
       alignSelf: props.full ? 'stretch' : 'flex-start',
       backgroundColor: variant === 'primary' ? colors.foreground : variant === 'danger' ? colors.statusDanger : pressed ? colors.surface2 : 'transparent',
       borderWidth: variant === 'outline' ? 1 : 0, borderColor: outline(colors),
@@ -64,11 +87,13 @@ export function Pill(props: { children: ReactNode; colors: Colors; onPress?(): v
   return <Pressable
     accessibilityRole="button"
     accessibilityLabel={props.label}
+    accessibilityState={{ selected: props.active, disabled: !props.onPress }}
+    aria-selected={props.active}
     onPress={props.onPress}
     disabled={!props.onPress}
     style={[{
       flexDirection: 'row', alignItems: 'center', gap: 6, height: 32, paddingHorizontal: 12, borderRadius: 999,
-      backgroundColor: props.active ? tint(colors.foreground, 0.14) : colors.surface2,
+      backgroundColor: props.active ? tint(colors.foreground, 0.14) : controlFill(colors),
     }, props.style]}
   >
     {props.children}

@@ -3,12 +3,12 @@ import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { Text, View } from 'react-native';
 import type { z } from 'zod';
 import { workspaceAuthorizationGet, workspaceAuthorizationSet, workspaceAuthorizationStatusSchema } from '../shared/workspace-authorization';
-import { Button, outline, type Colors } from './kit';
+import { Button, outline, panelFill, type Colors } from './kit';
 import { parseDotBridgeError } from './i18n';
 
 type Status = z.infer<typeof workspaceAuthorizationStatusSchema>;
 /** Mounted with key=workspaceId so a response from another workspace cannot change this control. */
-export function WorkspaceAuthorizationPanel({ rpc, colors, workspaceId }: { rpc: PluginClientContext['rpc']; colors: Colors; workspaceId: string }) {
+export function WorkspaceAuthorizationPanel({ rpc, colors, workspaceId, compact }: { rpc: PluginClientContext['rpc']; colors: Colors; workspaceId: string; compact?: boolean }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [review, setReview] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [refresh, setRefresh] = useState(0);
@@ -28,10 +28,10 @@ export function WorkspaceAuthorizationPanel({ rpc, colors, workspaceId }: { rpc:
     } catch (reason) { setStatus(null); setReview(false); setError(parseDotBridgeError(reason)); }
     finally { setBusy(false); }
   }
-  return <View style={{ borderWidth: 1, borderColor: outline(colors), borderRadius: 10, padding: 12, gap: 8 }}>
+  return <View style={{ borderWidth: 1, borderColor: outline(colors), borderRadius: 12, padding: compact ? 12 : 16, gap: 8, minWidth: 0, backgroundColor: panelFill(colors) }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-      <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: '600' }}>工作区自动授权 · {status ? status.enabled ? '已开启' : '未开启' : '读取中'}</Text>
-      {status ? <Button colors={colors} size="xs" variant="outline" disabled={busy} label={status.enabled ? '关闭' : '开启'} onPress={() => status.enabled ? void save(false) : setReview(true)} /> : null}
+      <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: '600', flexShrink: 1, minWidth: 0 }}>工作区自动授权 · {status ? status.enabled ? '已开启' : '未开启' : '读取中'}</Text>
+      {status ? <Button colors={colors} size="xs" variant="outline" height={compact ? 44 : undefined} disabled={busy} label={status.enabled ? '关闭' : '开启'} onPress={() => status.enabled ? void save(false) : setReview(true)} /> : null}
     </View>
     {status?.enabled || review ? <>
       <Text selectable style={{ color: colors.foregroundMuted, fontSize: 11 }}>{status?.workspaceRoot}</Text>
@@ -39,9 +39,9 @@ export function WorkspaceAuthorizationPanel({ rpc, colors, workspaceId }: { rpc:
       <Text style={{ color: colors.foregroundMuted, fontSize: 11, lineHeight: 17 }}>仅此本地工作区，持续生效。已有待确认、拒绝和平台限制仍需处理；关闭后恢复原授权规则，已启动的命令继续运行。</Text>
     </> : null}
     {review ? <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-      <Button colors={colors} size="sm" disabled={busy} label="允许此工作区自动授权" onPress={() => void save(true)} />
-      <Button colors={colors} size="sm" variant="ghost" disabled={busy} label="取消" onPress={() => setReview(false)} />
+      <Button colors={colors} size="sm" height={compact ? 44 : undefined} disabled={busy} label="允许此工作区自动授权" onPress={() => void save(true)} />
+      <Button colors={colors} size="sm" variant="ghost" height={compact ? 44 : undefined} disabled={busy} label="取消" onPress={() => setReview(false)} />
     </View> : null}
-    {error ? <><Text style={{ color: colors.statusDanger, fontSize: 12 }}>{error}</Text><Button colors={colors} size="xs" variant="outline" disabled={busy} label="重新读取" onPress={() => setRefresh(value => value + 1)} /></> : null}
+    {error ? <><Text style={{ color: colors.statusDanger, fontSize: 12 }}>{error}</Text><Button colors={colors} size="xs" variant="outline" height={compact ? 44 : undefined} disabled={busy} label="重新读取" onPress={() => setRefresh(value => value + 1)} /></> : null}
   </View>;
 }
