@@ -3,7 +3,7 @@ import { AttachmentStore, decodeAttachment } from './attachments';
 import { clearTransfer, decodeChunk, receiveChunk, saveDeliveredFile } from './attachment-transfers';
 import { ActivityLog } from './activity';
 import { applyLocalChanges, listSources, readChangeJournal, readSource, sourceHash } from './local-files';
-import { assertPermissionAccess, assertWorkspaceReviewAccess, workspaceReviewPaths, consumePermission, validatePermissionIntent } from './permissions';
+import { assertPermissionAccess, assertWorkspaceReviewAccess, workspaceReviewPaths, consumePermission, validatePermissionIntent, permissionBlocksAction } from './permissions';
 import { readWorkspaceChanges, type WorkspaceReviewOptions } from './workspace-changes';
 import type { LocalChange, LocalReceipt } from '../shared/local-files';
 import { ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, type Attachment, type AttachmentContent, type AttachmentChunk } from '../shared/attachments';
@@ -296,7 +296,8 @@ export class BridgeEngine {
   }
 
   listProcesses(input: { connectionId: string; taskId: string }) {
-    this.processTask(input);
+    const task = this.processTask(input);
+    this.assertAccess(task, 'list_dot_processes', [input.taskId]);
     return { processes: this.processes.list(input.taskId) };
   }
 
@@ -1479,7 +1480,7 @@ export class BridgeEngine {
       validatePermissionIntent(intent);
       if (task.userMessageSeq !== intent.userMessageSeq) throw dotBridgeError('permission-stale', 'A newer user message arrived');
       if (pendingPermissions(task).length) throw dotBridgeError('permission-required', 'Resolve the pending request first');
-      if (task.permissions.some(p => permissionCurrent(task, p) && (p.status === 'denied' || p.platformBlock))) {
+      if (task.permissions.some(p => permissionCurrent(task, p) && permissionBlocksAction(p, intent.scope.toolName))) {
         throw dotBridgeError('permission-required', 'Do not repeat a denied request without new user input');
       }
       const at = this.now();
@@ -1543,7 +1544,7 @@ export class BridgeEngine {
         this.requirePermissionRound(task, input.roundId);
         if (!intent) throw dotBridgeError('permission-required', 'Include intent with the latest userMessageSeq, title, description and exact scope when no local request exists');
         if (intent.userMessageSeq !== task.userMessageSeq) throw dotBridgeError('permission-stale');
-        if (task.permissions.some(p => permissionCurrent(task, p) && (p.status === 'pending' || p.status === 'denied' || p.platformBlock))) throw dotBridgeError('permission-required', 'Use the existing request; do not replace a pending, denied or blocked request');
+        if (task.permissions.some(p => permissionCurrent(task, p) && permissionBlocksAction(p, intent.scope.toolName))) throw dotBridgeError('permission-required', 'Use the existing request; do not replace a pending, denied or blocked request for this action');
         validatePermissionIntent({ ...intent, requestId: input.requestId });
         permission = { ...intent, requestId: input.requestId, roundId: input.roundId, status: 'pending', requestedAt: at, resolvedAt: null, decisionMessageSeq: null, platformBlock: null, consumedAt: null };
       } else if (intent && stableHash(intent) !== stableHash({ userMessageSeq: permission.userMessageSeq, title: permission.title, description: permission.description, scope: permission.scope })) {

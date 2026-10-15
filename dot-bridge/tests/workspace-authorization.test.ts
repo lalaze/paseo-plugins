@@ -99,6 +99,91 @@ test('platform blocks stay enforced after enable and after new messages', async 
   await assert.rejects(h.engine.runCommand(h.command()), /permission-required/);
 });
 
+test('a blocked process lookup does not stop an automatically authorized preview in the current task', async t => {
+  const h = await fixture(t); await h.toggle(true);
+  const requestId = randomUUID();
+  await h.engine.reportPermissionBlocked({ ...h.identity, requestId, reason: 'Platform refused lookup of another task process', intent: {
+    userMessageSeq: h.task.userMessageSeq, title: 'Old preview status', description: 'Read old process metadata',
+    scope: { toolName: 'list_dot_processes', action: 'read', targets: [randomUUID()] },
+  } });
+  const cmd = h.command('const server = require("node:http").createServer((req, res) => res.end("preview-ready")); server.listen(0, "127.0.0.1", () => console.log("PORT=" + server.address().port));');
+  const started = await h.engine.runCommand(cmd);
+  assert.equal(started.status, 'running', started.output);
+  const port = /PORT=(\d+)/.exec(started.output)?.[1]; assert.ok(port);
+  assert.equal(await (await fetch(`http://127.0.0.1:${port}`)).text(), 'preview-ready');
+  assert.equal(h.engine.task(h.task.id).userMessageSeq, h.task.userMessageSeq);
+  assert.ok(h.engine.task(h.task.id).permissions.find(p => p.requestId === requestId)?.platformBlock);
+  assert.throws(() => h.engine.listProcesses(h.identity), /permission-required/);
+  await h.engine.stopProcess(cmd);
+});
+
+test('compatibility command approvals stay automatic beside a blocked process read', async t => {
+  const h = await fixture(t); await h.toggle(true);
+  const old = await h.engine.runCommand(h.command());
+  const requestId = randomUUID();
+  await h.engine.reportPermissionBlocked({ ...h.identity, requestId, reason: 'Platform refused process output', intent: {
+    userMessageSeq: h.task.userMessageSeq, title: 'Read process', description: 'Read previous output',
+    scope: { toolName: 'read_dot_process', action: 'read', targets: [old.operationId] },
+  } });
+  const cmd = h.command(), approved = await h.engine.requestPermission(h.request(cmd));
+  assert.equal(approved.status, 'approved'); assert.ok(approved.workspaceGrantId);
+  assert.equal((await h.engine.runCommand(cmd)).exitCode, 0);
+  assert.throws(() => h.engine.readProcess({ ...h.identity, operationId: old.operationId, offset: 0 }), /permission-required/);
+  assert.ok(h.engine.task(h.task.id).permissions.find(p => p.requestId === requestId)?.platformBlock);
+});
+
+test('a separate command platform refusal can be recorded and remains enforced beside a process block', async t => {
+  const h = await fixture(t); await h.toggle(true);
+  await h.engine.reportPermissionBlocked({ ...h.identity, requestId: randomUUID(), reason: 'Process lookup refused', intent: {
+    userMessageSeq: h.task.userMessageSeq, title: 'Read process', description: 'Read metadata',
+    scope: { toolName: 'list_dot_processes', action: 'read', targets: [randomUUID()] },
+  } });
+  const { requestId, connectionId, taskId, roundId, ...intent } = h.request();
+  await h.engine.reportPermissionBlocked({ connectionId, taskId, roundId, requestId, intent, reason: 'Platform refused preview launch' });
+  await assert.rejects(h.engine.runCommand(h.command()), /permission-required/);
+  const current = h.engine.task(h.task.id);
+  await h.engine.addMessage({ id: current.id, revision: current.revision, operationId: randomUUID(), kind: 'answer', body: 'Continue' });
+  await assert.rejects(h.engine.runCommand(h.command()), /permission-required/);
+});
+
+test('pending and user-denied process requests still stop mutations under automatic authorization', async t => {
+  const h = await fixture(t);
+  const req = { ...h.request(), scope: { toolName: 'list_dot_processes', action: 'read', targets: [h.task.id] } };
+  await h.engine.requestPermission(req); await h.toggle(true);
+  await assert.rejects(h.engine.runCommand(h.command()), /permission-required/);
+  assert.throws(() => h.engine.listProcesses(h.identity), /permission-required/);
+  await h.engine.respondPermission({ taskId: h.task.id, requestId: req.requestId, decision: 'denied' });
+  await assert.rejects(h.engine.runCommand(h.command()), /permission-required/);
+  assert.throws(() => h.engine.listProcesses(h.identity), /permission-required/);
+});
+
+test('file-read and unknown external platform blocks are not treated as independent process lookups', async t => {
+  for (const toolName of ['read_dot_file', 'external_process_lookup']) {
+    const h = await fixture(t); await h.toggle(true);
+    await h.engine.reportPermissionBlocked({ ...h.identity, requestId: randomUUID(), reason: 'Platform refused access', intent: {
+      userMessageSeq: h.task.userMessageSeq, title: 'Read data', description: 'Restricted read',
+      scope: { toolName, action: 'read', targets: ['private.txt'] },
+    } });
+    await assert.rejects(h.engine.runCommand(h.command()), /permission-required/);
+    await assert.rejects(h.engine.requestPermission(h.request()), /permission-required/);
+  }
+});
+
+test('without automatic authorization an independent command still needs an explicit card', async t => {
+  const h = await fixture(t);
+  await h.engine.reportPermissionBlocked({ ...h.identity, requestId: randomUUID(), reason: 'Process lookup refused', intent: {
+    userMessageSeq: h.task.userMessageSeq, title: 'Read process', description: 'Read metadata',
+    scope: { toolName: 'list_dot_processes', action: 'read', targets: [randomUUID()] },
+  } });
+  const cmd = h.command();
+  await assert.rejects(h.engine.runCommand(cmd), /permission-required/);
+  const req = await h.engine.requestPermission(h.request(cmd));
+  assert.equal(req.status, 'pending'); assert.equal(req.workspaceGrantId, undefined);
+  await h.engine.respondPermission({ taskId: h.task.id, requestId: req.requestId, decision: 'approved' });
+  assert.equal((await h.engine.runCommand({ ...cmd, userMessageSeq: h.engine.task(h.task.id).userMessageSeq })).exitCode, 0);
+  assert.throws(() => h.engine.listProcesses(h.identity), /permission-required/);
+});
+
 test('a current manual scoped read cannot be widened by automatic reads or review requests', async t => {
   const h = await fixture(t); await writeFile(join(h.root, 'one.ts'), 'one'); await writeFile(join(h.root, 'two.ts'), 'two');
   const req = { ...h.request(), scope: { toolName: 'read_dot_file', action: 'Read one source', targets: ['one.ts'] } };

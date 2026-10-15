@@ -99,6 +99,16 @@ expand the event rule or approve commands.
 Process regressions are in `tests/processes.test.ts`, including a real HTTP service launched,
 queried and stopped through the MCP surface. They do not constitute a live ChatGPT/Dot validation.
 
+For preview recovery, Dot first probes the authorized address from the current task and reuses it
+when ready. It lists only the current task's processes and uses each record's original round ID
+when reading older output. It does not need another task's process records to launch a fresh
+current-task preview. If the endpoint refuses connections and a fresh launch is authorized, use
+the exact approved interface/port and strict-port behavior (`--strictPort` for Vite); an occupied
+port must fail rather than trigger a port change or killing an unknown listener. An unreachable
+URL alone does not establish the state of an old process. Verify startup and readiness before
+opening the browser or reporting restoration. With workspace automatic authorization, independent
+builds and preview launches need no repeated permission question.
+
 ## Workspace automatic authorization
 
 In the local **Dot tasks → Tasks** panel, select the workspace and use **工作区自动授权 → 开启 → 允许此工作区自动授权**. The review shows the exact directory and host command privileges. This is off by default. It grants task-related Bridge file reads/edits, attachments and local commands for existing and future text tasks in that workspace, and survives plugin reloads. **关闭** restores the normal guards for new operations; it does not terminate already-running commands. Use the process stop tool or task stop for cleanup.
@@ -108,6 +118,18 @@ This is a host-user policy stored in private `workspace-authorizations.json`, se
 `get_dot_task.workspaceAutomaticAuthorization` reports the live policy. Eligible tools can run directly without `request_dot_permission`. Existing agents that still request a card receive an approved record marked `workspaceGrantId`, without a pending card or fabricated user reply. Disabling or replacing the grant invalidates unused policy approvals and is checked again immediately before command spawn. Exact completed operation retries still return their original outcome. New user prompts include the authorization note even when the older file-only note setting is off; historical messages are preserved.
 
 A pending confirmation, refusal or platform block is not automatically cleared. Current explicit scoped approvals retain their exact scope until used or expired. A request to widen that scope, or a fresh request after refusal, still needs a real user decision. File hashes, protected file paths, current-message checks, claims, stop requests, ownership and operation deduplication remain enforced. Commands still run as the host user and may access files outside the workspace and the network; cwd is not a sandbox. The policy does not authorize unrelated destructive work, security changes, Git publishing, external tools, or bypassing platform approval.
+
+A platform refusal limited to `list_dot_processes` or `read_dot_process` no longer blocks
+independently authorized mutations in the current task. This applies to direct automatic launches
+and compatibility permission requests, so an unavailable old preview record cannot force a new
+permission question for an otherwise authorized build or preview. The refused lookup stays blocked,
+including after another operation is approved; commands must not be used to retrieve those records
+instead. Actual pending confirmations, user denials, command refusals and other platform blocks keep
+their existing guards. Without automatic authorization, the independent launch still requires an
+explicit command card. Process listing now checks its saved permission decisions as process reads
+already did. Ownership/round errors and connection/build errors must not be reported as platform
+refusals. Reload the plugin to activate these guards and the guidance returned by `get_dot_task`;
+refresh connected tools in ChatGPT to update their discovery descriptions.
 
 Regression coverage is in `tests/workspace-authorization.test.ts`, including real command/file/attachment execution, restart persistence, revocation before spawn, scoped reads and refusal handling. This is not a live ChatGPT event-handling validation. Refresh ChatGPT’s connected tools after upgrading; existing event rules should read the latest `get_dot_task` instructions and honor the automatic authorization flag rather than unconditionally waiting for a permission event.
 

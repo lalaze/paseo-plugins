@@ -6,6 +6,18 @@ import { validateLocalPath } from './local-files';
 import { attachmentIdSchema, MAX_ATTACHMENT_BYTES } from '../shared/attachments';
 import { automaticPermissionTools } from '../shared/workspace-authorization';
 
+/** A refused process-status lookup is not a refusal to do independent work in this task.
+ * Keep user decisions, unknown external refusals and all other blocks conservative. This never
+ * clears the read restriction or authorizes obtaining the refused records through a command.
+ */
+export function permissionBlocksAction(permission: DotPermission, toolName: string): boolean {
+  if (permission.status === 'denied') return true;
+  if (permission.platformBlock
+    && ['list_dot_processes', 'read_dot_process'].includes(permission.scope.toolName)
+    && mutations.has(toolName)) return false;
+  return permission.status === 'pending' || !!permission.platformBlock;
+}
+
 export function validatePermissionIntent(p: PermissionIntent): void {
   const { toolName, targets, operation } = p.scope;
   if (new Set(targets).size !== targets.length) throw dotBridgeError('task-rejected', 'Duplicate permission targets');
@@ -36,7 +48,9 @@ export function validatePermissionIntent(p: PermissionIntent): void {
 export function assertPermissionAccess(task: Task, toolName: string, targets: string[], operation?: PermissionOperation, automaticGrantId?: string): DotPermission | undefined {
   const mutation = mutations.has(toolName);
   const current = task.permissions.filter(p => permissionCurrent(task, p));
-  if (mutation && current.some(p => p.status === 'pending' || p.status === 'denied' || p.platformBlock)) throw dotBridgeError('permission-required');
+  if (mutation && current.some(p => automaticGrantId
+    ? permissionBlocksAction(p, toolName)
+    : p.status === 'pending' || p.status === 'denied' || p.platformBlock)) throw dotBridgeError('permission-required');
   if (automaticGrantId && automaticPermissionTools.has(toolName)) {
     const latestTool = task.permissions.filter(p => samePermissionTool(p.scope.toolName, toolName)).at(-1);
     // A host opt-in is not permission to repeat a denied or platform-blocked action.
