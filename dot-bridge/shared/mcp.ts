@@ -118,7 +118,7 @@ export interface EventDefinition {
 export const EVENT_DEFINITIONS: readonly EventDefinition[] = [
   {
     name: 'paseo.dot.task_changed',
-    description: 'A task was created, a message was added, or a stop was requested.',
+    description: 'A task was created, a message was added, or a stop was requested. Read this event payload taskId (data.taskId in the webhook envelope), then call get_dot_task for that exact task. Do not list all tasks or reuse the previous event taskId.',
     delivery: ['webhook'],
     inputSchema: {
       type: 'object',
@@ -129,8 +129,8 @@ export const EVENT_DEFINITIONS: readonly EventDefinition[] = [
     payloadSchema: {
       type: 'object',
       properties: {
-        taskId: { type: 'string' },
-        roundId: { type: 'string' },
+        taskId: { type: 'string', description: 'The task to read with get_dot_task. In the webhook envelope this is data.taskId, not eventId or the subscription connectionId.' },
+        roundId: { type: 'string', description: 'The round that triggered this event. Read the current task before claiming or acting because a delayed event may refer to an older round.' },
         kind: { type: 'string', enum: ['created', 'message_added', 'cancel_requested'] },
         messageSeq: { type: 'number' },
       },
@@ -244,12 +244,12 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   {
     name: 'list_dot_tasks',
     description:
-      'List queued and in-flight tasks for the authenticated connection, including updates the dot has not acknowledged. Supports a cursor.',
+      'List queued and in-flight tasks for the authenticated connection, including updates the dot has not acknowledged. Supports a cursor. For a task_changed event, use get_dot_task with the event payload taskId (data.taskId in the envelope) instead. Use this broad listing only when the user or event rule explicitly authorizes queue discovery; missing event context does not grant that authorization. Never retry a platform-refused listing through another tool.',
     readOnlyHint: true,
   },
   {
     name: 'get_dot_task',
-    description: 'Read a compact working context: current round, recent messages, exact user instructions, applicable permission records, attachment metadata and a recent write index. Local history is preserved, not all returned. Follow context.userInstructions.nextCursor before acting if user history is incomplete. For incremental reads set afterSeq to the last message sequence actually read; follow context.messagePage.nextAfterSeq until hasMore=false. Send knownGuidanceVersion only while you still retain those instructions; matching versions omit repeated guidance. Missing history/receipts are not proof of absence. Use get_dot_task_status for polling and get_dot_task_history for older records.',
+    description: 'Read a compact working context: current round, recent messages, exact user instructions, applicable permission records, attachment metadata and a recent write index. For task_changed notifications, pass the current event payload taskId (data.taskId in the webhook envelope), not eventId, connectionId or a previously completed task ID. Local history is preserved, not all returned. Follow context.userInstructions.nextCursor before acting if user history is incomplete. For incremental reads set afterSeq to the last message sequence actually read; follow context.messagePage.nextAfterSeq until hasMore=false. Send knownGuidanceVersion only while you still retain those instructions; matching versions omit repeated guidance. Missing history/receipts are not proof of absence. Use get_dot_task_status for polling and get_dot_task_history for older records.',
     readOnlyHint: true,
   },
   {
@@ -324,7 +324,7 @@ export function connectionInstructions(connectionId: string, baseUrl: string): s
   return [
     `Please use Paseo Dot Bridge and subscribe to task events for connection ${connectionId}.`,
     baseUrl ? `Bridge endpoint: ${baseUrl}` : '',
-    'When notified, read the connection\'s pending tasks; claim each task first, then arrange the work the user asked for.',
+    'For each paseo.dot.task_changed notification, read taskId from that event payload (data.taskId in the webhook envelope; taskId if the platform shows only the unwrapped data). Call get_dot_task with the subscribed connectionId and that exact taskId, then claim the current dispatched round before doing the requested work. eventId, subscription ID and connectionId are not task IDs. A new event may belong to a different task; never reuse a previously completed task ID. Do not call list_dot_tasks when the event identifies the task. Only use queue discovery when the user or event rule explicitly authorizes it; if the event payload is unavailable, report the missing context and request the exact task ID, without retrying a refused listing through another tool.',
     'Set the task event subscription to process user-submitted work and follow-ups, not merely announce new tasks. If it was previously limited to a read-only connection test, ask the user once to update that scope. Keep asking before actions requiring new permission.',
     'For provider conversations, prior rounds remain in local history. Start with get_dot_task for compact working context, keep exact user constraints, and follow its pagination instructions. Poll with get_dot_task_status; fetch new messages with get_dot_task(afterSeq=last sequence actually read) and older records with get_dot_task_history. New rounds do not erase prior restrictions. Send questions with report_dot_progress waiting_user and final answers with submit_dot_text_result.',
     PROVIDER_CONVERSATION_INSTRUCTIONS,

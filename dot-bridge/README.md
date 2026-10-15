@@ -176,6 +176,19 @@ Temporary listen failures (such as an occupied port) appear in connection status
 
 A subscription originally limited to observing a connection test can receive events without executing them. Its task-handling instructions must permit processing the user's requests. The user's existing connection was previously enabled for native conversations; the current local-edit validation record states whether the upgraded tools and rules have been verified live.
 
+Task notifications identify one task in `data.taskId` inside the webhook envelope (or `taskId`
+if the receiver displays only the payload). The event rule should call `get_dot_task` with that ID
+and the subscribed connection ID, then check and claim the current dispatched round. `eventId`
+and subscription IDs are not task IDs, and a new event must not reuse a previously completed task.
+Do not enumerate the queue for an event that already identifies its task. `list_dot_tasks` requires
+explicit queue-discovery scope from the user or event rule; missing event context does not grant it.
+If a platform refusal says the ID is already available, inspect the actual event payload and use
+the permitted exact-task read. If that payload is unavailable, report the missing context rather
+than retrying the refused listing. Delivery acknowledgment proves callback receipt, not that the
+model received or understood every field. After upgrading, refresh connected tool/event discovery
+and update an older event rule that says to list pending tasks; plugin reload alone cannot edit
+the rule stored in ChatGPT.
+
 Callback delivery supports Clash/Mihomo's `198.18.0.0/15` fake-IP mappings for the exact `connectors.api.openai.com` host on HTTPS port 443, without changing the proxy configuration. The connection stays pinned to the checked address, with the original hostname used for TLS certificate verification and subscription challenges. Other callbacks and actual local/private addresses remain blocked. Events previously blocked before sending by the address check are rechecked automatically and delivered with their original event IDs once allowed; completed deliveries and permanent HTTP failures are not replayed.
 
 ### Install on another host (`code`)

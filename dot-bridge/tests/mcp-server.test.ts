@@ -9,6 +9,7 @@ import type { FetchLike } from '../server/http';
 import { createMcpServer, type McpServerHandle } from '../server/mcp-server';
 import { generateSecret } from '../server/signing';
 import { BridgeStore } from '../server/store';
+import { eventEnvelopeSchema, taskChangedDataSchema, type EventEnvelope } from '../shared/mcp';
 
 const scratch: string[] = [];
 after(() => Promise.all(scratch.map(dir => rm(dir, { recursive: true, force: true }))));
@@ -318,4 +319,49 @@ it('provides current chat progress instructions when reading an existing native 
     assert.match(payload.conversationInstructions, /private reasoning/);
     assert.match(payload.conversationInstructions, /complete final answer/);
   } finally { await server.stop(); }
+});
+
+it('a new task webhook identifies the exact task to read and claim after an earlier task completes', async () => {
+  const delivered: EventEnvelope[] = [];
+  const echo = echoFetch();
+  const { engine, server, endpoint, token } = await setup(async (url, init) => {
+    const body = JSON.parse(String(init.body));
+    if (body.name === 'paseo.dot.task_changed') delivered.push(eventEnvelopeSchema.parse(body));
+    return echo(url, init);
+  });
+  try {
+    const connectionId = engine.connection().id;
+    await engine.setSubscription({ name: 'paseo.dot.task_changed', arguments: { connectionId }, delivery: {
+      mode: 'webhook', url: 'https://example.com/hook', secret: generateSecret(),
+    }, cursor: null });
+    const challenge = await engine.startConnectionTest(randomUUID());
+    await engine.confirmConnection(connectionId, challenge.challenge);
+    const create = async (body: string) => (await engine.providerPrompt({ id: randomUUID(), operationId: randomUUID(),
+      clientMessageId: randomUUID(), cwd: '/repo', workspaceId: 'ws-chat', body, systemPrompt: '', attachments: [] })).task;
+    const first = await create('First task');
+    await engine.dispatchTick(); await engine.deliverTick();
+    await engine.claimTask({ connectionId, taskId: first.id, roundId: first.currentRoundId });
+    const completed = await rpc(endpoint, token, 'tools/call', { name: 'submit_dot_text_result', arguments: {
+      connectionId, taskId: first.id, roundId: first.currentRoundId, updateId: randomUUID(), text: 'Done', processedThroughSeq: first.userMessageSeq,
+    } });
+    assert.equal(completed.body.error, undefined);
+    assert.equal(engine.task(first.id).status, 'completed');
+    const second = await create('Verify the new game session');
+    await engine.dispatchTick(); await engine.deliverTick();
+    const notification = delivered.at(-1); assert.ok(notification);
+    const data = taskChangedDataSchema.parse(notification.data);
+    assert.equal(data.taskId, second.id); assert.equal(data.roundId, second.currentRoundId);
+    assert.notEqual(data.taskId, first.id); assert.notEqual(data.taskId, notification.eventId);
+    // Use only the delivered identity, without a queue listing or the previous task ID.
+    const read = await rpc(endpoint, token, 'tools/call', { name: 'get_dot_task', arguments: { connectionId, taskId: data.taskId } });
+    assert.equal(read.body.error, undefined);
+    const context = JSON.parse((read.body.result as { content: Array<{ text: string }> }).content[0].text);
+    assert.equal(context.task.id, second.id);
+    const claimed = await rpc(endpoint, token, 'tools/call', { name: 'claim_dot_task', arguments: {
+      connectionId, taskId: data.taskId, roundId: context.task.currentRoundId,
+    } });
+    assert.equal(claimed.body.error, undefined);
+    assert.equal(engine.task(second.id).status, 'claimed');
+    assert.equal(engine.task(first.id).status, 'completed');
+  } finally { await server.stop(); await engine.dispose(); }
 });
