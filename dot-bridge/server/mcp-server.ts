@@ -7,6 +7,7 @@ import {
   CALLBACK_ENDPOINT_ERROR,
   EVENT_DEFINITIONS,
   MCP_EVENT_PROTOCOL_VERSION,
+  PROVIDER_CONVERSATION_CORE_INSTRUCTIONS,
   PROVIDER_CONVERSATION_INSTRUCTIONS,
   PERMISSION_HANDOFF_INSTRUCTIONS,
   ATTACHMENT_DELIVERY_INSTRUCTIONS,
@@ -21,11 +22,11 @@ import { describeToolCall } from './activity';
 import type { BridgeEngine } from './engine';
 import { LOCAL_FILE_INSTRUCTIONS } from '../shared/local-files';
 import { PROCESS_INSTRUCTIONS } from '../shared/processes';
-import { taskContext, taskStatus, taskHistoryPage } from './task-context';
+import { taskContext, taskStatus, taskHistoryPage, WORKING_CONTEXT_INSTRUCTIONS } from './task-context';
 import type { Task } from '../shared/schema';
 
 const GUIDANCE_VERSION = createHash('sha256').update(JSON.stringify([
-  'working-context-v1', PROVIDER_CONVERSATION_INSTRUCTIONS, AUTOMATIC_AUTHORIZATION_INSTRUCTIONS,
+  'working-context-v1', WORKING_CONTEXT_INSTRUCTIONS, PROVIDER_CONVERSATION_INSTRUCTIONS, AUTOMATIC_AUTHORIZATION_INSTRUCTIONS,
   PERMISSION_HANDOFF_INSTRUCTIONS, PROCESS_INSTRUCTIONS, ATTACHMENT_DELIVERY_INSTRUCTIONS, LOCAL_FILE_INSTRUCTIONS,
 ])).digest('hex');
 
@@ -210,16 +211,18 @@ export function createMcpServer(options: McpServerOptions): McpServerHandle {
         const args = input as z.infer<typeof toolInputSchemas.get_dot_task>;
         const task = options.engine.getForConnection(args.connectionId, args.taskId);
         const guidanceVersion = guidanceVersionFor(task);
-        const instructionsIncluded = args.knownGuidanceVersion !== guidanceVersion;
-        return { ...taskContext(task, args.afterSeq), guidanceVersion, instructionsIncluded,
+        // A fresh read is the recovery path for lost context, so only incremental reads may omit guidance.
+        const instructionsIncluded = args.afterSeq === null || args.knownGuidanceVersion !== guidanceVersion;
+        return { ...taskContext(task, args.afterSeq, instructionsIncluded), guidanceVersion, instructionsIncluded,
           ...(task.mode === 'text' ? {
             workspaceAutomaticAuthorization: options.engine.automaticAuthorization(task),
             commandsAvailable: !task.remoteOrigin && !!task.workspaceRoot,
             localFilesAvailable: task.workspaceRoot !== null || task.remoteOrigin !== null,
             ...(instructionsIncluded ? {
-              ...(task.provider ? { conversationInstructions: PROVIDER_CONVERSATION_INSTRUCTIONS } : {}),
+              // Each block is sent once; the handoff and automatic authorization rules live in permissionInstructions.
+              ...(task.provider ? { conversationInstructions: PROVIDER_CONVERSATION_CORE_INSTRUCTIONS } : {}),
               permissionInstructions: AUTOMATIC_AUTHORIZATION_INSTRUCTIONS + ' ' + PERMISSION_HANDOFF_INSTRUCTIONS,
-              processInstructions: AUTOMATIC_AUTHORIZATION_INSTRUCTIONS + ' ' + PROCESS_INSTRUCTIONS,
+              processInstructions: PROCESS_INSTRUCTIONS,
               attachmentInstructions: ATTACHMENT_DELIVERY_INSTRUCTIONS + (task.remoteOrigin ? ' This task originated on a remote device. Upload success means the center received the file; confirm remote delivery from a later task attachment localPath before claiming it was saved on the originating device.' : ''),
               localFileInstructions: LOCAL_FILE_INSTRUCTIONS,
             } : {}),

@@ -240,8 +240,15 @@ full stored task. No model-generated summary replaces user instructions or permi
 
 - `get_dot_task` returns the current round, up to eight recent messages within a 24,000-character
   serialization budget (one complete message can exceed that budget), exact user-instruction
-  history in pages, applicable permission records, attachment metadata, the most recent prior
-  result summary and a short write-receipt index. The response identifies omitted history and totals.
+  history in pages, permission records, attachment metadata, the most recent prior result summary
+  and a short write-receipt index. Permission records include everything still in effect (pending
+  requests, current approvals, platform blocks), every denial from any round and the latest record
+  per tool; used-up or expired approvals are counted in `context.permissions` and remain exact in
+  history. User instructions leave out Allow-click receipts, because their approvals are already
+  permission records; Deny receipts stay. When the first user instruction already holds the
+  original request verbatim, `task.requirement` is left out and `task.requirementMessageSeq`
+  points to it; otherwise the request stays inline. Each guidance block is sent once per full
+  read. The response identifies omitted history and totals.
   A non-null `context.userInstructions.nextCursor` must be followed with
   `get_dot_task_history(section=user_messages)` before acting on an incomplete instruction set.
 - `get_dot_task_status` returns lightweight state, message sequences, stop/claim state, permission
@@ -250,17 +257,26 @@ full stored task. No model-generated summary replaces user instructions or permi
   fetching the working context before acting.
 - `get_dot_task(afterSeq=N)` pages newer messages in chronological order. Follow
   `context.messagePage.nextAfterSeq` until `hasMore=false`; only advance `processedThroughSeq`
-  through user input actually read and handled. Incremental reads rely on already-read user
-  constraints. If the agent loses that context, it must perform a fresh default read.
+  through user input actually read and handled. Incremental pages are bounded by the
+  24,000-character budget rather than eight messages. They rely on already-read context, so they
+  leave out text fixed at task creation (`requirement`, `acceptance`, `environmentHint`) and the
+  prior result summary; with a matching `knownGuidanceVersion` they also leave out
+  `context.instructions`. If the agent loses that context, it must perform a fresh default read.
 - Pass `knownGuidanceVersion` only when the corresponding instructions are still available in
-  the agent context. An exact match omits repeated long instructions; a changed version returns
-  them again. Current authorization and stop state are always returned.
+  the agent context. On an incremental read, an exact match omits repeated long instructions; a
+  changed version returns them again. A fresh read (no `afterSeq`) always includes them, so the
+  recovery read restores the guidance even if the agent still remembers the version string.
+  Current authorization and stop state are always returned.
 - `get_dot_task_history` pages exact `messages`, `user_messages`, `rounds`, `changes` or
-  `permissions`. Optional `roundId` filters a round; `operationId` filters write receipts in
+  `permissions`. `user_messages` leaves out Allow-click receipts, which remain in `messages`.
+  Optional `roundId` filters a round; `operationId` filters write receipts in
   `changes`. Keep filters unchanged across `nextCursor` calls. Cursors bind the task, revision
   and filters; a changed revision requires restarting the query. Large records use bounded
   `jsonFragment` pieces with UTF-16 offsets: concatenate all pieces and parse only at
-  `complete=true`. Empty partial views never prove that work or restrictions did not exist.
+  `complete=true`. Progress reports and other in-place edits do not change the revision, so a
+  fragment continuation is also bound to that record's exact serialization: if the record changes
+  before its last piece is read, the call returns `revision-conflict` instead of splicing two
+  versions. Empty partial views never prove that work or restrictions did not exist.
 
 Task reads do not clear history, mark input processed, alter permissions or reset any platform
 usage allowance. Reload the plugin and refresh its connected tools in ChatGPT so Dot can discover

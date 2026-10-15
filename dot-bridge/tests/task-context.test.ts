@@ -1,17 +1,23 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { test, type TestContext } from 'node:test';
-import { createTask, appendUserMessage, appendDotMessage } from '../shared/machine';
+import { createTask, appendUserMessage, appendDotMessage, withDispatch, claimRound, reduceProgress, reduceResult, createNextRound } from '../shared/machine';
 import { permissionSchema } from '../shared/permissions';
 import { taskContext, taskStatus, taskHistoryPage, CONTEXT_PAGE_CHARS } from '../server/task-context';
 import { BridgeEngine } from '../server/engine';
 import { BridgeStore } from '../server/store';
 import { createMcpServer } from '../server/mcp-server';
+import { sourceHash } from '../server/local-files';
 import { attachmentPage, taskPanelSchema, taskPanelView } from '../shared/attachment-pages';
 import { taskAttachmentList } from '../shared/rpc';
+import { ATTACHMENT_DELIVERY_INSTRUCTIONS, PERMISSION_HANDOFF_INSTRUCTIONS, STOP_REPORTING_INSTRUCTIONS } from '../shared/mcp';
+import { AUTOMATIC_AUTHORIZATION_INSTRUCTIONS } from '../shared/workspace-authorization';
+import { PROCESS_INSTRUCTIONS } from '../shared/processes';
+import { LOCAL_FILE_INSTRUCTIONS } from '../shared/local-files';
+import type { Message, Task } from '../shared/schema';
 
 test('attachment archives page losslessly while working/UI views contain only recent files', () => {
   const task = historyTask();
@@ -157,6 +163,29 @@ test('full history pages and oversized records are lossless and bound to task, r
   assert.deepEqual(messages, task.messages);
 });
 
+test('a fragmented record is bound to its exact serialization, so an in-place edit between pages forces a restart', () => {
+  let task = historyTask();
+  task = claimRound(withDispatch(task, 200), task.connectionId, task.currentRoundId, 201).task;
+  const progress = (current: typeof task, updateId: string, note: string, at: number) =>
+    reduceProgress(current, { roundId: current.currentRoundId, updateId, kind: 'running', note, processedThroughSeq: 1, at }).task;
+  for (let i = 0; i < 12; i++) task = progress(task, `u${i}`, `step ${i} ${'n'.repeat(2500)}`, 300 + i);
+  const first = taskHistoryPage(task, { section: 'rounds', limit: 1 }), head = first.entries[0]!;
+  assert.ok('jsonFragment' in head && !head.complete);
+  // report_dot_progress rewrites the current round in place without bumping the task revision.
+  const changed = progress(task, 'mid', 'short', 400);
+  assert.throws(() => taskHistoryPage(changed, { section: 'rounds', limit: 1, cursor: first.nextCursor }), /revision-conflict/);
+  const chunks: string[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = taskHistoryPage(changed, { section: 'rounds', limit: 1, cursor });
+    for (const e of page.entries) { assert.ok('jsonFragment' in e); chunks.push(e.jsonFragment); }
+    cursor = page.nextCursor;
+  } while (cursor);
+  assert.deepEqual(JSON.parse(chunks.join('')), changed.rounds[0]);
+  // An unchanged record still continues from the same cursor.
+  assert.equal(taskHistoryPage(task, { section: 'rounds', limit: 1, cursor: first.nextCursor }).entries.length, 1);
+});
+
 test('history filters an uncertain write receipt by operation ID instead of inferring from the recent index', () => {
   const task = historyTask(), operationId = randomUUID();
   task.localChanges = Array.from({ length: 10 }, (_, i) => ({ operationId: i === 0 ? operationId : randomUUID(),
@@ -169,10 +198,10 @@ test('history filters an uncertain write receipt by operation ID instead of infe
   assert.deepEqual(history.entries[0].value, task.localChanges[0]);
 });
 
-async function mcpFixture(t: TestContext) {
+async function mcpFixture(t: TestContext, prepare: (task: Task) => void = () => {}) {
   const dir = await mkdtemp(join(tmpdir(), 'dot-context-')), store = await BridgeStore.open(dir);
   const engine = new BridgeEngine({ store, getMaxInFlight: () => 2 }); await engine.init();
-  const task = historyTask(); task.connectionId = engine.connection().id;
+  const task = historyTask(); task.connectionId = engine.connection().id; prepare(task);
   await store.mutate(d => { d.tasks.push(task); });
   const server = createMcpServer({ engine, host: '127.0.0.1', port: 0, getToken: () => engine.mcpToken() });
   const { endpoint } = await server.start();
@@ -198,8 +227,15 @@ test('MCP default is compact; status and incremental reads reuse versioned guida
   const increment = await h.call('get_dot_task', { afterSeq: h.task.messageSeq, knownGuidanceVersion: full.guidanceVersion });
   assert.equal(increment.instructionsIncluded, false);
   assert.equal(increment.localFileInstructions, undefined);
+  assert.equal(increment.context.instructions, undefined);
+  const stale = await h.call('get_dot_task', { afterSeq: h.task.messageSeq, knownGuidanceVersion: 'outdated' });
+  assert.equal(stale.instructionsIncluded, true); assert.ok(stale.context.instructions);
   assert.deepEqual(increment.task.messages, []);
   assert.equal((await h.call('get_dot_task', { knownGuidanceVersion: 'outdated' })).instructionsIncluded, true);
+  // A fresh read is the recovery path for lost context, so a remembered version cannot suppress guidance.
+  const recovered = await h.call('get_dot_task', { knownGuidanceVersion: full.guidanceVersion });
+  assert.equal(recovered.instructionsIncluded, true);
+  assert.equal(recovered.localFileInstructions, full.localFileInstructions);
   for (const name of ['get_dot_task', 'get_dot_task_status', 'get_dot_task_history']) {
     assert.ok((await h.call(name, { connectionId: 'f'.repeat(32), ...(name === 'get_dot_task_history' ? { section: 'messages' } : {}) })).error);
   }
@@ -222,4 +258,106 @@ test('MCP default is compact; status and incremental reads reuse versioned guida
     cursor = result.nextCursor;
   } while (cursor);
   assert.deepEqual(archive, h.engine.task(h.task.id).attachments);
+});
+
+async function claimedFixture(t: TestContext) {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'dot-context-claimed-')));
+  const store = await BridgeStore.open(dir), engine = new BridgeEngine({ store, getMaxInFlight: () => 2 }); await engine.init();
+  const task = createTask({ id: randomUUID(), connectionId: engine.connection().id, workspaceId: 'ws', mode: 'text',
+    repository: null, remoteName: null, branch: null, baseSha: null, targetBranch: null,
+    title: 'Writes', requirement: 'Never modify save.json.', acceptance: '', environmentHint: '', roundId: randomUUID(), at: 1 });
+  await store.mutate(d => { d.tasks.push(withDispatch({ ...task, workspaceRoot: dir }, 2)); });
+  const id = { taskId: task.id, connectionId: task.connectionId, roundId: task.currentRoundId };
+  await engine.claimTask(id);
+  t.after(async () => { engine.dispose(); await store.dispose(); await rm(dir, { recursive: true, force: true }); });
+  return { engine, id };
+}
+
+test('working view keeps live decisions, every denial and the latest record per tool; used-up approvals and Allow receipts stay in history', async t => {
+  const { engine, id } = await claimedFixture(t);
+  const write = (path: string, content: string) => ({ requestId: randomUUID(), title: `Create ${path}`, description: 'Create one file',
+    scope: { toolName: 'apply_dot_changes', action: 'create', targets: [path],
+      operation: { kind: 'files' as const, operationId: randomUUID(), changes: [{ path, expectedSha256: null, contentSha256: sourceHash(content) }] } } });
+  for (let i = 0; i < 3; i++) {
+    const path = `file-${i}.txt`, request = write(path, `v${i}`);
+    await engine.requestPermission({ ...id, ...request, userMessageSeq: engine.task(id.taskId).userMessageSeq });
+    await engine.respondPermission({ taskId: id.taskId, requestId: request.requestId, decision: 'approved' });
+    await engine.applyLocalFiles({ ...id, operationId: request.scope.operation.operationId, userMessageSeq: engine.task(id.taskId).userMessageSeq,
+      changes: [{ path, expectedSha256: null, content: `v${i}` }] });
+  }
+  const denial = write('save.json', '{}');
+  await engine.requestPermission({ ...id, ...denial, userMessageSeq: engine.task(id.taskId).userMessageSeq });
+  await engine.respondPermission({ taskId: id.taskId, requestId: denial.requestId, decision: 'denied' });
+
+  const task = engine.task(id.taskId), view = taskContext(task);
+  const instructions = (v: ReturnType<typeof taskContext>) => v.context.userInstructions!.entries.map(e => 'value' in e ? e.value : null);
+  const users = task.messages.filter(m => m.author === 'user');
+  assert.ok(task.permissions.slice(0, 3).every(p => p.status === 'approved' && p.consumedAt !== null));
+  assert.deepEqual(view.task.permissions, task.permissions.slice(3));
+  assert.deepEqual(view.context.permissions, { total: 4, returned: 1, omitted: 3, historySection: 'permissions' });
+  assert.equal(taskStatus(task).permissions.length, 1);
+  assert.equal(users.length, 5);
+  assert.deepEqual(instructions(view), [users[0], users[4]]);
+  // History stays exact: every permission record, and the Allow receipts remain in messages.
+  assert.deepEqual(taskHistoryPage(task, { section: 'permissions', limit: 20 }).entries.map(e => 'value' in e ? e.value : null), task.permissions);
+  assert.deepEqual(taskHistoryPage(task, { section: 'messages', limit: 20 }).entries.map(e => 'value' in e ? e.value : null), task.messages);
+
+  // Automatic approvals point at the latest real message, which must stay an instruction; live ones stay in full.
+  const followUp = appendUserMessage(task, 'Also keep config.json untouched.', 'requirement', 50);
+  const automatic = (target: string) => permissionSchema.parse({ requestId: randomUUID(), roundId: followUp.currentRoundId,
+    userMessageSeq: followUp.userMessageSeq, title: 'Read', description: 'Read one file', requestedAt: 51, resolvedAt: 51,
+    status: 'approved', decisionMessageSeq: followUp.userMessageSeq, workspaceGrantId: randomUUID(),
+    scope: { toolName: 'read_dot_file', action: 'read', targets: [target] } });
+  const withAutomatic = { ...followUp, permissions: [...followUp.permissions, automatic('a.ts'), automatic('b.ts')] };
+  const automaticView = taskContext(withAutomatic);
+  assert.deepEqual(automaticView.task.permissions, withAutomatic.permissions.slice(3));
+  assert.deepEqual(instructions(automaticView), [users[0], users[4], followUp.messages.at(-1)]);
+});
+
+test('a full native-conversation read sends each guidance block exactly once', async t => {
+  const h = await mcpFixture(t, task => { task.provider = { cwd: '/workspace', clientMessageIds: {} }; });
+  const full = await h.call('get_dot_task');
+  const guidance = ['conversationInstructions', 'permissionInstructions', 'processInstructions', 'attachmentInstructions', 'localFileInstructions']
+    .map(key => full[key] as string).join('\n');
+  for (const block of [STOP_REPORTING_INSTRUCTIONS, PERMISSION_HANDOFF_INSTRUCTIONS, AUTOMATIC_AUTHORIZATION_INSTRUCTIONS,
+    PROCESS_INSTRUCTIONS, ATTACHMENT_DELIVERY_INSTRUCTIONS, LOCAL_FILE_INSTRUCTIONS]) assert.equal(guidance.split(block).length - 1, 1);
+  assert.match(full.conversationInstructions, /live Paseo conversation/);
+});
+
+test('a fresh read sends the original request once, keeping it inline when the instruction list cannot show it whole', () => {
+  const task = historyTask(), fresh = taskContext(task), first = fresh.context.userInstructions!.entries[0]!;
+  assert.equal(fresh.task.requirement, undefined);
+  assert.equal(fresh.task.requirementMessageSeq, 1);
+  assert.ok('value' in first); assert.equal((first.value as Message).body, task.requirement);
+  assert.equal(JSON.stringify(fresh).split(task.requirement).length - 1, 1);
+  // Incremental reads build on that fresh read, so the request is not resent.
+  const increment = taskContext(task, task.messageSeq);
+  assert.equal(increment.task.requirement, undefined); assert.equal(increment.task.requirementMessageSeq, undefined);
+  // An oversized first message arrives only as fragments, so the request stays inline as well.
+  const big = createTask({ id: randomUUID(), connectionId: 'a'.repeat(32), workspaceId: 'ws', mode: 'text', repository: null, remoteName: null,
+    branch: null, baseSha: null, targetBranch: null, title: 'Quoted', requirement: '"'.repeat(20_000), acceptance: '', environmentHint: '', roundId: randomUUID(), at: 1 });
+  const bigView = taskContext(big);
+  assert.ok('jsonFragment' in bigView.context.userInstructions!.entries[0]!);
+  assert.equal(bigView.task.requirement, big.requirement);
+});
+
+test('incremental reads page by budget and leave out unchanged task text, the prior result summary and known instructions', () => {
+  let task = createTask({ id: randomUUID(), connectionId: 'a'.repeat(32), workspaceId: 'ws', mode: 'text', repository: null, remoteName: null,
+    branch: null, baseSha: null, targetBranch: null, title: 'Chat', requirement: 'Build the settings page.', acceptance: 'Native system prompt',
+    environmentHint: 'Conversation through the Paseo Dot provider.', roundId: randomUUID(), at: 1 });
+  task = claimRound(withDispatch(task, 2), task.connectionId, task.currentRoundId, 3).task;
+  task = reduceResult(task, { kind: 'text', roundId: task.currentRoundId, baseSha: null, headSha: null, branch: null, summary: 'Settings page done.',
+    checks: [], prUrl: null, reportedAt: 4, updateId: randomUUID(), processedThroughSeq: 1 }).task;
+  task = createNextRound(task, randomUUID(), 5);
+  for (let i = 0; i < 12; i++) task = appendUserMessage(task, `Follow-up ${i}`, 'requirement', 6 + i);
+  const fresh = taskContext(task), increment = taskContext(task, 1);
+  assert.equal(fresh.task.acceptance, task.acceptance); assert.equal(fresh.task.environmentHint, task.environmentHint);
+  assert.equal(fresh.context.latestPriorResult!.summary, 'Settings page done.');
+  assert.equal(increment.task.requirement, undefined); assert.equal(increment.task.acceptance, undefined);
+  assert.equal(increment.task.environmentHint, undefined); assert.equal(increment.context.latestPriorResult!.summary, undefined);
+  assert.equal(increment.context.latestPriorResult!.roundId, task.rounds[0]!.roundId);
+  // New messages are bounded by the character budget, not the eight-message recent window.
+  assert.deepEqual(increment.task.messages, task.messages.slice(1)); assert.equal(increment.context.messagePage.hasMore, false);
+  assert.ok(increment.context.instructions);
+  assert.equal(taskContext(task, 1, false).context.instructions, undefined);
 });
