@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Platform, Pressable, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Platform, Text, TextInput, View } from 'react-native';
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { copyText, Icon, useToast } from '@getpaseo/plugin/client/react-native';
 import { ATTACHMENT_CHUNK_BYTES, attachmentContentSchema, MAX_ATTACHMENT_BYTES, type Attachment, type AttachmentContent } from '../shared/attachments';
@@ -44,28 +44,14 @@ function ImagePreview({ rpc, taskId, attachment, colors }: { rpc: PluginClientCo
   const [uri, setUri] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
-  // Browsing metadata never downloads image bytes; only explicitly opened previews do.
-  const [requested, setRequested] = useState(false);
   useEffect(() => {
-    if (!requested) return;
     let cancelled = false;
     setError(null); setUri(null);
     void readBase64(rpc, taskId, attachment, () => cancelled).then(content => {
       if (!cancelled) setUri(`data:${attachment.mediaType};base64,${content}`);
     }).catch(cause => { if (!cancelled) setError(parseDotBridgeError(cause)); });
     return () => { cancelled = true; };
-  }, [rpc, taskId, attachment.id, attachment.sha256, requested, attempt]);
-  if (!requested) return <Pressable
-    accessibilityRole="button" accessibilityLabel={ui('Preview image', '预览图片')} onPress={() => setRequested(true)}
-    style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, borderRadius: 10, backgroundColor: pressed ? colors.surface2 : controlFill(colors) })}
-  >
-    <Icon name="Image" size={24} color={colors.foregroundMuted} />
-    <View style={{ flex: 1, gap: 3 }}>
-      <Text style={{ color: colors.foreground, fontSize: 13, fontWeight: '600' }}>{ui('Preview image', '预览图片')}</Text>
-      <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{ui('Click to load', '点击加载图片')}</Text>
-    </View>
-    <Icon name="ChevronRight" size={16} color={colors.foregroundMuted} />
-  </Pressable>;
+  }, [rpc, taskId, attachment.id, attachment.sha256, attachment.mediaType, attachment.size, attempt]);
   return <View style={{ borderRadius: 10, overflow: 'hidden', backgroundColor: controlFill(colors) }}>
     {error ? <View style={{ padding: 16, gap: 10 }}>
       <Text style={{ color: colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>{error}</Text>
