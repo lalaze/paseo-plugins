@@ -420,7 +420,7 @@ export function DotBridgePanel(props: DotBridgePanelProps) {
 
         {tab === 'machines' ? (
           <View style={{ borderWidth: 1, borderColor: outline(colors), borderRadius: 14, backgroundColor: panelFill(colors), padding: compact ? 12 : 16, minWidth: 0 }}>
-            <RemotePanel rpc={props.rpc} colors={colors} workspaceId={selectedWorkspace} />
+            <RemotePanel rpc={props.rpc} colors={colors} workspaceId={selectedWorkspace} compact={compact} />
           </View>
         ) : tab === 'connection' ? (
           <View style={{ borderWidth: 1, borderColor: outline(colors), borderRadius: 14, backgroundColor: panelFill(colors), padding: compact ? 12 : 16, minWidth: 0 }}>

@@ -167,7 +167,7 @@ paseo plugin update paseo-dot-bridge --ref main
 paseo plugin reload paseo-dot-bridge
 ```
 
-Installation alone does not connect the two hosts. To share the existing connected Dot, configure the current connected host as **center** under **Dot tasks → 多机**, create a dedicated device credential scoped to the `code` machine's workspace IDs, then configure `code` as **remote** with the center origin, that credential and its allowed local workspaces. Keep the ChatGPT MCP connection on the center. Enable the desired local read/write capabilities and start a new Dot conversation on `code`. See [multi-machine mode](#multi-machine-mode-validation-pending) for configuration and validation limits; remote mode currently supports file operations, not command execution.
+Installation alone does not connect the two hosts. To share the existing connected Dot over Tailscale, configure the current connected host as **center** under **Dot tasks → 多机**, select **Tailscale direct**, and save its Tailscale listen IP and port. On `code`, select **remote → Tailscale direct**, enter `http://<center Tailscale IP>:<port>` and save. No device credential, workspace ID allowlist or file-capability switches are required; new conversations bind their own local workspace automatically. For other networks, use **Device credential** with explicit workspace and capability scopes. Keep the ChatGPT MCP connection on the center and start a new Dot conversation on `code`. See [multi-machine mode](#multi-machine-mode-validation-pending) for configuration and validation limits; remote mode currently supports file operations, not command execution.
 
 ## Attachments
 
@@ -335,7 +335,17 @@ Current limits: one central connected Dot; multi-machine source support requires
 
 ## Multi-machine mode (validation pending)
 
-The **Dot tasks → 多机** tab selects local (default), center or remote mode. No multi-machine listener or device credential is created by installing this code. Configuration and device creation have explicit confirmation screens. The existing ChatGPT MCP connection remains on the center. Remote Paseo daemons use a separate scoped device credential; they do not receive the center's ChatGPT/MCP credential.
+The **Dot tasks → 多机** tab selects local (default), center or remote mode. No multi-machine listener or device credential is created by installing this code. Credential-based configuration and device creation have explicit confirmation screens. Tailscale direct saves and connects in one action. The existing ChatGPT MCP connection remains on the center. Remote Paseo daemons use a separate scoped device credential; they do not receive the center's ChatGPT/MCP credential.
+
+### Tailscale direct
+
+Both hosts must be upgraded. On the center, choose **Center → Tailscale direct**. The UI fills a detected Tailscale IPv4 address when available; confirm the listen IP and port (default `47823`) and save. On the remote, choose **Remote → Tailscale direct**, enter `http://<center Tailscale IP>:47823`, then **Save and connect**. Open a new Dot conversation in the desired workspace. There is no token exchange, manual workspace ID list, read/write toggle, private-HTTP toggle or extra confirmation step.
+
+This mode trusts machines that your tailnet permits to reach the gateway. The center must bind its Tailscale `100.64.0.0/10` IPv4 address. Authentication uses the accepted socket's local and remote addresses; forwarded headers, a `.ts.net` hostname or a loopback/reverse-proxy connection cannot grant direct access. Devices receive stable, separate identities by peer Tailscale IP; their workspaces are registered from submitted conversations, and file reads/writes are enabled automatically. Normal task binding, path/hash validation, stop handling and explicit task-level denials still apply. Tailscale IPv6-only/Serve proxy access uses the credential flow instead. ChatGPT's existing public MCP connection remains on the center.
+
+Local validation covers source-address rejection, automatic enrollment and peer isolation, persistence/concurrent enrollment, token-free connection, automatic workspace binding and a real file edit between two isolated runtimes through this host's live Tailscale IPv4 interface. This is not a two-physical-machine validation.
+
+### Credential-based connections
 
 - Configure a center bind address/port only when ready to expose that service. The gateway path is `/dot/remote/v1`. Use a trusted HTTPS reverse proxy, or explicitly allow HTTP only on a trusted private network. The plugin does not configure TLS, tunnels, firewall rules or proxies. Plain HTTP is not encrypted even on a private network.
 - Create one credential for each remote daemon, restricted to its exact Paseo workspace IDs. Chat, attachment, read and write capabilities are separate. The center stores credential hashes; the remote stores its own credential in its private state file. A newly created credential is shown once. If a create response is lost, inspect/revoke the new device before creating another.

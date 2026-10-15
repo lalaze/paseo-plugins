@@ -1,3 +1,5 @@
+import { authenticateTailscale } from './tailscale';
+import { isTailscaleIp } from '../shared/tailscale';
 import { MAX_PROMPT_ATTACHMENTS } from '../shared/attachments';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
@@ -44,16 +46,19 @@ export class RemoteCenter {
     const config = this.state.read().config;
     if (config.mode !== 'center' || this.server) return;
     this.closing = false;
+    if (config.transport === 'tailscale' && !isTailscaleIp(config.host)) throw new Error('Tailscale gateway requires a Tailscale bind address');
     if (/[\s\/\\]/.test(config.host)) throw new Error('Invalid center bind host');
     this.server = createServer(async (request, response) => {
       const answer = (status: number, body: unknown) => { if (response.destroyed || response.writableEnded) return; const text = JSON.stringify(body); if (Buffer.byteLength(text) > REMOTE_MAX_BYTES) { response.writeHead(413); response.end(); return; } response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); response.end(text); };
       if (this.closing || this.active >= 32) { answer(503, { ok: false, error: 'Center unavailable' }); return; }
       if (request.url !== REMOTE_PATH || request.method !== 'POST' || request.headers.origin) { answer(404, { ok: false, error: 'Not found' }); return; }
-      const auth = request.headers.authorization;
-      const device = typeof auth === 'string' && auth.startsWith('Bearer ') ? this.authenticate(auth.slice(7)) : undefined;
-      if (!device) { answer(401, { ok: false, error: 'Unauthorized device' }); return; }
       this.active++;
       try {
+        const auth = request.headers.authorization;
+        const device = config.transport === 'tailscale'
+          ? await authenticateTailscale(this.state, request.socket.localAddress, request.socket.remoteAddress)
+          : typeof auth === 'string' && auth.startsWith('Bearer ') ? this.authenticate(auth.slice(7)) : undefined;
+        if (!device) { answer(401, { ok: false, error: 'Unauthorized device' }); return; }
         const parsed = envelope.parse(await readRemoteBody(request));
         const fresh = this.device(device.id);
         const value = await this.handle(fresh, parsed.action, parsed.input);
@@ -106,6 +111,14 @@ export class RemoteCenter {
     }
     if (action === 'prompt') {
       const args = promptSchema.parse(input);
+      if (device.tailscaleIp && this.state.read().config.transport === 'tailscale') {
+        if (!device.workspaceIds.includes(args.workspaceId)) await this.state.mutate(draft => {
+          const current = draft.devices.find(item => item.id === device.id && !item.revoked);
+          if (!current) throw new Error('Device disconnected');
+          if (!current.workspaceIds.includes(args.workspaceId)) current.workspaceIds.push(args.workspaceId);
+        });
+        device = this.device(device.id);
+      }
       if (!deviceCanUse(device, args.workspaceId, 'chat') || (args.attachments.length && !deviceCanUse(device, args.workspaceId, 'attachments'))) throw new Error('Scope refused');
       const prior = this.engine.tasks().find(task => task.id === args.id);
       if (prior) this.owned(device, prior.id);

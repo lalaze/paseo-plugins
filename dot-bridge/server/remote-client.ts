@@ -13,6 +13,7 @@ import { readWorkspaceChanges, WorkspaceSnapshotChanged } from './workspace-chan
 import { AttachmentStore } from './attachments';
 import { receiveChunk, clearTransfer, saveDeliveredFile } from './attachment-transfers';
 import { RemoteStateStore, fileJobSchema, type FileJob } from './remote-state';
+import { isTailscaleOrigin } from '../shared/tailscale';
 import { remoteCall, remoteUrl } from './remote-http';
 
 /** Check server replies before selecting any local workspace or touching files. */
@@ -42,8 +43,10 @@ export class RemoteClient {
   constructor(readonly state: RemoteStateStore, readonly dataDir: string) {}
   private async call(action: string, input: unknown): Promise<unknown> {
     const config = this.state.read();
-    if (this.closed || config.config.mode !== 'remote' || !config.token) throw new Error('Remote mode is not connected');
-    return remoteCall(remoteUrl(config.config.url, config.config.privateHttp), config.token, action, input, this.lifecycle.signal);
+    const direct = config.config.transport === 'tailscale';
+    if (direct && !isTailscaleOrigin(config.config.url)) throw new Error('Tailscale direct requires an HTTP Tailscale IP origin');
+    if (this.closed || config.config.mode !== 'remote' || (!direct && !config.token)) throw new Error('Remote mode is not connected');
+    return remoteCall(remoteUrl(config.config.url, direct || config.config.privateHttp), direct ? '' : config.token, action, input, this.lifecycle.signal);
   }
   tasks(): Task[] {
     const state = this.state.read();
@@ -75,7 +78,7 @@ export class RemoteClient {
     if (!this.state.read().bindings.some(binding => binding.taskId === id)) throw new Error('This remote conversation has no local workspace binding');
     await this.accept(await this.call('task', { id }));
   }
-  transportKey(): string { const state = this.state.read(); return 'remote:' + createHash('sha256').update(state.config.url + '\n' + state.token).digest('hex'); }
+  transportKey(): string { const state = this.state.read(); return 'remote:' + createHash('sha256').update(state.config.transport === 'tailscale' ? 'tailscale\n' + state.config.url : state.config.url + '\n' + state.token).digest('hex'); }
   readyToDispatch(): boolean { return this.connected && this.ready; }
   connectionError(): string | null { return this.error; }
   changeContents(operationId: string) { return readChangeJournal(this.dataDir, operationId); }
@@ -86,7 +89,7 @@ export class RemoteClient {
   private async sendPrompt(input: Parameters<BridgeEngine['providerPrompt']>[0]): Promise<{ task: Task; duplicate: boolean }> {
     if (input.remoteOrigin) throw new Error('Remote origin is assigned by the center');
     const config = this.state.read().config;
-    if (!config.workspaceIds.includes(input.workspaceId)) throw new Error('This workspace is not enabled for the remote connection');
+    if (config.transport !== 'tailscale' && !config.workspaceIds.includes(input.workspaceId)) throw new Error('This workspace is not enabled for the remote connection');
     const cwd = canonicalWorkspace(input.cwd);
     await this.state.mutate(draft => {
       const binding = draft.bindings.find(item => item.taskId === input.id);
@@ -171,8 +174,8 @@ export class RemoteClient {
     if (this.pendingInputs) throw new Error('Local user input is still being saved');
     assertRemoteJobIdentity(job, task);
     const state = this.state.read(), binding = state.bindings.find(item => item.taskId === job.taskId), round = currentRound(task);
-    if (this.closed || state.config.mode !== 'remote' || !binding || !state.config.workspaceIds.includes(binding.workspaceId) || binding.workspaceId !== task.workspaceId || binding.cwd !== task.provider?.cwd) throw new Error('Remote workspace is not bound locally');
-    if (!(job.kind === 'apply' ? state.config.writeFiles : state.config.readFiles)) throw new Error('File capability disabled on this device');
+    if (this.closed || state.config.mode !== 'remote' || !binding || (state.config.transport !== 'tailscale' && !state.config.workspaceIds.includes(binding.workspaceId)) || binding.workspaceId !== task.workspaceId || binding.cwd !== task.provider?.cwd) throw new Error('Remote workspace is not bound locally');
+    if (state.config.transport !== 'tailscale' && !(job.kind === 'apply' ? state.config.writeFiles : state.config.readFiles)) throw new Error('File capability disabled on this device');
     if (state.stops.some(item => item.taskId === task.id && item.roundId === job.roundId) || job.expiresAt <= Date.now() || task.currentRoundId !== job.roundId || task.userMessageSeq !== job.userMessageSeq || round.stop.requested || !round.claim || !['claimed', 'running', 'waiting_user'].includes(task.status)) throw new Error('Stale, stopped or expired remote file operation');
     if (job.kind === 'apply') {
       const changes = job.input.changes as Parameters<typeof applyLocalChanges>[0]['changes'];

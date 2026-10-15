@@ -28,7 +28,7 @@ export async function remoteCall(base: string, token: string, action: string, in
   try {
     const body = JSON.stringify({ action, input });
     if (Buffer.byteLength(body) > REMOTE_MAX_BYTES) throw new Error('Remote request too large');
-    const response = await fetch(base + REMOTE_PATH, { method: 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' }, body, redirect: 'error', signal: controller.signal });
+    const response = await fetch(base + REMOTE_PATH, { method: 'POST', headers: { ...(token ? { authorization: 'Bearer ' + token } : {}), 'content-type': 'application/json' }, body, redirect: 'error', signal: controller.signal });
     if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? 'Center rejected the device credential or scope' : 'Center request failed (' + response.status + ')');
     const reader = response.body?.getReader(); if (!reader) throw new Error('Missing center response');
     const chunks: Uint8Array[] = []; let size = 0;
