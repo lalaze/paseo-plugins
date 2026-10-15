@@ -46,6 +46,17 @@ paseo plugin add git:lalaze/paseo-plugins --path usage-glance
 
 Details: [usage-glance/README.md](usage-glance/README.md)
 
+## [Dot Bridge](dot-bridge)
+
+Chat with your connected ChatGPT Dot in Paseo and apply requested changes to the host's workspace. Plugin ID: `paseo-dot-bridge`. Install separately on each Paseo host, including the `code` machine; `install-all.sh` and `update-all.sh` do not manage it. Requires Node.js 22.13+ and Paseo 0.10.x or 0.11.x.
+
+```bash
+paseo plugin add git:lalaze/paseo-plugins --ref main --path dot-bridge
+paseo plugin reload paseo-dot-bridge
+```
+
+Details, updates and connecting another machine to the existing Dot: [dot-bridge/README.md](dot-bridge/README.md#install-on-another-host-code)
+
 ## [Tasks](todo)
 
 Queues tasks in the sidebar, with a per-project **Tasks** panel in each workspace's explorer. Each task runs in its own git worktree, and a person accepts the result before it merges into the chosen branch. Closing the sidebar does not stop the queue. Plugin ID: `paseo-todo`. It is a separate install: `install-all.sh` and `update-all.sh` do not install or update it.

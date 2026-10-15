@@ -135,8 +135,11 @@ Task notifications now start after dispatch, and subscription refresh only wakes
 
 ## Setup
 
+Requires Node.js **22.13+** and Paseo **0.10.x or 0.11.x**. Enable plugins under **Settings → Plugins** on the target host first.
+
 ```bash
-paseo plugin add git:lalaze/paseo-plugins --path dot-bridge
+paseo plugin add git:lalaze/paseo-plugins --ref main --path dot-bridge
+paseo plugin reload paseo-dot-bridge
 ```
 
 This Git URL is an **installation source**, not a task delivery channel. `install-all.sh` and `update-all.sh` do not install or update this plugin.
@@ -152,6 +155,19 @@ Temporary listen failures (such as an occupied port) appear in connection status
 A subscription originally limited to observing a connection test can receive events without executing them. Its task-handling instructions must permit processing the user's requests. The user's existing connection was previously enabled for native conversations; the current local-edit validation record states whether the upgraded tools and rules have been verified live.
 
 Callback delivery supports Clash/Mihomo's `198.18.0.0/15` fake-IP mappings for the exact `connectors.api.openai.com` host on HTTPS port 443, without changing the proxy configuration. The connection stays pinned to the checked address, with the original hostname used for TLS certificate verification and subscription challenges. Other callbacks and actual local/private addresses remain blocked. Events previously blocked before sending by the address check are rechecked automatically and delivered with their original event IDs once allowed; completed deliveries and permanent HTTP failures are not replayed.
+
+### Install on another host (`code`)
+
+Run the Setup installation commands in a terminal **on the `code` machine**. They target that machine's local Paseo daemon; no repository clone is needed.
+
+To update an existing Git installation on that host:
+
+```bash
+paseo plugin update paseo-dot-bridge --ref main
+paseo plugin reload paseo-dot-bridge
+```
+
+Installation alone does not connect the two hosts. To share the existing connected Dot, configure the current connected host as **center** under **Dot tasks → 多机**, create a dedicated device credential scoped to the `code` machine's workspace IDs, then configure `code` as **remote** with the center origin, that credential and its allowed local workspaces. Keep the ChatGPT MCP connection on the center. Enable the desired local read/write capabilities and start a new Dot conversation on `code`. See [multi-machine mode](#multi-machine-mode-validation-pending) for configuration and validation limits; remote mode currently supports file operations, not command execution.
 
 ## Attachments
 
