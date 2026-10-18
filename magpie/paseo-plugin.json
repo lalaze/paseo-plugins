@@ -1,0 +1,5 @@
+{
+  "id": "magpie",
+  "description": "Native Magpie management in Paseo: agents, providers, routing, sessions, gateway, usage, library and plugins.",
+  "requirements": { "paseo": ">=0.11.1" }
+}

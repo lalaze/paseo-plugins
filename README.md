@@ -57,6 +57,19 @@ paseo plugin reload paseo-dot-bridge
 
 Details, updates and connecting another machine to the existing Dot: [dot-bridge/README.md](dot-bridge/README.md#install-on-another-host-code)
 
+## [Magpie](magpie)
+
+Manage Magpie from Paseo's sidebar using native plugin components: Agents, sessions, library,
+providers, routing, gateway, usage, plugins and settings. The daemon calls Magpie's authenticated
+API; no embedded browser or custom Paseo client is needed. Plugin ID: `magpie`. Install separately;
+`install-all.sh` and `update-all.sh` do not manage it.
+
+```bash
+paseo plugin add git:lalaze/paseo-plugins --path magpie
+```
+
+Details: [magpie/README.md](magpie/README.md)
+
 ## [Tasks](todo)
 
 Queues tasks in the sidebar, with a per-project **Tasks** panel in each workspace's explorer. Each task runs in its own git worktree, and a person accepts the result before it merges into the chosen branch. Closing the sidebar does not stop the queue. Plugin ID: `paseo-todo`. It is a separate install: `install-all.sh` and `update-all.sh` do not install or update it.
