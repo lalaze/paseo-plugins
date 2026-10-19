@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRpc } from "@getpaseo/plugin/client";
 import { readTranscript, type PageData } from "../shared/rpc";
 import { Banner, Button, Chip, CopyButton, Empty, date, money, number, useUi } from "./kit";
+import { SessionManagement } from "./session-management";
 
 export function SessionsPage({
   data,
@@ -52,7 +53,7 @@ export function SessionsPage({
                 <View style={s.row}>
                   <Text style={s.small}>{date(session.last)}</Text>
                   <Text style={s.small}>{number(session.input + session.output)} Token</Text>
-                  <Text style={s.small}>{money(session.cost)}</Text>
+                  <Text style={s.small}>{money(session.cost, data.currency, data.usdToCny)}</Text>
                 </View>
                 <View style={s.row}>
                   {session.resume ? (
@@ -76,6 +77,7 @@ export function SessionsPage({
       {data.sessions.length >= 2000 && data.sessions.length < data.total ? (
         <Banner>匹配结果超过 2000 条，请使用搜索缩小范围。</Banner>
       ) : null}
+      <SessionManagement />
     </>
   );
 }
@@ -119,10 +121,10 @@ function Conversation({
                 {part.kind === "thinking"
                   ? "思考"
                   : part.kind === "tool_use"
-                    ? "工具调用"
-                    : part.kind === "tool_result"
-                      ? "工具结果"
-                      : part.kind}
+                  ? "工具调用"
+                  : part.kind === "tool_result"
+                  ? "工具结果"
+                  : part.kind}
                 {part.name ? ` · ${part.name}` : ""}
               </Text>
             ) : null}

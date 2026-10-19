@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Text, View } from "react-native";
 import type { GroupDraft, PageData } from "../shared/rpc";
+import { RoutingAdvanced } from "./routing-advanced";
 import {
   Button,
   Card,
@@ -209,6 +210,7 @@ export function RoutingPage({ data, query }: { data: PageData; query: string }) 
           ) : null}
         </Card>
       ))}
+      <RoutingAdvanced />
     </>
   );
 }

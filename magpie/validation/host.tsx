@@ -1,14 +1,22 @@
 import { useCallback } from "react";
 import { demoCatalog, demoData } from "./fixtures";
 import { actionSchema, type Page } from "../shared/rpc";
+import { demoFeature } from "./features";
+import type { Feature } from "../shared/features";
 
 const data = demoData("agents");
 export function useRpc(contract: { name: string }) {
   return useCallback(
     async (input: Record<string, unknown>) => {
       if (contract.name === "magpie.page.read") return { ...data, page: input.page as Page };
+      if (contract.name === "magpie.feature.read")
+        return { data: demoFeature(input.feature as Feature) };
+      if (contract.name === "magpie.feature.mutate")
+        return { data: { saved: true, preview: true } };
       if (contract.name === "magpie.plugins.catalog")
         return demoCatalog(input.source as "suggested" | "github" | "npm");
+      if (contract.name === "magpie.gateway.key.reveal")
+        return { secret: "sk-magpie-key-preview-only" };
       if (contract.name === "magpie.action.run") {
         const action = actionSchema.parse(input);
         if (action.type === "agent.set") {
@@ -46,6 +54,28 @@ export function useRpc(contract: { name: string }) {
         }
         if (action.type === "settings.save" && data.settings)
           data.settings = { ...data.settings, ...action.settings };
+        if (action.type === "settings.lan") {
+          if (data.settings) data.settings.lan = action.on;
+          if (data.gateway) data.gateway.lan = action.on;
+        }
+        if (action.type === "settings.textSize" && data.settings)
+          data.settings.textSize = action.size;
+        if (action.type === "gateway.key.add")
+          data.gatewayKeys.push({
+            id: `demo-${Date.now()}`,
+            name: action.name,
+            masked: "sk-magpie-key-…demo",
+            off: false,
+            models: [],
+            accounts: [],
+          });
+        if (action.type === "gateway.key.change") {
+          const key = data.gatewayKeys.find((k) => k.id === action.id);
+          if (key && (action.operation === "on" || action.operation === "off"))
+            key.off = action.operation === "off";
+          if (action.operation === "remove")
+            data.gatewayKeys = data.gatewayKeys.filter((k) => k.id !== action.id);
+        }
         return { notice: "示例操作已完成，真实 Magpie 未被修改。", jobId: "" };
       }
       if (contract.name === "magpie.transcript.read")

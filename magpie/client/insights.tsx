@@ -1,5 +1,8 @@
 import { Text, View } from "react-native";
 import type { PageData } from "../shared/rpc";
+import { GatewayKeys, SharingCard } from "./sharing";
+import { GatewayAdvanced } from "./gateway-advanced";
+import { UsageAdvanced } from "./usage-advanced";
 import {
   Banner,
   Card,
@@ -46,6 +49,9 @@ export function GatewayPage({ data, query }: { data: PageData; query: string }) 
           <Chip label="Gemini" />
         </View>
       </Card>
+      <SharingCard on={gateway.lan} addresses={gateway.lanURLs} />
+      <GatewayKeys keys={data.gatewayKeys} />
+      <GatewayAdvanced />
       <Card>
         <Text style={s.sectionTitle}>最近请求</Text>
         <Text style={s.muted}>Magpie 的实时请求记录，最多显示最近 40 条。</Text>
@@ -107,7 +113,11 @@ export function UsagePage({
         <Metric grouped label="输入 Token" value={number(usage.input)} />
         <Metric grouped label="输出 Token" value={number(usage.output)} />
         <Metric grouped label="请求次数" value={number(usage.calls)} />
-        <Metric grouped label="估算费用（USD）" value={money(usage.cost)} />
+        <Metric
+          grouped
+          label={`估算费用（${data.currency.toUpperCase()}）`}
+          value={money(usage.cost, data.currency, data.usdToCny)}
+        />
       </View>
       <Card>
         <View style={s.between}>
@@ -121,7 +131,9 @@ export function UsagePage({
             {usage.series.map((p, i) => (
               <View
                 key={`${p.label}-${i}`}
-                accessibilityLabel={`${p.label}：${number(p.input + p.output + p.cache_read + p.cache_write)} Token`}
+                accessibilityLabel={`${p.label}：${number(
+                  p.input + p.output + p.cache_read + p.cache_write,
+                )} Token`}
                 style={{
                   flex: 1,
                   alignItems: "center",
@@ -135,7 +147,10 @@ export function UsagePage({
                     width: "100%",
                     minHeight: 2,
                     maxWidth: 38,
-                    height: `${Math.max(1, ((p.input + p.output + p.cache_read + p.cache_write) / max) * 85)}%`,
+                    height: `${Math.max(
+                      1,
+                      ((p.input + p.output + p.cache_read + p.cache_write) / max) * 85,
+                    )}%`,
                     borderRadius: 3,
                     backgroundColor: c.accent,
                   }}
@@ -170,7 +185,7 @@ export function UsagePage({
                       {number(row.calls)} 次 · {number(row.input + row.output)} Token
                     </Text>
                   </View>
-                  <Text style={s.muted}>{money(row.cost)}</Text>
+                  <Text style={s.muted}>{money(row.cost, data.currency, data.usdToCny)}</Text>
                 </View>
               ))
             )}
@@ -218,6 +233,7 @@ export function UsagePage({
           </Card>
         ))}
       </View>
+      <UsageAdvanced />
     </>
   );
 }

@@ -55,6 +55,7 @@ describe("Magpie host-only authentication", () => {
     const api = new MagpieApi({ upstream, key: "host-only-key-12345" });
     cleanups.push(() => api.close());
     await Promise.all([api.request("/api/state"), api.request("/api/providers")]);
+    await api.request("/api/usage/requests?period=2026-10-01..2026-10-18");
     expect(signins).toBe(1);
     expired = true;
     await api.request("/api/set", { agent: "codex", field: "model", value: "demo/model" });
@@ -83,6 +84,7 @@ describe("Magpie host-only authentication", () => {
     );
     await expect(api.request("https://example.test/api/state")).rejects.toThrow("无效");
     await expect(api.request("/api/../settings")).rejects.toThrow("无效");
+    await expect(api.request("/api/%2e%2e/settings")).rejects.toThrow("无效");
     api.close();
     await expect(api.request("/api/state")).rejects.toThrow("已停止");
   });

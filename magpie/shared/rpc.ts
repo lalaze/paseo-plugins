@@ -112,7 +112,17 @@ export const gatewaySchema = z.object({
   running: flag,
   models: count,
   mine: flag,
+  lan: flag,
+  lanURLs: strings,
   calls: z.array(callSchema).default([]),
+});
+export const gatewayKeySchema = z.object({
+  id: z.string(),
+  name: text,
+  masked: text,
+  off: flag,
+  models: strings,
+  accounts: strings,
 });
 const usageRowSchema = z.object({
   name: text,
@@ -211,6 +221,8 @@ export const settingsSchema = z.object({
   version: text,
   dir: text,
   gateway: text,
+  lan: flag,
+  lanURLs: strings,
 });
 const libraryItemSchema = z.object({
   name: z.string(),
@@ -230,6 +242,8 @@ export const librarySchema = z.object({
 
 export const pageDataSchema = z.object({
   page: z.enum(pages),
+  currency: z.enum(["usd", "cny"]).default("usd"),
+  usdToCny: z.number().positive().default(1),
   notices: strings,
   agents: z.array(agentSchema).default([]),
   profiles: z.array(z.object({ name: z.string(), summary: text, inUse: flag })).default([]),
@@ -238,6 +252,7 @@ export const pageDataSchema = z.object({
   groups: z.array(groupSchema).default([]),
   models: z.array(choiceSchema).default([]),
   gateway: gatewaySchema.nullable().default(null),
+  gatewayKeys: z.array(gatewayKeySchema).default([]),
   usage: usageSchema.nullable().default(null),
   quotas: z.array(quotaSchema).default([]),
   sessions: z.array(sessionSchema).default([]),
@@ -318,17 +333,28 @@ export const actionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("plugin.remove"), spec: id }),
   z.object({ type: z.literal("plugin.upgrade"), spec: id }),
   z.object({ type: z.literal("builtin.toggle"), id, on: z.boolean() }),
+  z.object({ type: z.literal("settings.lan"), on: z.boolean() }),
+  z.object({
+    type: z.literal("settings.textSize"),
+    size: z
+      .number()
+      .int()
+      .refine((size) => [100, 110, 125, 150].includes(size)),
+  }),
+  z.object({ type: z.literal("gateway.key.add"), name: id }),
+  z.object({
+    type: z.literal("gateway.key.change"),
+    id,
+    operation: z.enum(["on", "off", "rotate", "remove"]),
+  }),
   z.object({
     type: z.literal("settings.save"),
-    settings: settingsSchema
-      .pick({
-        theme: true,
-        lang: true,
-        currency: true,
-        proxy: true,
-        textSize: true,
-      })
-      .extend({ textSize: z.number().int().min(0).max(30) }),
+    settings: settingsSchema.pick({
+      theme: true,
+      lang: true,
+      currency: true,
+      proxy: true,
+    }),
   }),
   z.object({
     type: z.literal("library.server.save"),
@@ -354,10 +380,17 @@ export const runAction = defineRpc({
   input: actionSchema,
   output: z.object({ notice: text, jobId: text }),
 });
+// Credentials are returned only after an explicit reveal, never in page polling or notices.
+export const revealGatewayKey = defineRpc({
+  name: "magpie.gateway.key.reveal",
+  input: z.object({ id }),
+  output: z.object({ secret: z.string().min(1) }),
+});
 export const jobSchema = z.object({
   state: z.enum(["running", "done", "failed"]),
   notice: text,
   error: text,
+  data: z.json().optional(),
 });
 export const readJob = defineRpc({
   name: "magpie.job.read",

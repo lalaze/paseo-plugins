@@ -139,7 +139,10 @@ function HostScreen(props: PluginScreenProps) {
     refetchInterval: page === "sessions" || page === "library" ? 60_000 : 20_000,
   });
   const refresh = useCallback(async () => {
-    await cache.invalidateQueries({ queryKey: ["magpie", props.host.id] });
+    await Promise.all([
+      cache.invalidateQueries({ queryKey: ["magpie", props.host.id] }),
+      cache.invalidateQueries({ queryKey: ["magpie-feature", props.host.id] }),
+    ]);
   }, [cache, props.host.id]);
   const run = useCallback(
     async (input: Action) => {
@@ -220,6 +223,7 @@ function HostScreen(props: PluginScreenProps) {
       onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
     >
       <UiProvider
+        hostId={props.host.id}
         colors={props.theme.colors}
         compact={props.layout.compact || (width !== null && width < 820)}
         busy={busy}

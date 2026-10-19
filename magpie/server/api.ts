@@ -1,10 +1,7 @@
 import type { ConnectionConfig } from "./config";
 
 export class MagpieApiError extends Error {
-  constructor(
-    message: string,
-    readonly status = 0,
-  ) {
+  constructor(message: string, readonly status = 0) {
     super(message);
     this.name = "MagpieApiError";
   }
@@ -22,9 +19,10 @@ export class MagpieApi {
     if (this.closed) throw new MagpieApiError("Magpie 插件已停止，请重新打开。");
     const controller = new AbortController();
     this.pending.add(controller);
-    const longOperation = /^\/api\/(plugins\/(add|upgrade)|library\/skills\/install)$/.test(
-      url.pathname,
-    );
+    const longOperation =
+      /^\/api\/(?:plugins\/(?:add|upgrade|update|check)|library(?:\/(?:skills|market|rtk|all))?|davsync|backup|agents\/cli|signin\/import|usage\/requests\/export|archive|update|provider\/(?:test|detect|move|adopt)|codex\/daemon)(?:\/|$)/.test(
+        url.pathname,
+      );
     const timer = setTimeout(() => controller.abort(), longOperation ? 330_000 : 30_000);
     try {
       return await fetch(url, { ...init, redirect: "manual", signal: controller.signal });
@@ -63,7 +61,16 @@ export class MagpieApi {
     if (
       !path.startsWith("/api/") ||
       path.includes("\\") ||
-      path.includes("..") ||
+      path
+        .split("?", 1)[0]
+        .split("/")
+        .some((part) => {
+          try {
+            return [".", ".."].includes(decodeURIComponent(part));
+          } catch {
+            return true;
+          }
+        }) ||
       path.includes("#")
     )
       throw new MagpieApiError("无效的 Magpie API 路径。");

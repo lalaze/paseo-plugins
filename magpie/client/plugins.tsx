@@ -19,6 +19,7 @@ import {
   useUi,
 } from "./kit";
 import { Builtins } from "./manage";
+import { PluginsAdvanced } from "./plugins-advanced";
 
 const kinds = [
   { value: "provider", label: "订阅" },
@@ -264,6 +265,7 @@ export function PluginsPage({
           </View>
         </Card>
       )}
+      <PluginsAdvanced />
     </>
   );
 }
@@ -334,7 +336,9 @@ function CatalogGrid({
               </View>
               <Button
                 label={existing ? (existing.off ? "启用" : "已安装") : "安装"}
-                accessibilityLabel={`${existing ? (existing.off ? "启用" : "已安装") : "安装"} ${p.name}`}
+                accessibilityLabel={`${existing ? (existing.off ? "启用" : "已安装") : "安装"} ${
+                  p.name
+                }`}
                 disabled={!!existing && !existing.off}
                 primary={!existing}
                 onPress={() => {

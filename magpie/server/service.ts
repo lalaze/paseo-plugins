@@ -6,6 +6,7 @@ import {
   signInSchema,
   readTranscript,
   readPluginCatalog,
+  revealGatewayKey,
   type Action,
 } from "../shared/rpc";
 import { MagpieApiError } from "./api";
@@ -49,7 +50,10 @@ function provider(row: Record<string, unknown>) {
     keys: row.keyList,
     logins: row.account && typeof row.account === "object" ? object(row.account).logins : [],
     accountAgent: row.account && typeof row.account === "object" ? object(row.account).agent : "",
-    models: list(row.models).map((m) => ({ ...m, name: string(m.name) || string(m.id) })),
+    models: list(row.models).map((m) => ({
+      ...m,
+      name: string(m.name) || string(m.id),
+    })),
   };
 }
 function calls(gateway: Record<string, unknown>) {
@@ -72,15 +76,15 @@ export async function pluginCatalog(api: Api, value: z.infer<typeof readPluginCa
     input.source === "suggested"
       ? "/api/plugins/listings"
       : input.source === "github"
-        ? "/api/plugins/github"
-        : `/api/plugins/search?q=${encodeURIComponent(q)}`;
+      ? "/api/plugins/github"
+      : `/api/plugins/search?q=${encodeURIComponent(q)}`;
   const data = object(await api.request(path));
   const rows = list(
     input.source === "suggested"
       ? data.listings
       : input.source === "github"
-        ? data.repos
-        : data.hits,
+      ? data.repos
+      : data.hits,
   );
   const publicURL = (value: unknown) => {
     try {
@@ -127,6 +131,19 @@ export async function loadPage(api: Api, input: ReadInput) {
   const out: Record<string, unknown> = { page: input.page, notices: [] };
   const notices: string[] = [];
   const read = async (path: string) => object(await api.request(path));
+  if (input.page === "usage" || input.page === "sessions") {
+    try {
+      const settings = await read("/api/settings");
+      const rate =
+        settings.fx && typeof settings.fx === "object" ? object(settings.fx).rate : undefined;
+      if (settings.currency === "cny" && typeof rate === "number" && rate > 0) {
+        out.currency = "cny";
+        out.usdToCny = rate;
+      }
+    } catch {
+      notices.push("无法读取费用币种，暂以美元显示。");
+    }
+  }
   switch (input.page) {
     case "agents": {
       const state = await read("/api/state");
@@ -152,12 +169,22 @@ export async function loadPage(api: Api, input: ReadInput) {
       out.providers = list(data.providers).map(provider);
       out.presets = data.presets;
       if (data.gateway) out.gateway = calls(object(data.gateway));
+      if (input.page === "gateway") {
+        try {
+          out.gatewayKeys = object(await api.request("/api/caller-keys")).keys;
+        } catch (error) {
+          notices.push(error instanceof Error ? error.message : "网关密钥读取失败。");
+        }
+      }
       if (data.fileError) notices.push(string(data.fileError));
       break;
     }
     case "routing": {
       const data = await read("/api/groups");
-      out.groups = list(data.groups).map((g) => ({ ...g, disabled: Boolean(g.disabled) }));
+      out.groups = list(data.groups).map((g) => ({
+        ...g,
+        disabled: Boolean(g.disabled),
+      }));
       out.models = list(data.models).map((m) => ({
         value: m.id,
         label: `${string(m.name)} · ${string(m.providerName)}`,
@@ -245,7 +272,11 @@ export async function act(api: Api, value: Action) {
   const post = (path: string, body: object = {}) => api.request(`/api/${path}`, body);
   switch (action.type) {
     case "agent.set":
-      result = await post("set", { agent: action.id, field: action.field, value: action.value });
+      result = await post("set", {
+        agent: action.id,
+        field: action.field,
+        value: action.value,
+      });
       break;
     case "agent.connect":
     case "agent.disconnect":
@@ -270,13 +301,16 @@ export async function act(api: Api, value: Action) {
       result = await post("provider/save", {
         ...existing,
         ...draft,
+        balanceToken: "",
         ...(draft.id ? {} : { id: slug(draft.name) }),
         new: action.fresh,
       });
       break;
     }
     case "provider.toggle":
-      result = await post(`provider/${action.on ? "on" : "off"}`, { id: action.id });
+      result = await post(`provider/${action.on ? "on" : "off"}`, {
+        id: action.id,
+      });
       break;
     case "provider.delete":
       result = await post("provider/delete", { id: action.id });
@@ -285,21 +319,34 @@ export async function act(api: Api, value: Action) {
       result = await post("provider/models", { id: action.id });
       break;
     case "key.add":
-      result = await post("keys/add", { id: action.id, name: action.name, key: action.key });
+      result = await post("keys/add", {
+        id: action.id,
+        name: action.name,
+        key: action.key,
+      });
       break;
     case "key.change":
-      result = await post(`keys/${action.operation}`, { id: action.id, ref: action.ref });
+      result = await post(`keys/${action.operation}`, {
+        id: action.id,
+        ref: action.ref,
+      });
       break;
     case "login.change":
       result = await post(
-        `login/${action.operation === "use" ? "switch" : action.operation === "remove" ? "forget" : action.operation}`,
+        `login/${
+          action.operation === "use"
+            ? "switch"
+            : action.operation === "remove"
+            ? "forget"
+            : action.operation
+        }`,
         { agent: action.id, user: action.user },
       );
       break;
     case "group.save": {
       const data = object(await api.request("/api/groups"));
       const existing = list(data.groups).find((g) => g.id === action.draft.id);
-      result = await post("groups/save", { ...existing, ...action.draft });
+      result = await post("groups/save", { ...existing, ...action.draft, routing: action.draft.routing === "smart" ? "" : action.draft.routing });
       break;
     }
     case "group.delete":
@@ -312,7 +359,10 @@ export async function act(api: Api, value: Action) {
       result = await post("plugins/add", { spec: action.spec });
       break;
     case "plugin.toggle":
-      result = await post("plugins/off", { spec: action.spec, off: !action.on });
+      result = await post("plugins/off", {
+        spec: action.spec,
+        off: !action.on,
+      });
       break;
     case "plugin.remove":
       result = await post("plugins/remove", { spec: action.spec });
@@ -328,6 +378,28 @@ export async function act(api: Api, value: Action) {
       result = await post("settings", { ...settings, ...action.settings });
       break;
     }
+    case "settings.lan":
+      result = await post("settings/lan", { on: action.on });
+      // Magpie may save the setting but report a failure rekeying local agents.
+      if (result && typeof result === "object" && string(object(result).rekeyed))
+        return {
+          notice: `共享设置已保存；Agent 密钥更新失败：${string(object(result).rekeyed)}`,
+        };
+      break;
+    case "settings.textSize":
+      result = await post("settings/text-size", { size: action.size });
+      break;
+    case "gateway.key.add":
+      await post("caller-keys/add-key", { name: action.name });
+      return { notice: "网关密钥已创建，请点击查看并复制密钥。" };
+    case "gateway.key.change":
+      await post(`caller-keys/${action.operation}-key`, { key: action.id });
+      return {
+        notice:
+          action.operation === "rotate"
+            ? "密钥已轮换，请将新密钥更新到另一台机器。"
+            : "网关密钥已更新。",
+      };
     case "library.server.save": {
       const data = object(await api.request("/api/library?glance=1"));
       const existing = list(data.servers).find((s) => s.name === action.old);
@@ -352,7 +424,9 @@ export async function act(api: Api, value: Action) {
       });
       break;
     case "library.remove":
-      result = await post(`library/${action.kind}/remove`, { name: action.name });
+      result = await post(`library/${action.kind}/remove`, {
+        name: action.name,
+      });
       break;
     case "library.skill.install":
       result = await post("library/skills/install", {
@@ -368,6 +442,11 @@ export async function act(api: Api, value: Action) {
   return { notice: notice || "已保存到 Magpie。" };
 }
 
+export async function gatewaySecret(api: Api, input: z.infer<typeof revealGatewayKey.input>) {
+  const { id } = revealGatewayKey.input.parse(input);
+  return revealGatewayKey.output.parse(await api.request("/api/caller-keys/copy-key", { key: id }));
+}
+
 export function slug(name: string) {
   return (
     name
@@ -379,7 +458,9 @@ export function slug(name: string) {
 
 export async function transcript(api: Api, input: z.infer<typeof readTranscript.input>) {
   const data = await api.request(
-    `/api/sessions/transcript?agent=${encodeURIComponent(input.agent)}&id=${encodeURIComponent(input.id)}`,
+    `/api/sessions/transcript?agent=${encodeURIComponent(input.agent)}&id=${encodeURIComponent(
+      input.id,
+    )}`,
   );
   return readTranscript.output.parse(nils(data));
 }

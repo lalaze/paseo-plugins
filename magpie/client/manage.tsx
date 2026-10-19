@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { Text, View } from "react-native";
 import type { PageData, Settings } from "../shared/rpc";
+import { SharingCard } from "./sharing";
+import { AdvancedPreferences } from "./preferences";
+import { LibraryAdvanced } from "./library-advanced";
 import {
   Button,
   Card,
@@ -59,13 +62,12 @@ function SettingsForm({ settings }: { settings: Settings }) {
   const [draft, setDraft] = useState(settings);
   const options = (items: [string, string][]) =>
     items.map(([value, label]) => ({ value, label, note: "" }));
-  const validSize = Number.isInteger(draft.textSize) && draft.textSize >= 0 && draft.textSize <= 30;
   return (
     <>
       <Card>
         <Text style={s.sectionTitle}>通用设置</Text>
         <Text style={s.muted}>
-          主题、语言和字号控制 Magpie Web；插件使用原版配色，深浅模式跟随 Paseo。
+          主题和语言控制 Magpie Web，缩放控制 Magpie 桌面窗口；插件深浅模式跟随 Paseo。
         </Text>
         <View style={s.row}>
           <ChoicePicker
@@ -99,10 +101,13 @@ function SettingsForm({ settings }: { settings: Settings }) {
             ])}
             onChange={(currency) => setDraft({ ...draft, currency })}
           />
-          <Field
-            label="Magpie 字号（0 使用默认）"
-            value={String(draft.textSize)}
-            onChange={(value) => setDraft({ ...draft, textSize: Number(value) })}
+          <ChoicePicker
+            label="Magpie 窗口缩放"
+            value={String(draft.textSize || 100)}
+            options={options([100, 110, 125, 150].map((size) => [String(size), `${size}%`]))}
+            onChange={(value) => {
+              void run({ type: "settings.textSize", size: Number(value) });
+            }}
           />
         </View>
         <Field
@@ -115,7 +120,6 @@ function SettingsForm({ settings }: { settings: Settings }) {
           label="保存设置"
           icon="Check"
           primary
-          disabled={!validSize}
           onPress={() => {
             void run({
               type: "settings.save",
@@ -124,12 +128,13 @@ function SettingsForm({ settings }: { settings: Settings }) {
                 lang: draft.lang,
                 currency: draft.currency,
                 proxy: draft.proxy,
-                textSize: draft.textSize,
               },
             });
           }}
         />
       </Card>
+      <SharingCard on={settings.lan} addresses={settings.lanURLs} />
+      <AdvancedPreferences />
       <Card>
         <Text style={s.sectionTitle}>关于此 Magpie 实例</Text>
         {[
@@ -323,6 +328,7 @@ export function LibraryPage({ data, query }: { data: PageData; query: string }) 
         </Card>
       ))}
       {library.dir ? <Text style={s.small}>Magpie 资料库 · {library.dir}</Text> : null}
+      <LibraryAdvanced />
     </>
   );
 }

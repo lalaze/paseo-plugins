@@ -293,6 +293,7 @@ export function createStyles(c: Colors, compact: boolean) {
   });
 }
 type Ui = {
+  hostId: string;
   c: Colors;
   s: ReturnType<typeof createStyles>;
   compact: boolean;
@@ -303,6 +304,7 @@ type Ui = {
 };
 const UiContext = createContext<Ui | null>(null);
 export function UiProvider({
+  hostId = "preview",
   colors,
   compact,
   busy,
@@ -311,6 +313,7 @@ export function UiProvider({
   notice = "",
   children,
 }: {
+  hostId?: string;
   colors: Colors;
   compact: boolean;
   busy: boolean;
@@ -322,8 +325,8 @@ export function UiProvider({
   const palette = useMemo(() => magpieColors(colors), [colors]);
   const s = useMemo(() => createStyles(palette, compact), [palette, compact]);
   const value = useMemo(
-    () => ({ c: palette, s, compact, busy, run, error, notice }),
-    [palette, s, compact, busy, run, error, notice],
+    () => ({ c: palette, s, compact, busy, run, error, notice, hostId }),
+    [palette, s, compact, busy, run, error, notice, hostId],
   );
   return <UiContext.Provider value={value}>{children}</UiContext.Provider>;
 }
@@ -341,7 +344,7 @@ export function Dialog({
   onClose(): void;
   children: ReactNode;
 }) {
-  const { c, s, compact, busy, run, error, notice } = useUi();
+  const { c, s, compact, busy, run, error, notice, hostId } = useUi();
   return (
     <Modal
       title={title}
@@ -356,6 +359,7 @@ export function Dialog({
       >
         {/* Native sheets may mount in a separate root; carry the plugin's UI context explicitly. */}
         <UiProvider
+          hostId={hostId}
           colors={c}
           compact={compact}
           busy={busy}
@@ -504,6 +508,8 @@ export function Segments({
     <View
       style={{
         flexDirection: "row",
+        flexWrap: "wrap",
+        maxWidth: "100%",
         padding: 2,
         borderRadius: 7,
         backgroundColor: c.surface2,
@@ -552,11 +558,13 @@ export function ConfirmButton({
   label,
   detail,
   icon,
+  disabled,
   onConfirm,
 }: {
   label: string;
   detail?: string;
   icon?: string;
+  disabled?: boolean;
   onConfirm(): void;
 }) {
   const [asking, setAsking] = useState(false);
@@ -567,6 +575,7 @@ export function ConfirmButton({
       <View style={s.row}>
         <Button
           label={`确认${label}`}
+          disabled={disabled}
           danger
           onPress={() => {
             setAsking(false);
@@ -577,7 +586,7 @@ export function ConfirmButton({
       </View>
     </View>
   ) : (
-    <Button label={label} icon={icon} danger onPress={() => setAsking(true)} />
+    <Button label={label} icon={icon} danger disabled={disabled} onPress={() => setAsking(true)} />
   );
 }
 export function Field({
@@ -824,8 +833,9 @@ export function number(value: number) {
     value,
   );
 }
-export function money(value: number) {
-  return `$${value.toFixed(value < 1 ? 4 : 2)}`;
+export function money(value: number, currency = "usd", usdToCny = 1) {
+  const amount = currency === "cny" ? value * usdToCny : value;
+  return `${currency === "cny" ? "¥" : "$"}${amount.toFixed(amount < 1 ? 4 : 2)}`;
 }
 export function date(value: string) {
   if (!value) return "—";

@@ -5,7 +5,7 @@ import { jobSchema } from "../shared/rpc";
 type Job = z.infer<typeof jobSchema>;
 export class Jobs {
   private jobs = new Map<string, { status: Job; at: number }>();
-  start(work: () => Promise<{ notice: string }>) {
+  start(work: () => Promise<{ notice: string; data?: Job["data"] }>) {
     for (const [id, job] of this.jobs)
       if (job.status.state !== "running" && Date.now() - job.at > 15 * 60_000) this.jobs.delete(id);
     const id = randomUUID();
@@ -15,7 +15,7 @@ export class Jobs {
       .then(work)
       .then(
         (result) => {
-          job.status = jobSchema.parse({ state: "done", notice: result.notice });
+          job.status = jobSchema.parse({ state: "done", notice: result.notice, data: result.data });
         },
         (error: unknown) => {
           job.status = jobSchema.parse({

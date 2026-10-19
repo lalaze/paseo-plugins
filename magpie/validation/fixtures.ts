@@ -27,33 +27,33 @@ export function demoCatalog(source: "suggested" | "github" | "npm") {
             },
           ]
         : source === "github"
-          ? [
-              {
-                spec: "github:example/magpie-tools",
-                name: "Example tools",
-                description: "GitHub 社区插件示例。",
-                source,
-                publisher: "example",
-                kind: "tools",
-                repository: "https://github.com/example/magpie-tools",
-              },
-            ]
-          : [
-              {
-                spec: "@magpie-community/opencode-workbuddy-auth",
-                name: "@magpie-community/opencode-workbuddy-auth",
-                source,
-                version: "1.2.0",
-                description: "WorkBuddy provider",
-              },
-              {
-                spec: "opencode-tencent-auth",
-                name: "opencode-tencent-auth",
-                source,
-                version: "1.0.0",
-                description: "WorkBuddy authentication plugin",
-              },
-            ],
+        ? [
+            {
+              spec: "github:example/magpie-tools",
+              name: "Example tools",
+              description: "GitHub 社区插件示例。",
+              source,
+              publisher: "example",
+              kind: "tools",
+              repository: "https://github.com/example/magpie-tools",
+            },
+          ]
+        : [
+            {
+              spec: "@magpie-community/opencode-workbuddy-auth",
+              name: "@magpie-community/opencode-workbuddy-auth",
+              source,
+              version: "1.2.0",
+              description: "WorkBuddy provider",
+            },
+            {
+              spec: "opencode-tencent-auth",
+              name: "opencode-tencent-auth",
+              source,
+              version: "1.0.0",
+              description: "WorkBuddy authentication plugin",
+            },
+          ],
   });
 }
 
@@ -169,6 +169,7 @@ export function demoData(page: Page) {
       },
     ],
     presets: [
+      { id: "remote-magpie", name: "Remote magpie", kind: "remote" },
       { id: "openai", name: "OpenAI", kind: "vendor", chat: "https://api.openai.com/v1" },
       { id: "deepseek", name: "DeepSeek", kind: "vendor", chat: "https://api.deepseek.com" },
     ],
@@ -186,6 +187,8 @@ export function demoData(page: Page) {
       { value: "deepseek/v3", label: "DeepSeek V3 · DeepSeek" },
     ],
     gateway: {
+      lan: true,
+      lanURLs: ["http://100.96.195.115:3425"],
       url: "http://127.0.0.1:3425",
       running: true,
       models: 4,
@@ -215,6 +218,7 @@ export function demoData(page: Page) {
         },
       ],
     },
+    gatewayKeys: [{ id: "laptop-key", name: "另一台 Mac", masked: "sk-magpie-key-…demo" }],
     usage: {
       calls: 126,
       input: 1240000,
@@ -290,11 +294,13 @@ export function demoData(page: Page) {
       { id: "usage", name: "Usage", sub: "用量统计", on: true },
     ],
     settings: {
+      lan: true,
+      lanURLs: ["http://100.96.195.115:3425"],
       theme: "dark",
       lang: "zh",
       currency: "usd",
       proxy: "",
-      textSize: 13,
+      textSize: 100,
       version: "demo",
       dir: "~/.config/magpie",
       gateway: "http://127.0.0.1:3425",

@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Text, View } from "react-native";
 import type { PageData, Provider, ProviderDraft } from "../shared/rpc";
+import { ProviderAdvanced } from "./provider-advanced";
+import { ProviderManagement } from "./provider-management";
 import {
   Banner,
   BrandIcon,
@@ -181,6 +183,7 @@ export function ProvidersPage({
           ))}
         </View>
       </View>
+      <ProviderManagement />
     </>
   );
 }
@@ -241,7 +244,12 @@ function ProviderDetails({
             <Button
               label="设为当前"
               onPress={() => {
-                void run({ type: "key.change", id: p.id, ref: k.id, operation: "use" });
+                void run({
+                  type: "key.change",
+                  id: p.id,
+                  ref: k.id,
+                  operation: "use",
+                });
               }}
             />
           )}
@@ -307,6 +315,18 @@ function ProviderDetails({
               });
             }}
           />
+          <ConfirmButton
+            label="移除账户"
+            detail={`从 Magpie 移除 ${login.user} 的登录；此账户不再用于接下来的请求。`}
+            onConfirm={() => {
+              void run({
+                type: "login.change",
+                id: login.agent || p.accountAgent,
+                user: login.user,
+                operation: "remove",
+              });
+            }}
+          />
         </View>
       ))}
       <ConfirmButton
@@ -318,6 +338,7 @@ function ProviderDetails({
           });
         }}
       />
+      <ProviderAdvanced id={p.id} />
     </View>
   );
 }
@@ -361,6 +382,7 @@ function ProviderForm({
 }) {
   const { s, run } = useUi();
   const existing = data.providers.find((p) => p.id === draft.id);
+  const remote = draft.preset === "remote-magpie";
   const patch = (change: Partial<ProviderDraft>) => onChange({ ...draft, ...change });
   const presetOptions = [
     { value: "", label: "自定义供应商", note: "" },
@@ -399,32 +421,41 @@ function ProviderForm({
       </View>
       <View style={s.row}>
         <Field
-          label="Chat Completions 地址"
+          label={remote ? "远程 Magpie 地址" : "Chat Completions 地址"}
           value={draft.chat}
           onChange={(chat) => patch({ chat })}
-          placeholder="https://api.example.com/v1"
+          placeholder={remote ? "http://100.96.195.115:3425" : "https://api.example.com/v1"}
         />
-        <Field
-          label="Responses 地址"
-          value={draft.responses}
-          onChange={(responses) => patch({ responses })}
-          placeholder="https://api.example.com/v1"
-        />
+        {!remote ? (
+          <Field
+            label="Responses 地址"
+            value={draft.responses}
+            onChange={(responses) => patch({ responses })}
+            placeholder="https://api.example.com/v1"
+          />
+        ) : null}
       </View>
-      <View style={s.row}>
-        <Field
-          label="Anthropic 地址"
-          value={draft.anthropic}
-          onChange={(anthropic) => patch({ anthropic })}
-          placeholder="https://api.anthropic.com"
-        />
-        <Field
-          label="Gemini 地址"
-          value={draft.gemini}
-          onChange={(gemini) => patch({ gemini })}
-          placeholder="https://generativelanguage.googleapis.com/v1beta"
-        />
-      </View>
+      {remote ? (
+        <Text style={s.muted}>
+          填写共享主机的网关地址和网关密钥。此机器的 Agent
+          使用远程模型时，由共享主机选择账户并消耗额度。
+        </Text>
+      ) : (
+        <View style={s.row}>
+          <Field
+            label="Anthropic 地址"
+            value={draft.anthropic}
+            onChange={(anthropic) => patch({ anthropic })}
+            placeholder="https://api.anthropic.com"
+          />
+          <Field
+            label="Gemini 地址"
+            value={draft.gemini}
+            onChange={(gemini) => patch({ gemini })}
+            placeholder="https://generativelanguage.googleapis.com/v1beta"
+          />
+        </View>
+      )}
       {existing ? (
         <View style={s.section}>
           <Text style={s.label}>向 Agent 提供的模型</Text>

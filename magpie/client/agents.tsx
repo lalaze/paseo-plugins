@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Text, View } from "react-native";
 import type { PageData } from "../shared/rpc";
+import { AgentsAdvanced } from "./agents-advanced";
 import {
   Banner,
   BrandIcon,
@@ -114,6 +115,7 @@ export function AgentsPage({ data, query }: { data: PageData; query: string }) {
           </View>
         </>
       ) : null}
+      <AgentsAdvanced />
     </>
   );
 }

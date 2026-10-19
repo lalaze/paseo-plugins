@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { act, loadPage, pluginCatalog, signin, transcript, type Api } from "./service";
+import {
+  act,
+  loadPage,
+  pluginCatalog,
+  signin,
+  transcript,
+  gatewaySecret,
+  type Api,
+} from "./service";
 import { MagpieApiError } from "./api";
 import { readPage, providerDraftSchema, type Action } from "../shared/rpc";
 
@@ -18,6 +26,38 @@ function fixture(responses: Record<string, unknown>) {
 }
 
 describe("native Magpie API projection", () => {
+  it("loads sharing and masked gateway keys without polling credentials", async () => {
+    const { api, calls } = fixture({
+      "/api/providers": {
+        gateway: { lan: true, lanURLs: ["http://100.96.195.115:3425"] },
+      },
+      "/api/caller-keys": {
+        keys: [
+          {
+            id: "laptop",
+            name: "Laptop",
+            masked: "sk-…demo",
+            secret: "must-not-leak",
+          },
+        ],
+      },
+    });
+    const data = await loadPage(api, readPage.input.parse({ page: "gateway" }));
+    expect(data.gateway?.lan).toBe(true);
+    expect(data.gateway?.lanURLs).toEqual(["http://100.96.195.115:3425"]);
+    expect(data.gatewayKeys[0].name).toBe("Laptop");
+    expect(JSON.stringify(data)).not.toContain("must-not-leak");
+    expect(calls.map((c) => c.path)).toEqual(["/api/providers", "/api/caller-keys"]);
+  });
+  it("keeps gateway status available when an older Magpie cannot list keys", async () => {
+    const { api } = fixture({
+      "/api/providers": { gateway: { running: true } },
+      "/api/caller-keys": new MagpieApiError("密钥接口不可用", 404),
+    });
+    const data = await loadPage(api, readPage.input.parse({ page: "gateway" }));
+    expect(data.gateway?.running).toBe(true);
+    expect(data.notices).toEqual(["密钥接口不可用"]);
+  });
   it("projects community listings including WorkBuddy without forwarding extra upstream fields", async () => {
     const { api, calls } = fixture({
       "/api/plugins/listings": {
@@ -64,9 +104,14 @@ describe("native Magpie API projection", () => {
         ],
       },
     });
-    expect(await pluginCatalog(api, { source: "npm", query: "w" })).toEqual({ items: [] });
+    expect(await pluginCatalog(api, { source: "npm", query: "w" })).toEqual({
+      items: [],
+    });
     expect(calls).toEqual([]);
-    const data = await pluginCatalog(api, { source: "npm", query: "workbuddy & auth" });
+    const data = await pluginCatalog(api, {
+      source: "npm",
+      query: "workbuddy & auth",
+    });
     expect(data.items[0]).toMatchObject({
       spec: "opencode-tencent-auth",
       source: "npm",
@@ -137,7 +182,10 @@ describe("native Magpie API projection", () => {
             headers: { Authorization: "must-not-leak" },
             key: { masked: "sk-…123" },
             keyList: [{ id: "fingerprint", masked: "sk-…123", key: "must-not-leak" }],
-            account: { agent: "codex", logins: [{ user: "demo", refresh_token: "must-not-leak" }] },
+            account: {
+              agent: "codex",
+              logins: [{ user: "demo", refresh_token: "must-not-leak" }],
+            },
             models: null,
           },
         ],
@@ -168,7 +216,9 @@ describe("native Magpie API projection", () => {
   it("offers the library builtin when the upstream page is disabled", async () => {
     const { api } = fixture({
       "/api/library?glance=1": new MagpieApiError("not found", 404),
-      "/api/settings": { builtins: [{ id: "library", name: "Library", on: false }] },
+      "/api/settings": {
+        builtins: [{ id: "library", name: "Library", on: false }],
+      },
     });
     const data = await loadPage(api, readPage.input.parse({ page: "library" }));
     expect(data.library).toBeNull();
@@ -179,6 +229,8 @@ describe("native Magpie API projection", () => {
     const { api } = fixture({
       "/api/settings": {
         theme: "dark",
+        lan: true,
+        lanURLs: ["http://100.96.195.115:3425"],
         version: "1.2",
         lanKey: "must-not-leak",
         githubToken: "must-not-leak",
@@ -187,11 +239,34 @@ describe("native Magpie API projection", () => {
     });
     const data = await loadPage(api, readPage.input.parse({ page: "settings" }));
     expect(data.settings?.theme).toBe("dark");
+    expect(data.settings?.lan).toBe(true);
     expect(JSON.stringify(data)).not.toContain("must-not-leak");
   });
 });
 
 describe("native Magpie changes", () => {
+  it("discards generated credentials from action notices and reveals only the requested gateway key", async () => {
+    const { api, calls } = fixture({
+      "/api/caller-keys/add-key": {
+        secret: "must-not-leak",
+        notice: "must-not-leak",
+      },
+      "/api/caller-keys/copy-key": {
+        secret: "requested-secret",
+        keys: [{ secret: "other-secret" }],
+      },
+    });
+    expect(
+      JSON.stringify(await act(api, { type: "gateway.key.add", name: "Laptop" })),
+    ).not.toContain("must-not-leak");
+    expect(await gatewaySecret(api, { id: "laptop" })).toEqual({
+      secret: "requested-secret",
+    });
+    expect(calls[1]).toEqual({
+      path: "/api/caller-keys/copy-key",
+      body: { key: "laptop" },
+    });
+  });
   it("preserves advanced provider settings and replaces model metadata with the actual model picks", async () => {
     const { api, calls } = fixture({
       "/api/providers": {
@@ -209,7 +284,11 @@ describe("native Magpie changes", () => {
       },
       "/api/provider/save": {},
     });
-    const draft = providerDraftSchema.parse({ id: "custom", name: "After", models: ["a", "b"] });
+    const draft = providerDraftSchema.parse({
+      id: "custom",
+      name: "After",
+      models: ["a", "b"],
+    });
     await act(api, { type: "provider.save", draft, fresh: false });
     expect(calls[1]).toEqual({
       path: "/api/provider/save",
@@ -226,7 +305,11 @@ describe("native Magpie changes", () => {
   });
   it("keeps unrelated settings and routing rules when saving a native form", async () => {
     const { api, calls } = fixture({
-      "/api/settings": { theme: "dark", lanKey: "server-only", fullContext: true },
+      "/api/settings": {
+        theme: "dark",
+        lanKey: "server-only",
+        fullContext: true,
+      },
       "/api/settings-save": {},
       "/api/groups": {
         groups: [{ id: "fallback", rules: [{ pattern: "code*" }], firstToken: 20 }],
@@ -236,7 +319,12 @@ describe("native Magpie changes", () => {
     // The read and write share a route, so this fixture returns the same settings to both.
     await act(api, {
       type: "settings.save",
-      settings: { theme: "light", lang: "zh", currency: "usd", proxy: "", textSize: 13 },
+      settings: {
+        theme: "light",
+        lang: "zh",
+        currency: "usd",
+        proxy: "",
+      },
     });
     expect(calls[1].body).toMatchObject({
       lanKey: "server-only",
@@ -245,7 +333,12 @@ describe("native Magpie changes", () => {
     });
     await act(api, {
       type: "group.save",
-      draft: { id: "fallback", name: "Fallback", members: ["a/model"], routing: "order" },
+      draft: {
+        id: "fallback",
+        name: "Fallback",
+        members: ["a/model"],
+        routing: "order",
+      },
     });
     expect(calls[3].body).toMatchObject({
       rules: [{ pattern: "code*" }],
@@ -254,6 +347,14 @@ describe("native Magpie changes", () => {
     });
   });
   it.each([
+    [{ type: "settings.lan", on: true }, "/api/settings/lan", { on: true }],
+    [{ type: "settings.textSize", size: 125 }, "/api/settings/text-size", { size: 125 }],
+    [{ type: "settings.lan", on: false }, "/api/settings/lan", { on: false }],
+    ...["on", "off", "rotate", "remove"].map((operation) => [
+      { type: "gateway.key.change", id: "laptop", operation },
+      `/api/caller-keys/${operation}-key`,
+      { key: "laptop" },
+    ]),
     [{ type: "profile", operation: "apply", name: "demo" }, "/api/profile/use", { name: "demo" }],
     [{ type: "agent.connect", id: "codex" }, "/api/agents/connect/codex", {}],
     [
@@ -288,7 +389,12 @@ describe("native Magpie changes", () => {
       { id: "fallback", on: false },
     ],
     [
-      { type: "library.distribute", kind: "servers", name: "demo", agents: ["codex"] },
+      {
+        type: "library.distribute",
+        kind: "servers",
+        name: "demo",
+        agents: ["codex"],
+      },
       "/api/library/servers/agents",
       { name: "demo", agents: ["codex"] },
     ],
@@ -337,7 +443,10 @@ describe("native Magpie changes", () => {
   it("passes transcript identifiers as encoded query values and keeps the original content", async () => {
     const path = "/api/sessions/transcript?agent=codex&id=a%26id%3Db";
     const { api } = fixture({
-      [path]: { parts: [{ role: "assistant", kind: "text", text: "Hello" }], cut: false },
+      [path]: {
+        parts: [{ role: "assistant", kind: "text", text: "Hello" }],
+        cut: false,
+      },
     });
     expect((await transcript(api, { agent: "codex", id: "a&id=b" })).parts[0].text).toBe("Hello");
   });
