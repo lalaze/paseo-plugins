@@ -6,7 +6,7 @@ The page is a board modelled on [codeg](https://github.com/xintaofei/codeg)'s To
 
 The sidebar page gathers tasks from every connected host that has this plugin installed: each card shows its machine and project, **All machines** narrows the board to one host, actions and **Open session** go to the task's own host, and **New task** asks which machine to run on. Each host keeps its own queue, worktrees and data directory; nothing is copied between machines. A host appears once its copy of the plugin is updated to this version.
 
-Inside a workspace, the **Tasks** panel sits next to Files and Changes in the explorer (or run **Tasks for this project** from the command center). It shows the same columns stacked, only for that project, and adds new tasks to the project root. The sidebar page still shows every repository. Plugin ID: `paseo-todo`. It needs a Paseo daemon from 0.10 up to, but not including, 0.12.
+Inside a workspace, the **Tasks** panel sits next to Files and Changes in the explorer (or run **Tasks for this project** from the command center). It shows the same columns stacked, only for that project, and adds new tasks to the project root. The sidebar page still shows every repository. Plugin ID: `paseo-todo`. Its manifest does not restrict the Paseo daemon or app version.
 
 ## Collaboration
 

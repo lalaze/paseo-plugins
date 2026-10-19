@@ -1,6 +1,8 @@
 # paseo-plugins
 
-Multi-package repository of Paseo plugins and companion extensions. The active Paseo plugins support daemon and app versions 0.8.x through 0.11.x, including prereleases, except `paseo-shared-tools`, `paseo-todo` and `paseo-provider-update`, which need 0.10.x or newer. The separate quota and notification patches retain their own version restrictions. Enable plugins under **Settings → Plugins** on the target host first. Each active package can also be installed on its own as described below; see each directory's README for updating, uninstalling and limitations.
+Multi-package repository of Paseo plugins and companion extensions. Plugin manifests use `requirements.paseo: "*"` so daemon and app upgrades, including prereleases, do not block loading by version number. Keep this field explicit: Paseo interprets a missing requirement as a legacy pre-0.8 plugin. The separate quota and notification patches retain their own version restrictions. Enable plugins under **Settings → Plugins** on the target host first. Each active package can also be installed on its own as described below; see each directory's README for updating, uninstalling and limitations.
+
+Run `node scripts/check-plugin-requirements.mjs` to check every manifest against the installed Paseo compatibility validator for both daemon and app, including 0.12.0 and future versions. Pass an optional absolute CLI package directory to use a different Paseo installation. Git installations have separate checkouts: after this change is published, run `paseo plugin update <id>` to obtain it; local installations need `paseo plugin reload <id>`.
 
 Install the active packages at once (three plugins and Kimi renewal):
 
@@ -48,7 +50,7 @@ Details: [usage-glance/README.md](usage-glance/README.md)
 
 ## [Dot Bridge](dot-bridge)
 
-Chat with your connected ChatGPT Dot in Paseo and apply requested changes to the host's workspace. Plugin ID: `paseo-dot-bridge`. Install separately on each Paseo host, including the `code` machine; `install-all.sh` and `update-all.sh` do not manage it. Requires Node.js 22.13+ and Paseo 0.10.x or 0.11.x.
+Chat with your connected ChatGPT Dot in Paseo and apply requested changes to the host's workspace. Plugin ID: `paseo-dot-bridge`. Install separately on each Paseo host, including the `code` machine; `install-all.sh` and `update-all.sh` do not manage it. Requires Node.js 22.13+ with Paseo plugins enabled.
 
 ```bash
 paseo plugin add git:lalaze/paseo-plugins --ref main --path dot-bridge

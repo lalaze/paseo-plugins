@@ -157,7 +157,7 @@ Task notifications now start after dispatch, and subscription refresh only wakes
 
 ## Setup
 
-Requires Node.js **22.13+** and Paseo **0.10.x or 0.11.x**. Enable plugins under **Settings → Plugins** on the target host first.
+Requires Node.js **22.13+**. Its manifest does not restrict the Paseo daemon or app version. Enable plugins under **Settings → Plugins** on the target host first.
 
 ```bash
 paseo plugin add git:lalaze/paseo-plugins --ref main --path dot-bridge

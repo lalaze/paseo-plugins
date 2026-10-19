@@ -69,7 +69,7 @@ Paseo host ID.
 
 ## Install
 
-Requires Paseo 0.11.1 or newer and a running Magpie Web service on the daemon host.
+Requires Paseo with plugins enabled and a running Magpie Web service on the daemon host. The manifest does not restrict the Paseo daemon or app version.
 
 ```bash
 paseo plugin install /absolute/path/to/paseo-plugins/magpie

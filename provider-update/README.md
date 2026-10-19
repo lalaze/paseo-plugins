@@ -1,6 +1,6 @@
 # paseo-provider-update
 
-A **Provider updates** screen in Settings (also **Update providers** in the command center) that lists every provider enabled on the host, shows the installed and newest versions, and upgrades a provider's CLI with one click. Plugin ID: `paseo-provider-update`. It needs a Paseo daemon from 0.10 up to, but not including, 0.12.
+A **Provider updates** screen in Settings (also **Update providers** in the command center) that lists every provider enabled on the host, shows the installed and newest versions, and upgrades a provider's CLI with one click. Plugin ID: `paseo-provider-update`. Its manifest does not restrict the Paseo daemon or app version.
 
 ```bash
 paseo plugin add git:lalaze/paseo-plugins --path provider-update
