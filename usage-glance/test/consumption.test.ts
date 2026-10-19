@@ -85,6 +85,16 @@ test('consumption follows Provider enabled switches, independent of readiness, a
   assert.deepEqual(unsupportedConsumptionProviders([{ provider: 'pi', label: 'Pi', enabled: true }, { provider: 'copilot', label: 'Copilot', enabled: true }, { provider: 'claude', enabled: false }]), [{ id: 'copilot', label: 'Copilot' }]);
 });
 
+test('DeepSeek Harness catalog ID enables its reader, respects its switch and is supported', () => {
+  const harness = { provider: 'deepseek-harness', label: 'DeepSeek Harness', enabled: true };
+  assert.deepEqual(enabledConsumptionSources([
+    { provider: 'codex', enabled: true }, { provider: 'claude', enabled: true }, harness,
+  ]), ['codex', 'claude', 'deepseek']);
+  assert.deepEqual(unsupportedConsumptionProviders([harness]), []);
+  assert.deepEqual(enabledConsumptionSources([{ ...harness, enabled: false }]), []);
+  assert.deepEqual(enabledConsumptionSources([harness, { provider: 'deepseek', enabled: true }]), ['deepseek']);
+});
+
 test('disabled sources are never scanned or returned, including after cached results and enable/disable changes', async () => {
   const calls: string[] = [];
   const service = new ConsumptionService(async source => { calls.push(source); return { rows: [row], message: null }; });

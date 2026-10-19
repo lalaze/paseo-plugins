@@ -10,7 +10,7 @@ export const sourceNames: Record<SourceId, string> = { codex: 'Codex', claude: '
 export const ledgerSourceIds: readonly SourceId[] = ['translate'];
 const providerSources = new Map<string, SourceId>([
   ...sourceIds.filter(source => !ledgerSourceIds.includes(source)).map(source => [source, source] as const),
-  ['antigravity-acp', 'antigravity'], ['antigravity-hub', 'antigravity'], ['codebuddy-code', 'codebuddy'],
+  ['antigravity-acp', 'antigravity'], ['antigravity-hub', 'antigravity'], ['codebuddy-code', 'codebuddy'], ['deepseek-harness', 'deepseek'],
 ]);
 /** Enablement comes from Paseo's host catalog, independently of login/readiness, plus any detected plugin ledgers. */
 export function enabledConsumptionSources(providers: readonly { provider: string; enabled: boolean }[], ledgers: readonly SourceId[] = []): SourceId[] {
