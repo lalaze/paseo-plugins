@@ -3,9 +3,9 @@ import { z } from 'zod';
 import { hostIdentitySchema, type HostIdentity } from './hosts';
 import { localizeHostLabel, localizeModelLabel, ui, uiNumberLocale } from './i18n';
 
-export const sourceIds = ['codex', 'claude', 'kimi', 'grok', 'antigravity', 'pi', 'codebuddy', 'translate'] as const;
+export const sourceIds = ['codex', 'claude', 'kimi', 'grok', 'antigravity', 'pi', 'deepseek', 'codebuddy', 'translate'] as const;
 export type SourceId = typeof sourceIds[number];
-export const sourceNames: Record<SourceId, string> = { codex: 'Codex', claude: 'Claude Code', kimi: 'Kimi', grok: 'Grok', antigravity: 'Antigravity', pi: 'Pi', codebuddy: 'CodeBuddy', translate: ui('Translate', '翻译') };
+export const sourceNames: Record<SourceId, string> = { codex: 'Codex', claude: 'Claude Code', kimi: 'Kimi', grok: 'Grok', antigravity: 'Antigravity', pi: 'Pi', deepseek: 'DeepSeek Harness', codebuddy: 'CodeBuddy', translate: ui('Translate', '翻译') };
 /** Plugin ledgers have no Provider switch; they are listed when their records exist on the host. */
 export const ledgerSourceIds: readonly SourceId[] = ['translate'];
 const providerSources = new Map<string, SourceId>([
@@ -91,7 +91,8 @@ export function presetRange(preset: 'today' | 'week' | 'month', timezone: string
 
 /** Model maker is distinct from the CLI and from a reseller or proxy channel. */
 export function modelVendor(model: string, source: SourceId): string {
-  const name = model.toLowerCase().replace(/^(openrouter|azure|bedrock|vertex_ai|xai|x-ai|openai|anthropic|google|moonshot|zai)\//, '');
+  // Pi routes model IDs as `provider:model` (for example `cn:deepseek-v4.1-flash`); other resellers use `/`.
+  const name = model.toLowerCase().replace(/^(openrouter|azure|bedrock|vertex_ai|xai|x-ai|openai|anthropic|google|moonshot|zai|cn|deepseek)[:/]/, '');
   if (/^(gpt[ -]|o[134](?:-|$)|chatgpt|codex)/.test(name)) return 'OpenAI';
   if (/^claude[ -]/.test(name)) return 'Anthropic';
   if (/^gemini[ -]/.test(name)) return 'Google';

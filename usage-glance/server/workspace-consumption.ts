@@ -7,6 +7,7 @@ import type { ConsumptionRange, SourceId, WorkspaceConsumptionRow } from '../sha
 import { parseCcusage, runCcusage, runCcusageCommand } from './ccusage';
 import { runPi } from './pi';
 import { runCodebuddy } from './codebuddy';
+import { runDeepseek } from './deepseek';
 import { runTranslate } from './translate';
 import { runAntigravity } from './antigravity';
 import type { WorkspaceResolver } from './workspace-catalog';
@@ -60,11 +61,12 @@ async function kimiDirectories(env: NodeJS.ProcessEnv, signal: AbortSignal) {
 }
 
 export async function readWorkspaceSource(source: SourceId, range: ConsumptionRange, signal: AbortSignal, catalog: WorkspaceResolver, env: NodeJS.ProcessEnv = process.env) {
-  if (source === 'pi' || source === 'antigravity' || source === 'translate' || source === 'codebuddy') {
+  if (source === 'pi' || source === 'antigravity' || source === 'translate' || source === 'codebuddy' || source === 'deepseek') {
     // Translation requests are not tied to an agent session, so they stay unassigned.
     const result = source === 'pi'
       ? await runPi(range, signal, undefined, (id, cwd) => catalog.session(source, id, cwd))
       : source === 'codebuddy' ? await runCodebuddy(range, signal, undefined, (id, cwd) => catalog.session(source, id, cwd))
+      : source === 'deepseek' ? await runDeepseek(range, signal, undefined, (id, cwd) => catalog.session(source, id, cwd))
       : source === 'antigravity' ? await runAntigravity(range, signal, undefined, id => catalog.session(source, id))
       : await runTranslate(range, signal);
     return { ...result, workspaceRows: result.rows.map(({ date, ...row }) => row) };

@@ -3,6 +3,7 @@ import { runCcusage } from './ccusage';
 import { runAntigravity } from './antigravity';
 import { runPi } from './pi';
 import { runCodebuddy } from './codebuddy';
+import { runDeepseek } from './deepseek';
 import { runTranslate } from './translate';
 import { coversConsumptionRange, projectConsumptionReport } from '../shared/consumption-cache';
 
@@ -14,7 +15,7 @@ export class ConsumptionService {
   private waiters: (() => void)[] = [];
   private closed = false;
   private selection = '';
-  constructor(private read: ReadSource = (source, range, signal) => source === 'antigravity' ? runAntigravity(range, signal) : source === 'pi' ? runPi(range, signal) : source === 'codebuddy' ? runCodebuddy(range, signal) : source === 'translate' ? runTranslate(range, signal) : runCcusage(source, range, signal), private now = Date.now, private exactRanges = false) {}
+  constructor(private read: ReadSource = (source, range, signal) => source === 'antigravity' ? runAntigravity(range, signal) : source === 'pi' ? runPi(range, signal) : source === 'codebuddy' ? runCodebuddy(range, signal) : source === 'deepseek' ? runDeepseek(range, signal) : source === 'translate' ? runTranslate(range, signal) : runCcusage(source, range, signal), private now = Date.now, private exactRanges = false) {}
 
   get(input: ConsumptionRange, selected: readonly SourceId[], refresh = false): ConsumptionReport {
     if (this.closed) throw new Error('用量服务已关闭');
