@@ -125,3 +125,10 @@ test('the plugin word bubble does not hide its own composer controls', async () 
     assert.deepEqual(Array.from(document.querySelectorAll<HTMLElement>(controls)).map(node => node.style.visibility), ['visible', 'visible', 'visible']);
   });
 });
+
+test('modal dialogs beside the sidebar composer leave its controls usable', async () => {
+  await withOverlay(composer + '<div role="dialog" aria-modal="true" data-testid="new-agent-dialog">New task</div>', async document => {
+    await settle();
+    assert.deepEqual(Array.from(document.querySelectorAll<HTMLElement>(controls)).map(node => node.style.visibility), ['visible', 'visible', 'visible']);
+  });
+});

@@ -56,7 +56,9 @@ function elementFor(node: Node | null): Element | null {
 
 // Paseo's context-window hover card is a non-modal dialog. Menus and tooltips
 // also own the foreground even though they do not set aria-modal.
-const HOST_OVERLAY_SELECTOR = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="tooltip"]';
+// Modal dialogs are left out: the new-agent and task dialogs open beside the
+// sidebar composer and must not hide its controls for as long as they stay open.
+const HOST_OVERLAY_SELECTOR = '[role="menu"], [role="listbox"], [role="tooltip"], [role="dialog"]:not([aria-modal="true"]), [role="alertdialog"]:not([aria-modal="true"])';
 const PLUGIN_OVERLAY_SELECTOR = '[data-paseo-translate], [data-paseo-translate-group], [data-paseo-translate-block]';
 function touchesHostOverlay(node: Node | null) {
   const element = elementFor(node);
