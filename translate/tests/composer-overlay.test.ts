@@ -54,6 +54,29 @@ test('chat composer shows controls and removing it clears them without an input 
   });
 });
 
+test('composer controls reserve a row below collaboration cards and move with a replacement composer', async () => {
+  await withOverlay('<div id="collaboration">方案 执行 审查 验收</div>' + composer, async document => {
+    const root = document.querySelector('[data-testid="message-input-root"]')!;
+    const toolbar = document.querySelector<HTMLElement>('[data-paseo-translate="composer-toolbar"]')!;
+    assert.ok(toolbar, 'controls need their own row instead of floating over the collaboration card');
+    assert.equal(root.firstElementChild, toolbar);
+    assert.equal(toolbar.style.display, 'flex');
+    assert.equal(toolbar.style.flexShrink, '0');
+    for (const control of document.querySelectorAll<HTMLElement>(controls)) {
+      assert.equal(control.parentElement, toolbar);
+      assert.equal(control.style.position, '');
+    }
+    root.remove();
+    document.body.insertAdjacentHTML('beforeend', composer);
+    await settle();
+    assert.equal(document.querySelectorAll('[data-paseo-translate="composer-toolbar"]').length, 1);
+    assert.equal(document.querySelector('[data-testid="message-input-root"]')!.firstElementChild, toolbar);
+    document.querySelector('[data-testid="message-input-root"]')!.remove();
+    await settle();
+    assert.equal(document.querySelector('[data-paseo-translate="composer-toolbar"]'), null);
+  });
+});
+
 test('hidden chat cannot cause controls to attach to the file editor', async () => {
   await withOverlay(composer + fileEditor, async document => {
     const root = document.querySelector<HTMLElement>('[data-testid="message-input-root"]')!;
@@ -62,6 +85,15 @@ test('hidden chat cannot cause controls to attach to the file editor', async () 
     assert.equal(document.querySelectorAll(controls).length, 0);
     root.hidden = false;
     await settle();
+    assert.equal(document.querySelectorAll(controls).length, 3);
+  });
+});
+
+test('legacy composer inputs keep the toolbar outside the editable element', async () => {
+  await withOverlay('<div id="legacy"><textarea data-testid="agent-composer-input" placeholder="Message"></textarea></div>', async document => {
+    const toolbar = document.querySelector('[data-paseo-translate="composer-toolbar"]')!;
+    assert.equal(toolbar.parentElement?.id, 'legacy');
+    assert.equal(toolbar.nextElementSibling, document.querySelector('textarea'));
     assert.equal(document.querySelectorAll(controls).length, 3);
   });
 });

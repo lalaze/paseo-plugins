@@ -225,20 +225,19 @@ function saveStrictEnglishMode(enabled: boolean) {
 
 export function createOverlayController(runtimes: Map<string, Runtime>): OverlayController {
   let wordToggle: HTMLButtonElement | null = null;
+  let composerToolbar: HTMLDivElement | null = null;
   let trigger: HTMLButtonElement | null = null, launcher: HTMLButtonElement | null = null, englishGuard: HTMLButtonElement | null = null, launcherTimer: number | undefined, guardTimer: number | undefined, draftUndo: DraftUndo | null = null, composerRequest = 0, composerBusy = false, writingComposer = false, inlineRequest = 0, modelRequest = 0, manualStrictEnglish = loadStrictEnglishMode(), automaticEnglishLock = false, activeModelDescriptor: string | null = null, activePolicyKey: string | null = null;
   const highlightedRanges = new Map<HTMLElement, Range>();
   const blocks = createBlockTranslator(runtimes);
   const words = createWordTranslator(runtimes);
   const unsubscribeWordPreference = subscribeWordTranslation(() => { updateWordToggle(); positionLauncher(); });
-  let observedFrame: HTMLElement | null = null;
-  const frameObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(() => positionLauncher()) : null;
   const annotationGroups = new WeakMap<Element, HTMLElement>();
   const agentModels = new Map<string, string | null>();
   const englishLockModels = new Map<string, string[]>();
   const removeTrigger = () => { trigger?.remove(); trigger = null; };
   const clearLauncherTimer = () => { if (launcherTimer !== undefined) { window.clearTimeout(launcherTimer); launcherTimer = undefined; } };
   const clearGuardTimer = () => { if (guardTimer !== undefined) { window.clearTimeout(guardTimer); guardTimer = undefined; } };
-  const removeLauncher = () => { clearLauncherTimer(); clearGuardTimer(); launcher?.remove(); englishGuard?.remove(); wordToggle?.remove(); launcher = null; englishGuard = null; wordToggle = null; };
+  const removeLauncher = () => { clearLauncherTimer(); clearGuardTimer(); launcher?.remove(); englishGuard?.remove(); wordToggle?.remove(); composerToolbar?.remove(); launcher = null; englishGuard = null; wordToggle = null; composerToolbar = null; };
 
   function syncHighlights() {
     const css = globalThis.CSS as typeof CSS & { highlights?: HighlightRegistry };
@@ -460,9 +459,9 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
     return Math.abs(controlRect.bottom - editorRect.bottom) < 100 && controlRect.left >= editorRect.left - 80 && controlRect.right <= editorRect.right + 80;
   }
 
-  /** The composer root grows upward with attachments, so the launcher anchors to it rather than the textarea. */
+  /** Keep a real toolbar row outside the input surface, including its attachments. */
   function composerFrame(editor: HTMLElement | null): HTMLElement | null {
-    return editor?.closest<HTMLElement>('[data-testid="message-input-root"]') ?? editor;
+    return editor?.closest<HTMLElement>('[data-testid="message-input-root"]') ?? editor?.parentElement?.closest<HTMLElement>('[data-testid*="composer"]') ?? editor?.parentElement ?? null;
   }
 
   /** Yield all composer controls while a host popup is visible. */
@@ -472,16 +471,16 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   }
 
   function positionLauncher() {
-    if (!launcher || !englishGuard) return;
-    const frame = composerFrame(findComposer()), rect = frame?.getBoundingClientRect();
-    if (frame !== observedFrame) { frameObserver?.disconnect(); observedFrame = frame; if (frame) frameObserver?.observe(frame); }
-    if (!rect) { removeLauncher(); return; }
-    const right = Math.max(8, window.innerWidth - rect.right + 8);
-    const bottom = Math.max(8, window.innerHeight - rect.top + 6);
+    if (!composerToolbar || !launcher || !englishGuard) return;
+    const frame = composerFrame(findComposer());
+    if (!frame) { removeLauncher(); return; }
+    // Occupying normal flow prevents collaboration cards above the composer
+    // from being covered. It also follows resizing and attachment expansion.
+    if (composerToolbar.parentElement !== frame) frame.prepend(composerToolbar);
     const visibility = hostOverlayOpen() ? 'hidden' : 'visible';
-    style(launcher, { right: `${right}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto', visibility });
-    style(englishGuard, { right: `${right + (launcher.offsetWidth || 34) + 6}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto', visibility });
-    if (wordToggle) style(wordToggle, { right: `${right + (launcher.offsetWidth || 34) + (englishGuard.offsetWidth || 38) + 12}px`, bottom: `${bottom}px`, left: 'auto', top: 'auto', visibility });
+    style(launcher, { visibility });
+    style(englishGuard, { visibility });
+    if (wordToggle) style(wordToggle, { visibility });
   }
 
   async function translateComposer() {
@@ -521,16 +520,23 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   function refreshLauncher() {
     const route = currentRoute();
     if (!route || !runtimes.has(route.serverId) || !findComposer()) { activePolicyKey = null; modelRequest++; applyAutomaticEnglishLock(null, []); removeLauncher(); return; }
+    if (!composerToolbar) {
+      composerToolbar = document.createElement('div');
+      composerToolbar.dataset.paseoTranslate = 'composer-toolbar';
+      composerToolbar.setAttribute('role', 'group');
+      composerToolbar.setAttribute('aria-label', ui('Translation controls', '翻译工具'));
+      style(composerToolbar, { display: 'flex', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: '6px', flexShrink: '0', width: '100%', boxSizing: 'border-box', padding: '0 8px 6px' });
+    }
     if (!launcher) {
       launcher = button(ui('Translate', '译'), ui('Translate the current chat draft and replace the original (Alt/Option + T)', '翻译当前聊天输入并替换原文（Alt/Option + T）')); launcher.dataset.paseoTranslate = 'launcher';
-      style(launcher, { position: 'fixed', zIndex: FLOATING_CONTROL_Z_INDEX, minWidth: '34px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
+      style(launcher, { flexShrink: '0', minWidth: '34px' });
       launcher.addEventListener('pointerdown', event => event.preventDefault());
       launcher.addEventListener('click', () => { void translateComposer(); });
-      document.body.append(launcher);
+      composerToolbar.append(launcher);
     }
     if (!englishGuard) {
       englishGuard = button('EN', ui('Turn on strict English mode', '开启严格英文模式')); englishGuard.dataset.paseoTranslate = 'english-guard';
-      style(englishGuard, { position: 'fixed', zIndex: FLOATING_CONTROL_Z_INDEX, minWidth: '38px', boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
+      style(englishGuard, { flexShrink: '0', minWidth: '38px' });
       englishGuard.addEventListener('pointerdown', event => event.preventDefault());
       englishGuard.addEventListener('click', () => {
         clearGuardTimer();
@@ -538,14 +544,14 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
         else { manualStrictEnglish = !manualStrictEnglish; saveStrictEnglishMode(manualStrictEnglish); updateEnglishGuard(); }
         findComposer()?.focus();
       });
-      document.body.append(englishGuard); updateEnglishGuard();
+      composerToolbar.insertBefore(englishGuard, launcher); updateEnglishGuard();
     }
     if (!wordToggle) {
       wordToggle = button(ui('Words', '点词')); wordToggle.dataset.paseoTranslate = 'word-toggle';
-      style(wordToggle, { position: 'fixed', zIndex: FLOATING_CONTROL_Z_INDEX, boxShadow: '0 6px 20px rgba(0,0,0,.28)' });
+      style(wordToggle, { flexShrink: '0' });
       wordToggle.addEventListener('pointerdown', event => event.preventDefault());
       wordToggle.addEventListener('click', () => setWordTranslationEnabled(!wordTranslationEnabled()));
-      document.body.append(wordToggle); updateWordToggle();
+      composerToolbar.prepend(wordToggle); updateWordToggle();
     }
     refreshEnglishLockPolicy();
     positionLauncher();
@@ -623,7 +629,7 @@ export function createOverlayController(runtimes: Map<string, Runtime>): Overlay
   modelObserver.observe(document.body, { attributes: true, attributeFilter: ['role', 'aria-label', 'title', 'data-testid', 'data-state', 'aria-modal', 'aria-hidden', 'hidden', 'style', 'class', 'disabled', 'readonly'], childList: true, characterData: true, subtree: true });
   document.addEventListener('pointerup', delayedRefresh); document.addEventListener('keyup', delayedRefresh); document.addEventListener('touchend', delayedRefresh);
   document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keydown, true); document.addEventListener('click', clickGuard, true); document.addEventListener('submit', submitGuard, true); document.addEventListener('input', inputChanged, true); window.addEventListener('resize', dismiss); window.addEventListener('popstate', routeChanged); window.addEventListener('hashchange', routeChanged); document.addEventListener('scroll', removeTrigger, true);
-  return { refresh, updateAgentModel, dispose() { composerRequest++; modelRequest++; modelObserver.disconnect(); frameObserver?.disconnect(); dismiss(); removeLauncher(); blocks.dispose(); words.dispose(); unsubscribeWordPreference(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
+  return { refresh, updateAgentModel, dispose() { composerRequest++; modelRequest++; modelObserver.disconnect(); dismiss(); removeLauncher(); blocks.dispose(); words.dispose(); unsubscribeWordPreference(); for (const annotation of highlightedRanges.keys()) annotation.remove(); document.querySelectorAll('[data-paseo-translate-group]').forEach(group => group.remove()); highlightedRanges.clear(); syncHighlights(); document.querySelector('[data-paseo-translate-highlight-style]')?.remove(); document.removeEventListener('pointerup', delayedRefresh); document.removeEventListener('keyup', delayedRefresh); document.removeEventListener('touchend', delayedRefresh); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true); document.removeEventListener('click', clickGuard, true); document.removeEventListener('submit', submitGuard, true); document.removeEventListener('input', inputChanged, true); window.removeEventListener('resize', dismiss); window.removeEventListener('popstate', routeChanged); window.removeEventListener('hashchange', routeChanged); document.removeEventListener('scroll', removeTrigger, true); } };
 }
 
 function createRegistry(): Registry {
