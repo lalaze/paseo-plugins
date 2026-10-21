@@ -1,7 +1,7 @@
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { settingsRpc } from '@getpaseo/plugin';
 import { parseConversationRoute } from './route';
-import { createBlockTranslator } from './blocks';
+import { createBlockTranslator, installBlockTranslatorFallback } from './blocks';
 import { createWordCache, createWordTranslator } from './words';
 import { setWordTranslationEnabled, subscribeWordTranslation, wordTranslationEnabled } from './word-preference';
 import { button, style, FLOATING_CONTROL_Z_INDEX } from './dom';
@@ -21,6 +21,7 @@ type SelectionSnapshot = { text: string; rect: DOMRect; route: { serverId: strin
 type OverlayController = { refresh(): void; updateAgentModel(serverId: string, agentId: string, model: string | null): void; dispose(): void };
 type Registry = {
   readonly closed: boolean;
+  readonly supportsSemanticBlocks?: true;
   /** True when this host's translation client is connected. */
   available(serverId: string): boolean;
   /** Starts a translation on that host, or null when its client is not connected. */
@@ -640,6 +641,7 @@ function createRegistry(): Registry {
   const notify = () => { for (const listener of listeners) listener(); };
   return {
     get closed() { return closed; },
+    supportsSemanticBlocks: true,
     available: serverId => runtimes.has(serverId),
     translate(serverId, text, target = 'auto') {
       const runtime = runtimes.get(serverId);
@@ -748,7 +750,15 @@ export function registerTranslationClient(serverId: string, client: PluginClient
   const removeBridge = openBridge().set(serverId, runtime);
   try {
     const removeOverlay = registry.register(serverId, runtime);
-    return () => { removeBridge(); removeOverlay(); };
+    const removeBlocks = typeof document !== 'undefined' && !registry.supportsSemanticBlocks
+      ? installBlockTranslatorFallback({ get(hostId) {
+        // The page-wide bridge contains every connected host, including hosts
+        // whose old bundles still own the shared overlay controller.
+        const bridge = translationBridge();
+        return bridge?.available(hostId) ? { translate: (text, target) => bridge.translate(hostId, text, target) ?? Promise.reject(new Error(ui('Translation host disconnected', '翻译主机已断开'))) } : undefined;
+      } })
+      : () => {};
+    return () => { removeBlocks(); removeBridge(); removeOverlay(); };
   } catch (error) {
     removeBridge();
     throw error;

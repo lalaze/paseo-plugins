@@ -4,11 +4,29 @@ import { button, style, FLOATING_CONTROL_Z_INDEX } from './dom';
 import { localizeTranslationError, ui } from './i18n';
 
 type Runtime = { translate(text: string, target: TargetLanguage): Promise<TranslationResult> };
+type RuntimeLookup = Pick<Map<string, Runtime>, 'get'>;
 type BlockTranslator = { dispose(): void };
+const FALLBACK_KEY = Symbol.for('lalaze.paseo-translate.semantic-blocks.v1');
 
-// Paseo's web UI is React Native Web: markdown blocks are <div>s tagged with data-paseo-markdown-tag,
-// and list items are flex rows of [marker, content].
-const MARKDOWN_BLOCK_SELECTOR = ['p', 'li', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].map(tag => `[data-paseo-markdown-tag="${tag}"]`).join(', ');
+/** Upgrade block controls even when another host keeps an older overlay registry alive. */
+export function installBlockTranslatorFallback(runtimes: RuntimeLookup): () => void {
+  type Shared = { users: number; controller: BlockTranslator };
+  const global = globalThis as typeof globalThis & { [FALLBACK_KEY]?: Shared };
+  const shared = global[FALLBACK_KEY] ??= { users: 0, controller: createBlockTranslator(runtimes) };
+  shared.users++;
+  let disposed = false;
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    if (--shared.users === 0) {
+      shared.controller.dispose();
+      if (global[FALLBACK_KEY] === shared) delete global[FALLBACK_KEY];
+    }
+  };
+}
+
+// Enriched Markdown uses semantic HTML; older clients tag React Native Web divs.
+const MARKDOWN_BLOCK_SELECTOR = ['p', 'li', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].flatMap(tag => [tag, `[data-paseo-markdown-tag="${tag}"]`]).join(', ');
 const MESSAGE_SELECTOR = '[data-testid="assistant-message"], [data-testid="user-message"]';
 const PLUGIN_SELECTOR = '[data-paseo-translate-group], [data-paseo-translate-block], [data-paseo-translate]';
 const MAX_BLOCK_CHARS = 5000;
@@ -19,18 +37,19 @@ function hoveredBlock(element: Element | null): Element | null {
   const message = element.closest(MESSAGE_SELECTOR);
   if (!message?.matches('[data-testid="assistant-message"]') || !message.closest('[data-testid="agent-chat-scroll"]')) return null;
   const block = element.closest(MARKDOWN_BLOCK_SELECTOR);
-  return block && !block.closest('[data-paseo-markdown-tag="pre"]') ? block : null;
+  return block && !element.closest('pre, [data-paseo-markdown-tag="pre"]') ? block : null;
 }
 
 /** Own text of the block: list markers, nested lists and earlier translations are left out. */
 export function blockText(block: Element): string {
   const clone = block.cloneNode(true) as Element;
-  clone.querySelectorAll('[data-paseo-markdown-tag="ul"], [data-paseo-markdown-tag="ol"], [data-paseo-markdown-list-marker], [data-paseo-translate-group], [data-paseo-translate-block]').forEach(node => node.remove());
+  clone.querySelectorAll('ul, ol, [data-paseo-markdown-tag="ul"], [data-paseo-markdown-tag="ol"], [data-paseo-markdown-list-marker], [data-paseo-translate-group], [data-paseo-translate-block]').forEach(node => node.remove());
   return (clone.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
 
-/** List items lay out marker and content side by side, so their panel lives inside the content wrapper. */
+/** Semantic list panels stay inside the li; legacy flex rows use their content wrapper. */
 function panelParent(block: Element): Element | null {
+  if (block.matches('li')) return block;
   if (!block.matches('[data-paseo-markdown-tag="li"]')) return null;
   return Array.from(block.children).reverse().find(child => !child.matches('[data-paseo-markdown-list-marker]')) ?? block;
 }
@@ -50,7 +69,7 @@ function existingTranslation(block: Element): HTMLElement | null {
   return after instanceof HTMLElement && after.matches('[data-paseo-translate-block]') ? after : null;
 }
 
-export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTranslator {
+export function createBlockTranslator(runtimes: RuntimeLookup): BlockTranslator {
   let trigger: HTMLButtonElement | null = null, hovered: Element | null = null, request = 0;
 
   function hide() { trigger?.remove(); trigger = null; hovered = null; }
@@ -119,6 +138,9 @@ export function createBlockTranslator(runtimes: Map<string, Runtime>): BlockTran
   function show(block: Element) {
     if (!currentRuntime()) { hide(); return; }
     if (!trigger) {
+      // A legacy controller may still handle older markup. Let its live button
+      // keep ownership instead of creating a second control for the same block.
+      if (document.querySelector('[data-paseo-translate="block-trigger"]')) return;
       trigger = button(ui('Translate', '译'), ui('Translate this block', '翻译这一段'));
       trigger.dataset.paseoTranslate = 'block-trigger';
       style(trigger, { position: 'fixed', zIndex: FLOATING_CONTROL_Z_INDEX, padding: '2px 7px', boxShadow: '0 4px 14px rgba(0,0,0,.28)' });

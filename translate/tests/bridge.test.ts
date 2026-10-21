@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { JSDOM } from 'jsdom';
 import type { PluginClientContext } from '@getpaseo/plugin/client';
 import { registerTranslationClient, translationBridge } from '../client/selection';
 
@@ -92,5 +93,50 @@ test('an older overlay registry does not hide the host bridge', async () => {
     unregister();
     assert.deepEqual(overlayHosts, []);
     assert.equal(translationBridge(), null);
+  });
+});
+
+test('a hot-reloaded host restores semantic block controls while another host keeps the old registry alive', async () => {
+  await withCleanBridge(async () => {
+    const registryKey = Symbol.for('lalaze.paseo-translate.registry.v1');
+    // An earlier plugin bundle owns the shared controller and cannot recognize
+    // the enriched renderer's semantic paragraphs. Reloading one host keeps it alive.
+    (globalThis as typeof globalThis & { [registryKey]?: unknown })[registryKey] = {
+      closed: false,
+      register: () => () => {},
+    };
+    const seenOld: string[] = [], seenNew: string[] = [];
+    const stopOld = registerTranslationClient('srv_old', client(text => seenOld.push(text)));
+    const dom = new JSDOM('<div data-testid="agent-chat-scroll"><div data-testid="assistant-message"><p id="reply">Hello desktop</p></div></div>', { url: 'https://paseo.test/h/srv_old/workspace/wks' });
+    const keys = ['window', 'document', 'Node', 'Element', 'HTMLElement'] as const;
+    const previous = keys.map(key => Object.getOwnPropertyDescriptor(globalThis, key));
+    for (const key of keys) Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] });
+    let stopNew = () => {};
+    try {
+      stopNew = registerTranslationClient('srv_new', client(text => seenNew.push(text)));
+      const paragraph = dom.window.document.querySelector('#reply')!;
+      const move = () => paragraph.dispatchEvent(new dom.window.MouseEvent('pointermove', { bubbles: true }));
+      move();
+      const trigger = dom.window.document.querySelector<HTMLButtonElement>('[data-paseo-translate="block-trigger"]');
+      assert.ok(trigger, 'new semantic block support must not depend on the first host upgrading its registry');
+      trigger.click();
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(seenOld, ['Hello desktop']);
+      assert.deepEqual(seenNew, []);
+      assert.equal(dom.window.document.querySelector('[data-paseo-translate-block-text]')?.textContent, 'Fix the login');
+      // Several upgraded hosts share one supplemental controller.
+      const stopThird = registerTranslationClient('srv_third', client(() => {}));
+      stopNew(); stopNew = () => {};
+      move();
+      assert.equal(dom.window.document.querySelectorAll('[data-paseo-translate="block-trigger"]').length, 1);
+      stopThird();
+      assert.equal(dom.window.document.querySelector('[data-paseo-translate="block-trigger"]'), null);
+    } finally {
+      stopNew(); stopOld(); dom.window.close();
+      keys.forEach((key, index) => {
+        if (previous[index]) Object.defineProperty(globalThis, key, previous[index]!);
+        else Reflect.deleteProperty(globalThis, key);
+      });
+    }
   });
 });

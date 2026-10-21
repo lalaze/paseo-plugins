@@ -10,10 +10,11 @@ async function withTranslator(run: (harness: {
   document: Document;
   move(selector: string, x?: number, y?: number): void;
   calls: { text: string; target: TargetLanguage }[];
-}) => Promise<void>) {
+}) => Promise<void>, markup = '') {
   const dom = new JSDOM(`
     <div data-testid="agent-chat-scroll">
       <div data-testid="assistant-message">
+        ${markup}
         <div id="reply" data-paseo-markdown-tag="p">Hello <span id="emphasis">world</span></div>
         <div id="outer" data-paseo-markdown-tag="li" data-rect="40,200,360,80">
           <div data-paseo-markdown-list-marker>•</div>
@@ -68,6 +69,82 @@ async function withTranslator(run: (harness: {
     });
   }
 }
+
+test('semantic Markdown paragraphs expose the hover button and translate in place', async () => {
+  await withTranslator(async ({ document, move, calls }) => {
+    move('#semantic-emphasis');
+    const trigger = document.querySelector<HTMLButtonElement>(triggerSelector);
+    assert.ok(trigger, 'the enriched Markdown renderer uses real p elements without legacy data attributes');
+    trigger.click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, [{ text: 'Hello desktop', target: 'auto' }]);
+    const panel = document.querySelector('#semantic-reply + [data-paseo-translate-block]');
+    assert.equal(panel?.querySelector('[data-paseo-translate-block-text]')?.textContent, '你好，世界');
+    move('#semantic-emphasis');
+    trigger.click();
+    assert.equal((panel as HTMLElement).style.display, 'none');
+    trigger.click();
+    assert.equal((panel as HTMLElement).style.display, 'flex');
+    assert.equal(calls.length, 1);
+  }, '<p id="semantic-reply">Hello <strong id="semantic-emphasis">desktop</strong></p>');
+});
+
+test('supplemental block controls yield to an existing legacy hover button', async () => {
+  await withTranslator(async ({ document, move }) => {
+    const legacy = document.createElement('button');
+    legacy.dataset.paseoTranslate = 'block-trigger';
+    document.body.append(legacy);
+    move('#reply');
+    assert.equal(document.querySelectorAll(triggerSelector).length, 1);
+    assert.equal(document.querySelector(triggerSelector), legacy);
+    legacy.remove();
+    move('#reply');
+    assert.ok(document.querySelector(triggerSelector));
+  });
+});
+
+test('semantic nested lists translate only the hovered item and keep panels inside the li', async () => {
+  await withTranslator(async ({ document, move, calls }) => {
+    move('#modern-outer-text', 150, 210);
+    document.querySelector<HTMLButtonElement>(triggerSelector)!.click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, [{ text: 'Outer task', target: 'auto' }]);
+    assert.ok(document.querySelector('#modern-outer > [data-paseo-translate-block]'));
+    move('#modern-inner-text', 150, 240);
+    const trigger = document.querySelector<HTMLButtonElement>(triggerSelector)!;
+    move('#modern-list', 50, 245);
+    assert.equal(trigger.style.left, '36px');
+    trigger.click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls.map(call => call.text), ['Outer task', 'Inner task']);
+    assert.ok(document.querySelector('#modern-inner > [data-paseo-translate-block]'));
+    // Reopening the outer item must find its own panel rather than the nested panel.
+    move('#modern-outer-text', 150, 210);
+    trigger.click();
+    assert.equal(document.querySelector<HTMLElement>('#modern-outer > [data-paseo-translate-block]')?.style.display, 'none');
+    assert.equal(document.querySelector<HTMLElement>('#modern-inner > [data-paseo-translate-block]')?.style.display, 'flex');
+    assert.equal(calls.length, 2);
+  }, `<ul><li id="modern-outer" data-rect="40,200,360,80"><span id="modern-outer-text"><input type="checkbox">Outer task</span>
+    <ul id="modern-list"><li id="modern-inner" data-rect="70,230,330,44"><span id="modern-inner-text">Inner task</span></li></ul>
+  </li></ul>`);
+});
+
+test('semantic headings and quotes expose the button while code blocks do not', async () => {
+  await withTranslator(async ({ document, move }) => {
+    for (const selector of ['#modern-heading', '#modern-quote']) {
+      move(selector);
+      assert.ok(document.querySelector(triggerSelector), selector);
+      document.dispatchEvent(new document.defaultView!.Event('pointerleave'));
+    }
+    for (const selector of ['#modern-code', '#legacy-code']) {
+      move(selector);
+      assert.equal(document.querySelector(triggerSelector), null, selector);
+    }
+  }, `<h2 id="modern-heading">Heading</h2><blockquote><p id="modern-quote">Quoted text</p>
+    <pre><code id="modern-code">Code is not a paragraph</code></pre>
+    <div data-paseo-markdown-tag="pre"><span id="legacy-code">Legacy code</span></div>
+  </blockquote>`);
+});
 
 test('hovering user messages never shows a block translation button', async () => {
   await withTranslator(async ({ document, move, calls }) => {
